@@ -1,0 +1,9 @@
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  # 老牌包，发布方式变更（无 provenance）触发策略，已确认安全
+  - semver@6.3.1
+  - undici@6.20.1
+shellEmulator: true
+
+allowBuilds:
+  '@parcel/watcher': true
