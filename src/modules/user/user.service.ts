@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
+import * as bcrypt from 'bcryptjs'
 
 import { BaseService } from '../../helper/crud/base.service'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
@@ -14,6 +15,24 @@ export class UserService extends BaseService<UserEntity> {
     repository: Repository<UserEntity>
   ) {
     super(repository, '用户')
+  }
+
+  /** 创建：密码自动 bcrypt 哈希后入库 */
+  async create(dto: Partial<UserEntity>): Promise<UserEntity> {
+    const data = { ...dto }
+    if (data.password) {
+      data.password = await bcrypt.hash(data.password, 10)
+    }
+    return super.create(data)
+  }
+
+  /** 更新：若携带密码同样先哈希 */
+  async update(id: number, dto: Partial<UserEntity>): Promise<UserEntity> {
+    const data = { ...dto }
+    if (data.password) {
+      data.password = await bcrypt.hash(data.password, 10)
+    }
+    return super.update(id, data)
   }
 
   /** 分页列表：支持 keyword 模糊搜索用户名/昵称、status 精确过滤 */
