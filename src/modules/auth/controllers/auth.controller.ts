@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
+import { Public } from '../../../common/decorators/public.decorator'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { AuthService } from '../services/auth.service'
 import { LoginDto, LoginResultDto, RefreshTokenDto } from '../dto/login.dto'
@@ -13,6 +14,7 @@ export class AuthController {
 
   @ApiOperation({ summary: '登录', description: '校验账号密码，返回 accessToken / refreshToken 双令牌' })
   @ApiOkResponse({ description: '令牌对与用户信息', type: LoginResultDto })
+  @Public()
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto)
@@ -20,6 +22,7 @@ export class AuthController {
 
   @ApiOperation({ summary: '刷新令牌', description: '用 refreshToken 换取新的令牌对' })
   @ApiOkResponse({ description: '新的令牌对与用户信息', type: LoginResultDto })
+  @Public()
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refreshToken(dto.refreshToken)

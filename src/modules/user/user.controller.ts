@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
+import { Roles } from '../../common/decorators/roles.decorator'
 import { CreateUserDto } from './dto/create-user.dto'
 import { QueryUserDto } from './dto/query-user.dto'
 import { UpdateUserDto } from './dto/update-user.dto'
@@ -9,6 +10,7 @@ import { UserService } from './user.service'
 
 @ApiTags('用户管理')
 @ApiBearerAuth('jwt')
+@Roles('admin')
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
@@ -44,5 +46,12 @@ export class UserController {
   @Delete(':id')
   delete(@Param('id', ParseIntPipe) id: number) {
     return this.userService.delete(id)
+  }
+
+  @ApiOperation({ summary: '为用户绑定角色（全量覆盖）' })
+  @Put(':id/roles')
+  async assignRoles(@Param('id', ParseIntPipe) id: number, @Body() dto: { roleIds: number[] }) {
+    await this.userService.assignRoles(id, dto.roleIds)
+    return this.userService.findOneWithRoles(id)
   }
 }

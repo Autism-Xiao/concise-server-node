@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm'
+import { Column, CreateDateColumn, Entity, JoinTable, ManyToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm'
+import { RoleEntity } from '../../role/entities/role.entity'
 
 @Entity('user')
 export class UserEntity {
@@ -34,4 +35,9 @@ export class UserEntity {
   @ApiProperty({ description: '更新时间' })
   @UpdateDateColumn({ name: 'updated_at', comment: '更新时间' })
   updatedAt: Date
+
+  @ApiProperty({ description: '角色列表', type: [RoleEntity], required: false })
+  @ManyToMany(() => RoleEntity, role => role.users)
+  @JoinTable({ name: 'user_roles' })
+  roles: RoleEntity[]
 }
