@@ -91,8 +91,12 @@ export class DeptService extends BaseService<DeptEntity> {
 export function buildDeptTree(all: DeptEntity[], parentId: number): DeptTreeItem[] {
   return all
     .filter(dept => dept.parentId === parentId)
-    .map(dept => ({
-      ...dept,
-      children: buildDeptTree(all, dept.id)
-    }))
+    .map(dept =>
+      // 实体实例展开为 plain object 组树（响应走 JSON 序列化，无原型丢失问题）
+      // oxlint-disable-next-line typescript(no-misused-spread)
+      ({
+        ...dept,
+        children: buildDeptTree(all, dept.id)
+      })
+    )
 }

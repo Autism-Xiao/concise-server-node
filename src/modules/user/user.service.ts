@@ -31,7 +31,7 @@ export class UserService extends BaseService<UserEntity> {
     if (dto.roleIds?.length) {
       await this.assignRoles(user.id, dto.roleIds)
     }
-    return this.findOneWithRoles(user.id) as Promise<UserEntity>
+    return this.findOneDetail(user.id) as Promise<UserEntity>
   }
 
   /** 更新：若携带密码同样先哈希；携带 roleIds 则重绑角色 */
@@ -45,7 +45,7 @@ export class UserService extends BaseService<UserEntity> {
     if (dto.roleIds) {
       await this.assignRoles(id, dto.roleIds)
     }
-    return this.findOneWithRoles(id) as Promise<UserEntity>
+    return this.findOneDetail(id) as Promise<UserEntity>
   }
 
   /** 绑定角色（全量覆盖） */
@@ -72,12 +72,18 @@ export class UserService extends BaseService<UserEntity> {
     }
 
     const options: PaginateOptions = { page: query.page, pageSize: query.pageSize }
+    qb.leftJoinAndSelect('user.dept', 'dept')
     return paginate(qb, options)
   }
 
   /** 按 id 查找并带出角色 */
   async findOneWithRoles(id: number): Promise<UserEntity | null> {
     return this.repository.findOne({ where: { id }, relations: { roles: true } })
+  }
+
+  /** 详情：带出角色 + 部门 */
+  async findOneDetail(id: number): Promise<UserEntity | null> {
+    return this.repository.findOne({ where: { id }, relations: { roles: true, dept: true } })
   }
 
   /** 按 id 查找（含密码，仅供认证场景使用） */

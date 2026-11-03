@@ -34,8 +34,12 @@ export class MenuService extends BaseService<MenuEntity> {
 export function buildMenuTree(all: MenuEntity[], parentId: number): MenuTreeItem[] {
   return all
     .filter(menu => menu.parentId === parentId)
-    .map(menu => ({
-      ...menu,
-      children: buildMenuTree(all, menu.id)
-    }))
+    .map(menu =>
+      // 实体实例展开为 plain object 组树（响应走 JSON 序列化，无原型丢失问题）
+      // oxlint-disable-next-line typescript(no-misused-spread)
+      ({
+        ...menu,
+        children: buildMenuTree(all, menu.id)
+      })
+    )
 }

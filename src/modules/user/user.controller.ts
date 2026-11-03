@@ -24,11 +24,11 @@ export class UserController {
     return this.userService.listByQuery(query)
   }
 
-  @ApiOperation({ summary: '查询用户详情' })
+  @ApiOperation({ summary: '查询用户详情（含角色与部门）' })
   @ApiOkResponse({ description: '用户信息', type: UserEntity })
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number): Promise<UserEntity> {
-    return this.userService.findOne(id)
+  findOne(@Param('id', ParseIntPipe) id: number): Promise<UserEntity | null> {
+    return this.userService.findOneDetail(id)
   }
 
   @ApiOperation({ summary: '创建用户', description: '密码入库前自动 bcrypt 哈希，响应不返回密码' })
