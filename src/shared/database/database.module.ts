@@ -1,9 +1,9 @@
-import { Module } from "@nestjs/common";
-import { ConfigModule, ConfigService } from "@nestjs/config";
-import { TypeOrmModule } from "@nestjs/typeorm";
-import type { DataSourceOptions } from "typeorm";
+import { Module } from '@nestjs/common'
+import { ConfigModule, ConfigService } from '@nestjs/config'
+import { TypeOrmModule } from '@nestjs/typeorm'
+import type { DataSourceOptions } from 'typeorm'
 
-import { databaseConfig } from "../../config/database.config";
+import { databaseConfig } from '../../config/database.config'
 
 /**
  * 数据库模块：全局注册 TypeORM 连接
@@ -16,12 +16,9 @@ import { databaseConfig } from "../../config/database.config";
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         // 优先取已注册的 database 配置命名空间，兜底直接调用工厂
-        return (
-          configService.get<DataSourceOptions>("database") ??
-          (databaseConfig() as DataSourceOptions)
-        );
-      },
-    }),
-  ],
+        return configService.get<DataSourceOptions>('database') ?? (databaseConfig() as DataSourceOptions)
+      }
+    })
+  ]
 })
 export class DatabaseModule {}

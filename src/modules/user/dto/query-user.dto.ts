@@ -1,6 +1,6 @@
-import { IsOptional, IsString, MaxLength } from "class-validator";
+import { IsOptional, IsString, MaxLength } from 'class-validator'
 
-import { PagerDto } from "../../../common/dto/pager.dto";
+import { PagerDto } from '../../../common/dto/pager.dto'
 
 /** 用户列表查询参数 */
 export class QueryUserDto extends PagerDto {
@@ -8,9 +8,9 @@ export class QueryUserDto extends PagerDto {
   @IsString()
   @MaxLength(32)
   /** 模糊匹配用户名/昵称 */
-  keyword?: string;
+  keyword?: string
 
   @IsOptional()
   @IsString()
-  status?: string;
+  status?: string
 }

@@ -1,5 +1,5 @@
-import { Type } from "class-transformer";
-import { IsInt, IsOptional, Max, Min } from "class-validator";
+import { Type } from 'class-transformer'
+import { IsInt, IsOptional, Max, Min } from 'class-validator'
 
 /**
  * 通用分页参数基类
@@ -10,12 +10,12 @@ export class PagerDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  page?: number;
+  page?: number
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(100)
-  pageSize?: number;
+  pageSize?: number
 }

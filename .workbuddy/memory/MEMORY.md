@@ -8,6 +8,7 @@
 
 - NestJS 12 CJS + Jest + oxlint；TypeORM 1.1 + MySQL 8.4（本机服务 `MySQL84`，root/123456，库 `concise_server`）
 - 参照 E:\project\demo\nest-admin 演进为中后台架构
+- 工程链：ESLint 9 flat config（正确性）+ Prettier（风格：双引号/分号/100 列）+ oxlint（lint:ox 二道）+ husky pre-commit → lint-staged（staged .ts 跑 eslint --fix + prettier --write）。commit 前不要手动跑 format，钩子会处理。
 - 统一响应 `{ code, data, message }`；业务异常 HTTP 200 + code 区分；全局 ValidationPipe（transform + whitelist）
 - 泛型需 `extends ObjectLiteral`；query 参数 DTO 加 `@Type(() => Number)`；运行命令需 `PATH="/d/projram/nodejs:$PATH"`（Node 24）
 - 3000 端口被外部进程占用，本地测试用 `PORT=3457`
