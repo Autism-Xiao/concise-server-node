@@ -21,6 +21,8 @@ import { LogModule } from './modules/system/log/log.module'
 import { DeptModule } from './modules/system/dept/dept.module'
 import { DictTypeModule } from './modules/system/dict-type/dict-type.module'
 import { DictItemModule } from './modules/system/dict-item/dict-item.module'
+import { NoticeModule } from './modules/system/notice/notice.module'
+import { TaskModule } from './modules/system/task/task.module'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule()
@@ -45,6 +47,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     DeptModule,
     DictTypeModule,
     DictItemModule,
+    NoticeModule,
+    TaskModule,
     // Distributed tracing, auto-correlated logs, request/job metrics, error
     // telemetry, alarms, and more — out of the box. Sign up at https://observe.nestjs.com,
     // then run `npx @nestjs/observe link` to write your key pair into .env.

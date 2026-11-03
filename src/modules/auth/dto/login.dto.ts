@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger'
-import { IsNotEmpty, IsString, Length } from 'class-validator'
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
+import { IsNotEmpty, IsOptional, IsString, Length } from 'class-validator'
 
 export class LoginDto {
   @ApiProperty({ description: '用户名', example: 'admin' })
@@ -11,6 +11,17 @@ export class LoginDto {
   @IsString()
   @Length(6, 64, { message: '密码长度须在 6~64 位之间' })
   password: string
+
+  @ApiPropertyOptional({ description: '验证码 ID（CAPTCHA_ENABLED=true 时必填，来自 GET /auth/captcha）' })
+  @IsOptional()
+  @IsString()
+  captchaId?: string
+
+  @ApiPropertyOptional({ description: '用户输入的验证码（不区分大小写）', example: 'ab3d' })
+  @IsOptional()
+  @IsString()
+  @Length(4, 4, { message: '验证码为 4 位字符' })
+  captchaCode?: string
 }
 
 export class RefreshTokenDto {

@@ -8,6 +8,7 @@ import { LogModule } from '../system/log/log.module'
 import { AuthController } from './controllers/auth.controller'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { AuthService } from './services/auth.service'
+import { CaptchaService } from './services/captcha.service'
 import { JwtStrategy } from './strategies/jwt.strategy'
 
 @Module({
@@ -23,7 +24,7 @@ import { JwtStrategy } from './strategies/jwt.strategy'
     })
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard],
+  providers: [AuthService, CaptchaService, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard]
 })
 export class AuthModule {}

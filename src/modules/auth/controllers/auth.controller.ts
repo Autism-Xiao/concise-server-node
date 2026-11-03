@@ -1,16 +1,31 @@
 import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { AuthService } from '../services/auth.service'
+import { CaptchaService } from '../services/captcha.service'
 import { LoginDto, LoginResultDto, RefreshTokenDto } from '../dto/login.dto'
 import type { UserEntity } from '../../user/entities/user.entity'
 
 @ApiTags('认证')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly captchaService: CaptchaService,
+    private readonly configService: ConfigService
+  ) {}
+
+  @ApiOperation({ summary: '获取图形验证码', description: 'CAPTCHA_ENABLED=true 时登录必用；返回 SVG 与 captchaId' })
+  @Public()
+  @Get('captcha')
+  captcha() {
+    // CAPTCHA_DEBUG=true 时附带明文 code（仅限开发环境，生产必须关闭）
+    const debug = this.configService.get<string>('CAPTCHA_DEBUG') === 'true'
+    return this.captchaService.generate(debug)
+  }
 
   @ApiOperation({ summary: '登录', description: '校验账号密码，返回 accessToken / refreshToken 双令牌' })
   @ApiOkResponse({ description: '令牌对与用户信息', type: LoginResultDto })

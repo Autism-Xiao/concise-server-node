@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository } from 'typeorm'
+import { In, Repository } from 'typeorm'
 
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { LoginLogEntity } from './entities/login-log.entity'
@@ -57,8 +57,15 @@ export class LogService {
     }
   }
 
-  /** 分页查询登录日志，支持用户名/结果过滤 */
-  async listLoginLog(query: { page?: number; pageSize?: number; username?: string; status?: number }): Promise<Pagination<LoginLogEntity>> {
+  /** 分页查询登录日志，支持用户名/结果/时间范围过滤 */
+  async listLoginLog(query: {
+    page?: number
+    pageSize?: number
+    username?: string
+    status?: number
+    startTime?: string
+    endTime?: string
+  }): Promise<Pagination<LoginLogEntity>> {
     const qb = this.loginLogRepository.createQueryBuilder('log').orderBy('log.id', 'DESC')
     if (query.username) {
       qb.andWhere('log.username LIKE :username', { username: `%${query.username}%` })
@@ -66,11 +73,24 @@ export class LogService {
     if (query.status !== undefined) {
       qb.andWhere('log.status = :status', { status: query.status })
     }
+    if (query.startTime) {
+      qb.andWhere('log.createdAt >= :startTime', { startTime: query.startTime })
+    }
+    if (query.endTime) {
+      qb.andWhere('log.createdAt <= :endTime', { endTime: query.endTime })
+    }
     return paginate(qb, { page: query.page, pageSize: query.pageSize })
   }
 
-  /** 分页查询操作日志，支持模块/操作人过滤 */
-  async listOperLog(query: { page?: number; pageSize?: number; username?: string; module?: string }): Promise<Pagination<OperLogEntity>> {
+  /** 分页查询操作日志，支持模块/操作人/时间范围过滤 */
+  async listOperLog(query: {
+    page?: number
+    pageSize?: number
+    username?: string
+    module?: string
+    startTime?: string
+    endTime?: string
+  }): Promise<Pagination<OperLogEntity>> {
     const qb = this.operLogRepository.createQueryBuilder('log').orderBy('log.id', 'DESC')
     if (query.username) {
       qb.andWhere('log.username LIKE :username', { username: `%${query.username}%` })
@@ -78,6 +98,42 @@ export class LogService {
     if (query.module) {
       qb.andWhere('log.module LIKE :module', { module: `%${query.module}%` })
     }
+    if (query.startTime) {
+      qb.andWhere('log.createdAt >= :startTime', { startTime: query.startTime })
+    }
+    if (query.endTime) {
+      qb.andWhere('log.createdAt <= :endTime', { endTime: query.endTime })
+    }
     return paginate(qb, { page: query.page, pageSize: query.pageSize })
+  }
+
+  /** 登录日志详情，不存在抛 404 */
+  async findLoginLog(id: number): Promise<LoginLogEntity> {
+    const log = await this.loginLogRepository.findOne({ where: { id } })
+    if (!log) {
+      throw new NotFoundException('登录日志不存在')
+    }
+    return log
+  }
+
+  /** 操作日志详情，不存在抛 404 */
+  async findOperLog(id: number): Promise<OperLogEntity> {
+    const log = await this.operLogRepository.findOne({ where: { id } })
+    if (!log) {
+      throw new NotFoundException('操作日志不存在')
+    }
+    return log
+  }
+
+  /** 批量删除登录日志，返回删除条数 */
+  async removeLoginLogs(ids: number[]): Promise<{ deleted: number }> {
+    const result = await this.loginLogRepository.delete({ id: In(ids) })
+    return { deleted: result.affected ?? 0 }
+  }
+
+  /** 批量删除操作日志，返回删除条数 */
+  async removeOperLogs(ids: number[]): Promise<{ deleted: number }> {
+    const result = await this.operLogRepository.delete({ id: In(ids) })
+    return { deleted: result.affected ?? 0 }
   }
 }

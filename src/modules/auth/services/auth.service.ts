@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common'
+import { Injectable, UnauthorizedException, BadRequestException, HttpException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import type { StringValue } from 'ms'
@@ -6,6 +6,7 @@ import * as bcrypt from 'bcryptjs'
 
 import { UserService } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
+import { CaptchaService } from './captcha.service'
 import { LoginDto } from '../dto/login.dto'
 
 export interface JwtPayload {
@@ -26,12 +27,23 @@ export class AuthService {
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly logService: LogService
+    private readonly logService: LogService,
+    private readonly captchaService: CaptchaService
   ) {}
 
-  /** 登录：校验账号密码，签发双令牌；成败都记入登录日志 */
+  /** 登录：验证码校验（可开关）→ 账号密码校验 → 签发双令牌；成败都记入登录日志 */
   async login(dto: LoginDto, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
     try {
+      // 验证码开关：CAPTCHA_ENABLED=true 时强制校验（防爆破）
+      if (this.configService.get<string>('CAPTCHA_ENABLED') === 'true') {
+        if (!dto.captchaId || !dto.captchaCode) {
+          throw new BadRequestException('请输入验证码')
+        }
+        if (!this.captchaService.verify(dto.captchaId, dto.captchaCode)) {
+          throw new BadRequestException('验证码错误或已过期')
+        }
+      }
+
       const user = await this.userService.findByUsername(dto.username)
       if (!user) {
         throw new UnauthorizedException('用户名或密码错误')
@@ -49,7 +61,7 @@ export class AuthService {
       await this.logService.recordLogin({ username: dto.username, status: 1, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
       return this.issueTokens(user)
     } catch (error) {
-      const message = error instanceof UnauthorizedException ? error.message : '登录异常'
+      const message = error instanceof HttpException ? error.message : '登录异常'
       await this.logService.recordLogin({ username: dto.username, status: 0, message, ip: meta.ip, userAgent: meta.userAgent })
       throw error
     }
