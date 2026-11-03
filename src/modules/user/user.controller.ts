@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } 
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Roles } from '../../common/decorators/roles.decorator'
+import { Perms } from '../../common/decorators/perms.decorator'
+import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { CreateUserDto } from './dto/create-user.dto'
 import { QueryUserDto } from './dto/query-user.dto'
 import { UpdateUserDto } from './dto/update-user.dto'
@@ -30,6 +32,8 @@ export class UserController {
   }
 
   @ApiOperation({ summary: '创建用户', description: '密码入库前自动 bcrypt 哈希，响应不返回密码' })
+  @OperLog('用户管理')
+  @Perms('system:user:add')
   @Post()
   async create(@Body() dto: CreateUserDto) {
     const user = await this.userService.create(dto)
@@ -37,12 +41,16 @@ export class UserController {
   }
 
   @ApiOperation({ summary: '更新用户' })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
   @Put(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
     return this.userService.update(id, dto)
   }
 
   @ApiOperation({ summary: '删除用户' })
+  @OperLog('用户管理')
+  @Perms('system:user:delete')
   @Delete(':id')
   delete(@Param('id', ParseIntPipe) id: number) {
     return this.userService.delete(id)

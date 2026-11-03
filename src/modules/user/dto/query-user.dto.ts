@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger'
-import { IsOptional, IsString, MaxLength } from 'class-validator'
+import { Type } from 'class-transformer'
+import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator'
 
 import { PagerDto } from '../../../common/dto/pager.dto'
 
@@ -15,4 +16,11 @@ export class QueryUserDto extends PagerDto {
   @IsOptional()
   @IsString()
   status?: string
+
+  @ApiPropertyOptional({ description: '部门 ID 过滤', example: 1, minimum: 0 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  deptId?: number
 }

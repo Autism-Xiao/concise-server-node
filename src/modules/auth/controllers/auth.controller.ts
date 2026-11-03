@@ -16,8 +16,9 @@ export class AuthController {
   @ApiOkResponse({ description: '令牌对与用户信息', type: LoginResultDto })
   @Public()
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto)
+  login(@Body() dto: LoginDto, @Request() req: { ip: string; headers: Record<string, string | string[] | undefined> }) {
+    const userAgent = req.headers['user-agent']
+    return this.authService.login(dto, { ip: req.ip ?? '', userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent })
   }
 
   @ApiOperation({ summary: '刷新令牌', description: '用 refreshToken 换取新的令牌对' })

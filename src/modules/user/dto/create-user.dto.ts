@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Type } from 'class-transformer'
-import { ArrayMinSize, IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, Length } from 'class-validator'
+import { ArrayMinSize, IsArray, IsEmail, IsIn, IsInt, IsOptional, IsString, Length, Min } from 'class-validator'
 
 export class CreateUserDto {
   @ApiProperty({ description: '用户名（3~32 位，唯一）', example: 'zhangsan', minLength: 3, maxLength: 32 })
@@ -35,4 +35,11 @@ export class CreateUserDto {
   @IsInt({ each: true })
   @Type(() => Number)
   roleIds?: number[]
+
+  @ApiPropertyOptional({ description: '所属部门 ID，0 为未分配', example: 1, minimum: 0 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  deptId?: number
 }

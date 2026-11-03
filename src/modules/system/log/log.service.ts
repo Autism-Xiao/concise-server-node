@@ -1,0 +1,83 @@
+import { Injectable } from '@nestjs/common'
+import { InjectRepository } from '@nestjs/typeorm'
+import { Repository } from 'typeorm'
+
+import { paginate, type Pagination } from '../../../helper/paginate'
+import { LoginLogEntity } from './entities/login-log.entity'
+import { OperLogEntity } from './entities/oper-log.entity'
+
+export interface LoginLogInput {
+  username: string
+  status: number
+  message: string
+  ip: string
+  userAgent?: string
+}
+
+export interface OperLogInput {
+  userId?: number
+  username?: string
+  module: string
+  action: string
+  ip: string
+  params?: string
+  status: number
+  errorMsg?: string
+  elapsed: number
+}
+
+/**
+ * 日志服务：登录日志 + 操作日志的写入与查询
+ * 写入失败只打日志不上抛——日志永远不能影响业务主流程
+ */
+@Injectable()
+export class LogService {
+  constructor(
+    @InjectRepository(LoginLogEntity)
+    private readonly loginLogRepository: Repository<LoginLogEntity>,
+    @InjectRepository(OperLogEntity)
+    private readonly operLogRepository: Repository<OperLogEntity>
+  ) {}
+
+  /** 记录一次登录尝试（成功或失败） */
+  async recordLogin(input: LoginLogInput): Promise<void> {
+    try {
+      await this.loginLogRepository.save(this.loginLogRepository.create(input))
+    } catch (error) {
+      console.error('[LogService] 登录日志写入失败:', error)
+    }
+  }
+
+  /** 记录一次写操作 */
+  async recordOper(input: OperLogInput): Promise<void> {
+    try {
+      await this.operLogRepository.save(this.operLogRepository.create(input))
+    } catch (error) {
+      console.error('[LogService] 操作日志写入失败:', error)
+    }
+  }
+
+  /** 分页查询登录日志，支持用户名/结果过滤 */
+  async listLoginLog(query: { page?: number; pageSize?: number; username?: string; status?: number }): Promise<Pagination<LoginLogEntity>> {
+    const qb = this.loginLogRepository.createQueryBuilder('log').orderBy('log.id', 'DESC')
+    if (query.username) {
+      qb.andWhere('log.username LIKE :username', { username: `%${query.username}%` })
+    }
+    if (query.status !== undefined) {
+      qb.andWhere('log.status = :status', { status: query.status })
+    }
+    return paginate(qb, { page: query.page, pageSize: query.pageSize })
+  }
+
+  /** 分页查询操作日志，支持模块/操作人过滤 */
+  async listOperLog(query: { page?: number; pageSize?: number; username?: string; module?: string }): Promise<Pagination<OperLogEntity>> {
+    const qb = this.operLogRepository.createQueryBuilder('log').orderBy('log.id', 'DESC')
+    if (query.username) {
+      qb.andWhere('log.username LIKE :username', { username: `%${query.username}%` })
+    }
+    if (query.module) {
+      qb.andWhere('log.module LIKE :module', { module: `%${query.module}%` })
+    }
+    return paginate(qb, { page: query.page, pageSize: query.pageSize })
+  }
+}

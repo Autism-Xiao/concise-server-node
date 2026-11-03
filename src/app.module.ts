@@ -6,7 +6,9 @@ import { createObserveModule } from '@nestjs/observe'
 import { configs } from './config'
 import { AllExceptionsFilter } from './common/filters/any-exception.filter'
 import { TransformInterceptor } from './common/interceptors/transform.interceptor'
+import { OperLogInterceptor } from './common/interceptors/oper-log.interceptor'
 import { RolesGuard } from './common/guards/roles.guard'
+import { PermsGuard } from './common/guards/perms.guard'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { LoggerService } from './shared/logger/logger.service'
@@ -15,6 +17,8 @@ import { UserModule } from './modules/user/user.module'
 import { AuthModule } from './modules/auth/auth.module'
 import { RoleModule } from './modules/role/role.module'
 import { MenuModule } from './modules/menu/menu.module'
+import { LogModule } from './modules/system/log/log.module'
+import { DeptModule } from './modules/system/dept/dept.module'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule()
@@ -35,6 +39,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     AuthModule,
     RoleModule,
     MenuModule,
+    LogModule,
+    DeptModule,
     // Distributed tracing, auto-correlated logs, request/job metrics, error
     // telemetry, alarms, and more — out of the box. Sign up at https://observe.nestjs.com,
     // then run `npx @nestjs/observe link` to write your key pair into .env.
@@ -48,12 +54,14 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
   providers: [
     AppService,
     LoggerService,
-    // 全局异常过滤 + 统一响应包装
+    // 全局异常过滤 + 统一响应包装 + 操作日志
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
-    // 全局守卫：先 JWT 认证（@Public() 放行），再角色鉴权（@Roles() 匹配）
+    { provide: APP_INTERCEPTOR, useClass: OperLogInterceptor },
+    // 全局守卫：先 JWT 认证（@Public() 放行），再角色鉴权（@Roles()），最后按钮级权限（@Perms()）
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    { provide: APP_GUARD, useClass: RolesGuard }
+    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: PermsGuard }
   ]
 })
 export class AppModule {}

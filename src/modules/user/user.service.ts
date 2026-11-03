@@ -67,6 +67,9 @@ export class UserService extends BaseService<UserEntity> {
     if (query.status !== undefined && query.status !== '') {
       qb.andWhere('user.status = :status', { status: Number(query.status) })
     }
+    if (query.deptId !== undefined && query.deptId !== null) {
+      qb.andWhere('user.deptId = :deptId', { deptId: query.deptId })
+    }
 
     const options: PaginateOptions = { page: query.page, pageSize: query.pageSize }
     return paginate(qb, options)

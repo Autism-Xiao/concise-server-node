@@ -5,6 +5,7 @@ import type { StringValue } from 'ms'
 import * as bcrypt from 'bcryptjs'
 
 import { UserService } from '../../user/user.service'
+import { LogService } from '../../system/log/log.service'
 import { LoginDto } from '../dto/login.dto'
 
 export interface JwtPayload {
@@ -24,26 +25,34 @@ export class AuthService {
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly logService: LogService
   ) {}
 
-  /** 登录：校验账号密码，签发双令牌 */
-  async login(dto: LoginDto): Promise<LoginResult> {
-    const user = await this.userService.findByUsername(dto.username)
-    if (!user) {
-      throw new UnauthorizedException('用户名或密码错误')
-    }
+  /** 登录：校验账号密码，签发双令牌；成败都记入登录日志 */
+  async login(dto: LoginDto, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
+    try {
+      const user = await this.userService.findByUsername(dto.username)
+      if (!user) {
+        throw new UnauthorizedException('用户名或密码错误')
+      }
 
-    const passwordOk = await bcrypt.compare(dto.password, user.password)
-    if (!passwordOk) {
-      throw new UnauthorizedException('用户名或密码错误')
-    }
+      const passwordOk = await bcrypt.compare(dto.password, user.password)
+      if (!passwordOk) {
+        throw new UnauthorizedException('用户名或密码错误')
+      }
 
-    if (user.status !== 1) {
-      throw new UnauthorizedException('账号已被禁用，请联系管理员')
-    }
+      if (user.status !== 1) {
+        throw new UnauthorizedException('账号已被禁用，请联系管理员')
+      }
 
-    return this.issueTokens(user)
+      await this.logService.recordLogin({ username: dto.username, status: 1, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
+      return this.issueTokens(user)
+    } catch (error) {
+      const message = error instanceof UnauthorizedException ? error.message : '登录异常'
+      await this.logService.recordLogin({ username: dto.username, status: 0, message, ip: meta.ip, userAgent: meta.userAgent })
+      throw error
+    }
   }
 
   /** 用 refreshToken 换新令牌对 */

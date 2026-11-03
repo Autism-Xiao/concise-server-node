@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Column, CreateDateColumn, Entity, JoinTable, ManyToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm'
+import { Column, CreateDateColumn, Entity, JoinColumn, JoinTable, ManyToMany, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm'
 import { RoleEntity } from '../../role/entities/role.entity'
+import { DeptEntity } from '../../system/dept/entities/dept.entity'
 
 @Entity('user')
 export class UserEntity {
@@ -40,4 +41,13 @@ export class UserEntity {
   @ManyToMany(() => RoleEntity, role => role.users)
   @JoinTable({ name: 'user_roles' })
   roles: RoleEntity[]
+
+  @ApiPropertyOptional({ description: '所属部门 ID，0/空 为未分配', example: 1, nullable: true })
+  @Column({ type: 'int', default: 0, comment: '所属部门ID，0为未分配' })
+  deptId: number
+
+  @ApiPropertyOptional({ description: '所属部门', type: DeptEntity, required: false })
+  @ManyToOne(() => DeptEntity, { createForeignKeyConstraints: false, nullable: true })
+  @JoinColumn({ name: 'deptId' })
+  dept?: DeptEntity | null
 }
