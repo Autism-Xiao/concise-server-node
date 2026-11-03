@@ -1,10 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import type {
-  DeepPartial,
-  FindOptionsWhere,
-  ObjectLiteral,
-  Repository,
-} from "typeorm";
+import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository } from "typeorm";
 
 import { paginate, type PaginateOptions, type Pagination } from "../paginate";
 

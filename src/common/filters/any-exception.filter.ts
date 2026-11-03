@@ -34,8 +34,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const res = exception.getResponse();
-      const raw =
-        typeof res === "string" ? res : (res as ExceptionResponse).message;
+      const raw = typeof res === "string" ? res : (res as ExceptionResponse).message;
       // class-validator 的错误是数组，只取第一条
       const message = Array.isArray(raw) ? raw[0] : raw;
       return response.status(status).json({

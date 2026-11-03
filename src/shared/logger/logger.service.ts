@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  type LoggerService as NestLoggerService,
-  type LogLevel,
-} from "@nestjs/common";
+import { Injectable, type LoggerService as NestLoggerService, type LogLevel } from "@nestjs/common";
 
 import { winstonLogger } from "./winston.logger";
 

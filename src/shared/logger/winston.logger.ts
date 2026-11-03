@@ -16,11 +16,7 @@ const consoleFormat = combine(
   }),
 );
 
-const fileFormat = combine(
-  errors({ stack: true }),
-  timestamp(),
-  winston.format.json(),
-);
+const fileFormat = combine(errors({ stack: true }), timestamp(), winston.format.json());
 
 /** 按日轮转的文件 transport（logs/ 已在 .gitignore 中） */
 const fileTransport = new winston.transports.DailyRotateFile({
@@ -35,8 +31,5 @@ const fileTransport = new winston.transports.DailyRotateFile({
 
 export const winstonLogger = winston.createLogger({
   level: isProd ? "info" : "debug",
-  transports: [
-    new winston.transports.Console({ format: consoleFormat }),
-    fileTransport,
-  ],
+  transports: [new winston.transports.Console({ format: consoleFormat }), fileTransport],
 });

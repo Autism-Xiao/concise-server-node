@@ -18,9 +18,7 @@ export class UserService extends BaseService<UserEntity> {
 
   /** 分页列表：支持 keyword 模糊搜索用户名/昵称、status 精确过滤 */
   async listByQuery(query: QueryUserDto): Promise<Pagination<UserEntity>> {
-    const qb = this.repository
-      .createQueryBuilder("user")
-      .orderBy("user.id", "DESC");
+    const qb = this.repository.createQueryBuilder("user").orderBy("user.id", "DESC");
 
     if (query.keyword) {
       qb.andWhere("(user.username LIKE :keyword OR user.nickname LIKE :keyword)", {

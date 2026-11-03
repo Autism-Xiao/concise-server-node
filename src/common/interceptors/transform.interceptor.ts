@@ -16,13 +16,8 @@ export interface Response<T = unknown> {
 }
 
 @Injectable()
-export class TransformInterceptor<T>
-  implements NestInterceptor<T, Response<T> | T>
-{
-  intercept(
-    _context: ExecutionContext,
-    next: CallHandler<T>,
-  ): Observable<Response<T> | T> {
+export class TransformInterceptor<T> implements NestInterceptor<T, Response<T> | T> {
+  intercept(_context: ExecutionContext, next: CallHandler<T>): Observable<Response<T> | T> {
     return next.handle().pipe(
       map((data) => {
         // 文件流等特殊响应不做包装

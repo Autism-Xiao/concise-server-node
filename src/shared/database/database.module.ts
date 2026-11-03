@@ -17,7 +17,7 @@ import { databaseConfig } from "../../config/database.config";
       useFactory: (configService: ConfigService) => {
         // 优先取已注册的 database 配置命名空间，兜底直接调用工厂
         return (
-          (configService.get<DataSourceOptions>("database")) ??
+          configService.get<DataSourceOptions>("database") ??
           (databaseConfig() as DataSourceOptions)
         );
       },
