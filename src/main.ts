@@ -1,3 +1,4 @@
+import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { AppModule, ObserveInstrument } from "./app.module";
@@ -17,6 +18,14 @@ async function bootstrap() {
   const globalPrefix = configService.get<string>("app.globalPrefix", "api");
 
   app.setGlobalPrefix(globalPrefix);
+
+  // 全局 DTO 校验管道：自动转换类型 + 剔除未声明属性
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+    }),
+  );
 
   await app.listen(port);
   console.log(`Server running on http://localhost:${port}/${globalPrefix}`);
