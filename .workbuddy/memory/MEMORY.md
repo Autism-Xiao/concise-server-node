@@ -13,7 +13,8 @@
 - 泛型需 `extends ObjectLiteral`；query 参数 DTO 加 `@Type(() => Number)`；运行命令需 `PATH="/d/projram/nodejs:$PATH"`（Node 24）
 - 3000 端口被外部进程占用，本地测试用 `PORT=3457`
 - Swagger 文档（912b3ed）：`/api/docs` 在线 UI、`/api/docs-json` OpenAPI JSON。约定：新模块 DTO 加 @ApiProperty、Controller 加 @ApiTags + @ApiOperation；Bearer 方案名 'jwt'。文档规则：每轮改动在 docs/ 生成变更 .md（见下方强规则）。
-- 下一步：登录/操作日志已就绪可接前端；可选项：字典模块、登录验证码、用户详情带部门
+- 下一步：登录验证码（svg-captcha）、操作日志前端对接；可选项：任务/公告模块
 - RBAC 完成（52ae21e）：user—role—menu 三级多对多（user_roles/role_menus），全局 JwtAuthGuard→RolesGuard（APP_GUARD 顺序注册），@Public()/@Roles() 装饰器，菜单树 GET /menus/tree。角色/菜单/用户模块类级 @Roles('admin')。坑：跨模块注入仓库需 imports 对方模块；TypeORM findOne 同时用 relations+select 会报 distinctAlias 错（用 QueryBuilder addSelect+leftJoinAndSelect 代替）。测试数据：角色 admin/viewer/editor，用户 admin(admin)/guest(无角色，密码 guest123)，菜单 系统管理→用户管理。
 - 已完成 auth 模块（889333c）：POST /auth/login、/auth/refresh、GET /auth/profile（JwtAuthGuard）。bcryptjs 哈希（UserService.create/update 自动处理）；jwt.strategy validate() 每次查库核对用户状态；双令牌 accessToken(2h)/refreshToken(7d) 从 .env 读。测试账号 admin/admin123（id=1）。类型坑：expiresIn 需 `StringValue` from 'ms'（@types/ms）。
 - 三件套完成（a3ccc51）：① @Perms 按钮级权限（perms.guard.ts 实时查 menu.permission，admin bypass，守卫顺序 Jwt→Roles→Perms）；② 登录日志（AuthService.login 记成败）+ 操作日志（OperLogInterceptor 全局拦截写操作，密码脱敏，@OperLog 声明模块名）；③ 部门模块 system/dept（树+CRUD+防环+删除保护），user 实体加 deptId。日志接口权限用 @Perms 而非 @Roles（auditor 角色 403 验证过）。表：dept/login_log/oper_log、user.deptId。测试数据：auditor1（角色 auditor，仅 system:log:*）。
+- 字典模块完成（02ea1ae）：system/dict-type + dict-item，code 唯一索引、同类型 value 唯一、有字典项禁删；GET /dict-items/code/:code 所有登录用户可用（下拉框数据源）。用户详情/列表/创建/更新返回都带 dept。坑：跨模块 @InjectRepository 必须本模块 forFeature 注册对方实体；select 数组含 'sort' 与原型方法类型冲突（用对象形式）；oxlint no-misused-spread 对实体展开组树加行内 disable。本地测试端口换 3459（3457 被外部代理占用）。演示字典：sys_user_gender、sys_menu_status。
