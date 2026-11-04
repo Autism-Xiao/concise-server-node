@@ -16,8 +16,11 @@ describe('AppController (e2e)', () => {
     await app.init()
   })
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer()).get('/').expect(200).expect({ code: 0, data: 'Hello World!', message: 'ok' })
+  it('/ (GET)', async () => {
+    const res = await request(app.getHttpServer()).get('/').expect(200)
+    // 统一响应为标准 Result：{ code, message, result, success, timestamp }
+    expect(res.body).toMatchObject({ code: 0, message: '', result: 'Hello World!', success: true })
+    expect(typeof res.body.timestamp).toBe('number')
   })
 
   afterEach(async () => {
