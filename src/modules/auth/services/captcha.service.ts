@@ -25,13 +25,17 @@ export class CaptchaService {
   /** 生成验证码：返回 SVG 与 captchaId；debug 模式附带明文（仅开发用） */
   async generate(debug = false): Promise<{ captchaId: string; svg: string; code?: string }> {
     const client = this.requireClient()
-    const { text, data: svg } = svgCaptcha.create({
+    const { text, data: rawSvg } = svgCaptcha.create({
       size: 4,
       ignoreChars: 'il1O0o',
-      noise: 3,
-      color: true,
-      background: '#f5f5f5'
+      // 可读性优先：只 1 条干扰线；不传 background（svg-captcha 只要传背景就强制 color:true 字符随机彩色）
+      noise: 1,
+      width: 132,
+      height: 44,
+      fontSize: 56
     })
+    // 后处理统一配色：字符深灰、干扰线浅灰（fill="none" 的干扰线 path 不动）
+    const svg = rawSvg.replace(/fill="(?!none)[^"]*"/g, 'fill="#3d4a57"').replace(/stroke="[^"]*"/g, 'stroke="#c3ccd6"')
     const captchaId = randomUUID()
     await client.set(CAPTCHA_KEY_PREFIX + captchaId, text.toLowerCase(), 'EX', this.ttlSeconds)
     return debug ? { captchaId, svg, code: text } : { captchaId, svg }

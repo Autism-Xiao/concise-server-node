@@ -43,7 +43,7 @@ async function bootstrap() {
       [
         '中后台服务接口文档',
         '',
-        '**统一响应结构（对齐 JeecgBoot Result）**',
+        '**统一响应结构**',
         '',
         '```json',
         '{ "code": 0, "message": "", "result": {}, "success": true, "timestamp": 1793768743245 }',

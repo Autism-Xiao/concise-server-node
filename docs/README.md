@@ -27,7 +27,8 @@
 | 2026-11-04 | [接口兼容审计与deptId兼容字段](./2026-11-04-接口兼容审计与deptId兼容字段.md) | `b6595b0` | 65 个接口逐个审计：仅用户相关 9 个只加字段；补 deptId 只读兼容，refresh 返回同构 |
 | 2026-11-04 | [统一响应改JeecgBoot-Result格式](./2026-11-04-统一响应改JeecgBoot-Result格式.md) | `bf673d6` | 全局响应改为 `{code,message,result,success,timestamp}`；失败 result=null/success=false；CSV 不包装 |
 | 2026-11-04 | [业务错误码与认证v1路由](./2026-11-04-业务错误码与认证v1路由.md) | `80b2162` | BizErrorCode 枚举（412~417/1001~1008）+ BizException 替换旧异常；新增 /api/v1/auth/captcha、/api/v1/auth/login |
-| 2026-11-04 | [登录日志信息增强](./2026-11-04-登录日志信息增强.md) | 本轮 | login_log 加 browser/os/location；服务端统一解析（ua-parser-js + ip2region）+ trust proxy；前端删自造日志对接真实接口 |
+| 2026-11-04 | [登录日志信息增强](./2026-11-04-登录日志信息增强.md) | `fdfc53e` | login_log 加 browser/os/location；服务端统一解析（ua-parser-js + ip2region）+ trust proxy；前端删自造日志对接真实接口 |
+| 2026-11-04 | [验证码可读性优化](./2026-11-04-验证码可读性优化.md) | 本轮 | noise 3→1、去随机彩色；svg-captcha 传背景强制 color:true 的坑，改后处理统一配色 |
 
 ### 02 认证与权限
 
