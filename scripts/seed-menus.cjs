@@ -33,7 +33,7 @@
     { id: 'menu_39', parent: 'menu_1', name: '菜单管理', url: '/system/menu', type: 1, sort: 8, icon: 'ListTree' },
     { id: 'menu_40', parent: 'menu_1', name: '角色权限', url: '/system/role', type: 1, sort: 9, icon: 'ShieldCheck', perms: 'system:role:list' },
     { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 10, icon: 'Building2', perms: 'system:dept:list' },
-    { id: 'menu_14', parent: 'menu_1', name: '字典管理', url: '/system/dict', type: 1, sort: 11, icon: 'Database', status: '0' }, // 停用
+    { id: 'menu_14', parent: 'menu_1', name: '数据字典', url: '/system/dict', type: 1, sort: 11, icon: 'Database', perms: 'system:dict:list' },
     { id: 'menu_18', parent: 'menu_1', name: '日志管理', url: '/system/log', type: 1, sort: 12, icon: 'ScrollText' },
     { id: 'menu_31', parent: 'menu_1', name: '文件管理', url: '/system/file', type: 1, sort: 13, icon: 'FolderOpen' }, // 原「存储管理 /tools/storage」修正
     { id: 'menu_41', parent: 'menu_1', name: '日历管理', url: '/system/calendar', type: 1, sort: 14, icon: 'CalendarDays' },
