@@ -5,6 +5,7 @@ import type { StringValue } from 'ms'
 
 import { UserModule } from '../user/user.module'
 import { LogModule } from '../system/log/log.module'
+import { RedisModule } from '../../shared/redis/redis.module'
 import { AuthController } from './controllers/auth.controller'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { AuthService } from './services/auth.service'
@@ -15,6 +16,7 @@ import { JwtStrategy } from './strategies/jwt.strategy'
   imports: [
     UserModule,
     LogModule,
+    RedisModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({

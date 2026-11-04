@@ -1,11 +1,13 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Res, StreamableFile } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger'
+import type { Response } from 'express'
 import { Type } from 'class-transformer'
 import { ArrayNotEmpty, IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, MaxLength } from 'class-validator'
 
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { PagerDto } from '../../../common/dto/pager.dto'
+import { formatDateTime, toCsv } from '../../../utils/csv.util'
 import { LogService } from './log.service'
 import { LoginLogEntity } from './entities/login-log.entity'
 import { OperLogEntity } from './entities/oper-log.entity'
@@ -80,6 +82,20 @@ export class LogController {
     return this.logService.listLoginLog(query)
   }
 
+  @ApiOperation({ summary: '导出登录日志 CSV', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
+  @Perms('system:log:export')
+  @Get('login/export')
+  async exportLoginLog(@Query() query: QueryLoginLogDto, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+    const rows = await this.logService.exportLoginLog(query)
+    const csv = toCsv(
+      ['ID', '用户名', '结果', '说明', 'IP', 'User-Agent', '登录时间'],
+      rows.map(row => [row.id, row.username, row.status === 1 ? '成功' : '失败', row.message, row.ip, row.userAgent, formatDateTime(row.createdAt)])
+    )
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="login-logs-${Date.now()}.csv"`)
+    return new StreamableFile(Buffer.from(csv, 'utf8'))
+  }
+
   @ApiOperation({ summary: '登录日志详情' })
   @Perms('system:log:login')
   @Get('login/:id')
@@ -93,6 +109,31 @@ export class LogController {
   @Get('oper')
   listOperLog(@Query() query: QueryOperLogDto) {
     return this.logService.listOperLog(query)
+  }
+
+  @ApiOperation({ summary: '导出操作日志 CSV', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
+  @Perms('system:log:export')
+  @Get('oper/export')
+  async exportOperLog(@Query() query: QueryOperLogDto, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+    const rows = await this.logService.exportOperLog(query)
+    const csv = toCsv(
+      ['ID', '操作人', '模块', '动作', 'IP', '结果', '错误信息', '耗时(ms)', '请求参数', '操作时间'],
+      rows.map(row => [
+        row.id,
+        row.username,
+        row.module,
+        row.action,
+        row.ip,
+        row.status === 1 ? '成功' : '失败',
+        row.errorMsg,
+        row.elapsed,
+        row.params,
+        formatDateTime(row.createdAt)
+      ])
+    )
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="oper-logs-${Date.now()}.csv"`)
+    return new StreamableFile(Buffer.from(csv, 'utf8'))
   }
 
   @ApiOperation({ summary: '操作日志详情' })

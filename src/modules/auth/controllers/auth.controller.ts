@@ -21,7 +21,7 @@ export class AuthController {
   @ApiOperation({ summary: '获取图形验证码', description: 'CAPTCHA_ENABLED=true 时登录必用；返回 SVG 与 captchaId' })
   @Public()
   @Get('captcha')
-  captcha() {
+  async captcha() {
     // CAPTCHA_DEBUG=true 时附带明文 code（仅限开发环境，生产必须关闭）
     const debug = this.configService.get<string>('CAPTCHA_DEBUG') === 'true'
     return this.captchaService.generate(debug)

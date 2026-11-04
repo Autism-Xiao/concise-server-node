@@ -39,7 +39,7 @@ export class AuthService {
         if (!dto.captchaId || !dto.captchaCode) {
           throw new BadRequestException('请输入验证码')
         }
-        if (!this.captchaService.verify(dto.captchaId, dto.captchaCode)) {
+        if (!(await this.captchaService.verify(dto.captchaId, dto.captchaCode))) {
           throw new BadRequestException('验证码错误或已过期')
         }
       }

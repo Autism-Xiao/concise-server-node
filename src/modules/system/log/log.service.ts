@@ -57,15 +57,8 @@ export class LogService {
     }
   }
 
-  /** 分页查询登录日志，支持用户名/结果/时间范围过滤 */
-  async listLoginLog(query: {
-    page?: number
-    pageSize?: number
-    username?: string
-    status?: number
-    startTime?: string
-    endTime?: string
-  }): Promise<Pagination<LoginLogEntity>> {
+  /** 登录日志查询条件构造（列表与导出共用） */
+  private buildLoginLogQb(query: { username?: string; status?: number; startTime?: string; endTime?: string }) {
     const qb = this.loginLogRepository.createQueryBuilder('log').orderBy('log.id', 'DESC')
     if (query.username) {
       qb.andWhere('log.username LIKE :username', { username: `%${query.username}%` })
@@ -79,18 +72,11 @@ export class LogService {
     if (query.endTime) {
       qb.andWhere('log.createdAt <= :endTime', { endTime: query.endTime })
     }
-    return paginate(qb, { page: query.page, pageSize: query.pageSize })
+    return qb
   }
 
-  /** 分页查询操作日志，支持模块/操作人/时间范围过滤 */
-  async listOperLog(query: {
-    page?: number
-    pageSize?: number
-    username?: string
-    module?: string
-    startTime?: string
-    endTime?: string
-  }): Promise<Pagination<OperLogEntity>> {
+  /** 操作日志查询条件构造（列表与导出共用） */
+  private buildOperLogQb(query: { username?: string; module?: string; startTime?: string; endTime?: string }) {
     const qb = this.operLogRepository.createQueryBuilder('log').orderBy('log.id', 'DESC')
     if (query.username) {
       qb.andWhere('log.username LIKE :username', { username: `%${query.username}%` })
@@ -104,7 +90,41 @@ export class LogService {
     if (query.endTime) {
       qb.andWhere('log.createdAt <= :endTime', { endTime: query.endTime })
     }
-    return paginate(qb, { page: query.page, pageSize: query.pageSize })
+    return qb
+  }
+
+  /** 分页查询登录日志，支持用户名/结果/时间范围过滤 */
+  async listLoginLog(query: {
+    page?: number
+    pageSize?: number
+    username?: string
+    status?: number
+    startTime?: string
+    endTime?: string
+  }): Promise<Pagination<LoginLogEntity>> {
+    return paginate(this.buildLoginLogQb(query), { page: query.page, pageSize: query.pageSize })
+  }
+
+  /** 分页查询操作日志，支持模块/操作人/时间范围过滤 */
+  async listOperLog(query: {
+    page?: number
+    pageSize?: number
+    username?: string
+    module?: string
+    startTime?: string
+    endTime?: string
+  }): Promise<Pagination<OperLogEntity>> {
+    return paginate(this.buildOperLogQb(query), { page: query.page, pageSize: query.pageSize })
+  }
+
+  /** 导出登录日志（与列表同过滤条件，不分页，上限 5 万行防拖库） */
+  async exportLoginLog(query: { username?: string; status?: number; startTime?: string; endTime?: string }): Promise<LoginLogEntity[]> {
+    return this.buildLoginLogQb(query).take(50000).getMany()
+  }
+
+  /** 导出操作日志（与列表同过滤条件，不分页，上限 5 万行防拖库） */
+  async exportOperLog(query: { username?: string; module?: string; startTime?: string; endTime?: string }): Promise<OperLogEntity[]> {
+    return this.buildOperLogQb(query).take(50000).getMany()
   }
 
   /** 登录日志详情，不存在抛 404 */
