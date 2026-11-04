@@ -151,7 +151,7 @@ export class MonitorService {
       const [next, batch] = await client.scan(cursor, 'MATCH', '*', 'COUNT', 200)
       cursor = next
       for (const key of batch) {
-        const prefix = key.includes(':') ? `${key.split(':')[0]}:` : key
+        const prefix = this.prefixOf(key)
         const list = groups.get(prefix) ?? []
         if (list.length < 5000) list.push(key)
         groups.set(prefix, list)
@@ -192,6 +192,19 @@ export class MonitorService {
     if (ttl >= 3600) return `最长 ${Math.round(ttl / 3600)} 小时`
     if (ttl >= 60) return `最长 ${Math.round(ttl / 60)} 分钟`
     return `最长 ${ttl} 秒`
+  }
+
+  /**
+   * key 归属的前缀分组
+   *
+   * 优先按已知业务前缀最长匹配（online:session: / online:revoked: / captcha:），
+   * 否则退化为一级前缀（foo:bar:baz → foo:），保证陌生 key 也能分组统计。
+   * 注意不能简单取「前两段」——captcha:abc123 只有一段业务前缀，会被切成 captcha:abc123:。
+   */
+  private prefixOf(key: string): string {
+    const known = Object.keys(PREFIX_DESCRIPTIONS).find(prefix => key.startsWith(prefix))
+    if (known) return known
+    return key.includes(':') ? `${key.split(':')[0]}:` : key
   }
 
   /** 取本机第一个非内网回环 IPv4 */
