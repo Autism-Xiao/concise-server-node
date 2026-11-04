@@ -1,25 +1,24 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Res, StreamableFile } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Query, Res, StreamableFile } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger'
 import type { Response } from 'express'
 import { Type } from 'class-transformer'
-import { ArrayNotEmpty, IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, MaxLength } from 'class-validator'
+import { ArrayNotEmpty, IsArray, IsDateString, IsIn, IsOptional, IsString, MaxLength } from 'class-validator'
 
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { PagerDto } from '../../../common/dto/pager.dto'
 import { formatDateTime, toCsv } from '../../../utils/csv.util'
 import { LogService } from './log.service'
-import { LoginLogEntity } from './entities/login-log.entity'
-import { OperLogEntity } from './entities/oper-log.entity'
+import { SysLogEntity } from './entities/sys-log.entity'
 
 class QueryLoginLogDto extends PagerDto {
   @ApiPropertyOptional({ description: '用户名模糊过滤', example: 'admin' })
   @IsOptional()
   @IsString()
-  @MaxLength(32)
+  @MaxLength(100)
   username?: string
 
-  @ApiPropertyOptional({ description: '结果过滤：0 失败 / 1 成功', example: 1, enum: [0, 1] })
+  @ApiPropertyOptional({ description: '结果过滤（jeecg 语义）：0 成功 / 1 失败', example: 0, enum: [0, 1] })
   @IsOptional()
   @IsIn([0, 1])
   @Type(() => Number)
@@ -40,7 +39,7 @@ class QueryOperLogDto extends PagerDto {
   @ApiPropertyOptional({ description: '操作人用户名模糊过滤', example: 'admin' })
   @IsOptional()
   @IsString()
-  @MaxLength(32)
+  @MaxLength(100)
   username?: string
 
   @ApiPropertyOptional({ description: '模块名模糊过滤', example: '用户管理' })
@@ -61,45 +60,50 @@ class QueryOperLogDto extends PagerDto {
 }
 
 class DeleteLogsDto {
-  @ApiProperty({ description: '要删除的日志 ID 列表', example: [1, 2] })
+  @ApiProperty({ description: '要删除的日志 ID 列表（32 位字符串）', example: ['69b866e4ce4219330ed2093d6fe67e2a'] })
   @IsArray()
   @ArrayNotEmpty({ message: 'ids 不能为空' })
-  @IsInt({ each: true })
-  ids: number[]
+  @IsString({ each: true })
+  ids: string[]
 }
 
-@ApiTags('日志管理')
+/**
+ * 日志管理接口 V1：/api/v1/logs/**
+ *
+ * 单表 sys_log（对齐 JeecgBoot）：log_type=0 登录日志、log_type=1 操作日志；
+ * status 为 jeecg 语义 0 成功 / 1 失败。
+ */
+@ApiTags('日志管理 V1')
 @ApiBearerAuth('jwt')
-@Controller('logs')
-export class LogController {
+@Controller('v1/logs')
+export class LogV1Controller {
   constructor(private readonly logService: LogService) {}
 
-  @ApiOperation({ summary: '登录日志分页列表', description: '支持用户名/结果/时间范围过滤' })
-  @ApiOkResponse({ description: '登录日志分页', type: LoginLogEntity })
+  @ApiOperation({ summary: '登录日志分页列表（v1）', description: '支持用户名/结果/时间范围过滤；status 0 成功 1 失败' })
+  @ApiOkResponse({ description: '登录日志分页', type: SysLogEntity })
   @Perms('system:log:login')
   @Get('login')
   listLoginLog(@Query() query: QueryLoginLogDto) {
     return this.logService.listLoginLog(query)
   }
 
-  @ApiOperation({ summary: '导出登录日志 CSV', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
+  @ApiOperation({ summary: '导出登录日志 CSV（v1）', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
   @Perms('system:log:export')
   @Get('login/export')
   async exportLoginLog(@Query() query: QueryLoginLogDto, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
     const rows = await this.logService.exportLoginLog(query)
     const csv = toCsv(
-      ['ID', '用户名', '结果', '说明', 'IP', '归属地', '浏览器', '操作系统', 'User-Agent', '登录时间'],
+      ['ID', '用户名', '结果', '说明', 'IP', '归属地', '浏览器', '操作系统', '登录时间'],
       rows.map(row => [
         row.id,
-        row.username,
-        row.status === 1 ? '成功' : '失败',
-        row.message,
+        row.operateUserName,
+        row.status === 0 ? '成功' : '失败',
+        row.logContent,
         row.ip,
         row.location ?? '未知',
         row.browser ?? '未知',
         row.os ?? '未知',
-        row.userAgent,
-        formatDateTime(row.createdAt)
+        formatDateTime(row.createTime)
       ])
     )
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
@@ -107,39 +111,38 @@ export class LogController {
     return new StreamableFile(Buffer.from(csv, 'utf8'))
   }
 
-  @ApiOperation({ summary: '登录日志详情' })
+  @ApiOperation({ summary: '登录日志详情（v1）' })
   @Perms('system:log:login')
   @Get('login/:id')
-  findLoginLog(@Param('id', ParseIntPipe) id: number) {
+  findLoginLog(@Param('id') id: string) {
     return this.logService.findLoginLog(id)
   }
 
-  @ApiOperation({ summary: '操作日志分页列表', description: '支持操作人/模块/时间范围过滤' })
-  @ApiOkResponse({ description: '操作日志分页', type: OperLogEntity })
+  @ApiOperation({ summary: '操作日志分页列表（v1）', description: '支持操作人/模块/时间范围过滤；status 0 成功 1 失败' })
+  @ApiOkResponse({ description: '操作日志分页', type: SysLogEntity })
   @Perms('system:log:oper')
   @Get('oper')
   listOperLog(@Query() query: QueryOperLogDto) {
     return this.logService.listOperLog(query)
   }
 
-  @ApiOperation({ summary: '导出操作日志 CSV', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
+  @ApiOperation({ summary: '导出操作日志 CSV（v1）', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
   @Perms('system:log:export')
   @Get('oper/export')
   async exportOperLog(@Query() query: QueryOperLogDto, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
     const rows = await this.logService.exportOperLog(query)
     const csv = toCsv(
-      ['ID', '操作人', '模块', '动作', 'IP', '结果', '错误信息', '耗时(ms)', '请求参数', '操作时间'],
+      ['ID', '操作人', '内容', 'IP', '结果', '错误信息', '耗时(ms)', '请求参数', '操作时间'],
       rows.map(row => [
         row.id,
-        row.username,
-        row.module,
-        row.action,
+        row.operateUserName,
+        row.logContent,
         row.ip,
-        row.status === 1 ? '成功' : '失败',
+        row.status === 0 ? '成功' : '失败',
         row.errorMsg,
-        row.elapsed,
+        row.costTime,
         row.params,
-        formatDateTime(row.createdAt)
+        formatDateTime(row.createTime)
       ])
     )
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
@@ -147,14 +150,14 @@ export class LogController {
     return new StreamableFile(Buffer.from(csv, 'utf8'))
   }
 
-  @ApiOperation({ summary: '操作日志详情' })
+  @ApiOperation({ summary: '操作日志详情（v1）' })
   @Perms('system:log:oper')
   @Get('oper/:id')
-  findOperLog(@Param('id', ParseIntPipe) id: number) {
+  findOperLog(@Param('id') id: string) {
     return this.logService.findOperLog(id)
   }
 
-  @ApiOperation({ summary: '批量删除登录日志' })
+  @ApiOperation({ summary: '批量删除登录日志（v1）' })
   @OperLog('日志管理')
   @Perms('system:log:delete')
   @Delete('login')
@@ -162,7 +165,7 @@ export class LogController {
     return this.logService.removeLoginLogs(dto.ids)
   }
 
-  @ApiOperation({ summary: '批量删除操作日志' })
+  @ApiOperation({ summary: '批量删除操作日志（v1）' })
   @OperLog('日志管理')
   @Perms('system:log:delete')
   @Delete('oper')

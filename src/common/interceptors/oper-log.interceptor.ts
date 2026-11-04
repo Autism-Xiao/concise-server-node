@@ -7,8 +7,8 @@ import { tap } from 'rxjs/operators'
 import { OPER_LOG_KEY } from '../decorators/oper-log.decorator'
 import { LogService } from '../../modules/system/log/log.service'
 
-/** 需要记录操作日志的 HTTP 方法 */
-const LOGGED_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH'])
+/** 需要记录操作日志的 HTTP 方法 → jeecg operate_type（2 添加 / 3 更新 / 4 删除） */
+const METHOD_OPERATE_TYPE: Record<string, number> = { POST: 2, PUT: 3, PATCH: 3, DELETE: 4 }
 /** 不记录操作日志的路径（登录/刷新由登录日志单独记录） */
 const SKIPPED_PATHS = ['/auth/login', '/auth/refresh']
 /** 参数序列化的最大长度，超出截断 */
@@ -44,7 +44,8 @@ export class OperLogInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest<Request>()
     const method = request.method.toUpperCase()
 
-    if (!LOGGED_METHODS.has(method)) {
+    const operateType = METHOD_OPERATE_TYPE[method]
+    if (!operateType) {
       return next.handle()
     }
     if (SKIPPED_PATHS.some(path => request.path.includes(path))) {
@@ -70,9 +71,10 @@ export class OperLogInterceptor implements NestInterceptor {
             username: user.username,
             module,
             action,
+            operateType,
             ip: request.ip ?? '',
             params,
-            status: 1,
+            status: 0, // jeecg 语义：0 正常（成功）
             elapsed: Date.now() - startedAt
           })
         },
@@ -82,9 +84,10 @@ export class OperLogInterceptor implements NestInterceptor {
             username: user.username,
             module,
             action,
+            operateType,
             ip: request.ip ?? '',
             params,
-            status: 0,
+            status: 1, // jeecg 语义：1 异常（失败）
             errorMsg: error?.message?.slice(0, 255),
             elapsed: Date.now() - startedAt
           })

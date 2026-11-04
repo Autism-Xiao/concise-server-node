@@ -70,11 +70,12 @@ export class AuthService {
         throw new BizException(BizErrorCode.ACCOUNT_DISABLED, '账号已被冻结，请联系管理员', HttpStatus.FORBIDDEN)
       }
 
-      await this.logService.recordLogin({ username: dto.username, status: 1, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
+      // status 为 jeecg 语义（sys_log）：0 正常（成功）/ 1 异常（失败）
+      await this.logService.recordLogin({ username: dto.username, status: 0, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
       return this.issueTokens(user)
     } catch (error) {
       const message = error instanceof HttpException ? error.message : '登录异常'
-      await this.logService.recordLogin({ username: dto.username, status: 0, message, ip: meta.ip, userAgent: meta.userAgent })
+      await this.logService.recordLogin({ username: dto.username, status: 1, message, ip: meta.ip, userAgent: meta.userAgent })
       throw error
     }
   }

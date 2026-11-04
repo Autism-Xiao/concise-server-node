@@ -71,3 +71,4 @@
 | 2026-11-04 | [菜单管理增删改查重构](./2026-11-04-菜单管理增删改查重构.md) | 本轮 | /api/v1/menus；删除改软删+子级保护(1005)+换父防环；前端菜单页对接后端（parentId 组树、类型联动表单） |
 | 2026-11-04 | [角色管理V1-CRUD重构](./2026-11-04-角色管理V1-CRUD重构.md) | 本轮 | /api/v1/roles 七接口；roleCode 唯一拦截、内置 admin 保护、有用户绑定拒删+清关联行；补 system:role:* 按钮权限数据 |
 | 2026-11-04 | [部门职级岗位V1接口](./2026-11-04-部门职级岗位V1接口.md) | 本轮 | /api/v1/depts、/api/v1/levels（新表 sys_level）、/api/v1/posts（新表 sys_position 对齐 jeecg）；collation 必须跟库内既有表一致（unicode_ci）的坑 |
+| 2026-11-04 | [日志管理对齐JeecgBoot单表sys_log](./2026-11-04-日志管理对齐JeecgBoot单表sys_log.md) | 本轮 | login_log+oper_log 合并为单表 sys_log（jeecg 结构，status 0成功1失败），存量迁移；/api/v1/logs 八接口；前端日志两页全真实数据、删除/清空对接后端 |
