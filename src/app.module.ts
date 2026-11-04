@@ -23,6 +23,8 @@ import { DictTypeModule } from './modules/system/dict-type/dict-type.module'
 import { DictItemModule } from './modules/system/dict-item/dict-item.module'
 import { NoticeModule } from './modules/system/notice/notice.module'
 import { TaskModule } from './modules/system/task/task.module'
+import { LevelModule } from './modules/system/level/level.module'
+import { PostModule } from './modules/system/post/post.module'
 import { ToolsModule } from './modules/tools/tools.module'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 
@@ -50,6 +52,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     DictItemModule,
     NoticeModule,
     TaskModule,
+    LevelModule,
+    PostModule,
     // 公共工具模块（上传/存储）
     ToolsModule,
     // Distributed tracing, auto-correlated logs, request/job metrics, error

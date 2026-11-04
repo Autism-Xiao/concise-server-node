@@ -32,13 +32,13 @@
     { id: 'menu_2', parent: 'menu_1', name: '用户管理', url: '/system/users', type: 1, sort: 7, icon: 'Users' }, // 原 /system/user 修正
     { id: 'menu_39', parent: 'menu_1', name: '菜单管理', url: '/system/menu', type: 1, sort: 8, icon: 'ListTree' },
     { id: 'menu_40', parent: 'menu_1', name: '角色权限', url: '/system/role', type: 1, sort: 9, icon: 'ShieldCheck', perms: 'system:role:list' },
-    { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 10, icon: 'Building2' },
+    { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 10, icon: 'Building2', perms: 'system:dept:list' },
     { id: 'menu_14', parent: 'menu_1', name: '字典管理', url: '/system/dict', type: 1, sort: 11, icon: 'Database', status: '0' }, // 停用
     { id: 'menu_18', parent: 'menu_1', name: '日志管理', url: '/system/log', type: 1, sort: 12, icon: 'ScrollText' },
     { id: 'menu_31', parent: 'menu_1', name: '文件管理', url: '/system/file', type: 1, sort: 13, icon: 'FolderOpen' }, // 原「存储管理 /tools/storage」修正
     { id: 'menu_41', parent: 'menu_1', name: '日历管理', url: '/system/calendar', type: 1, sort: 14, icon: 'CalendarDays' },
-    { id: 'menu_42', parent: 'menu_1', name: '职级管理', url: '/system/level', type: 1, sort: 22, icon: 'Medal' },
-    { id: 'menu_43', parent: 'menu_1', name: '岗位管理', url: '/system/post', type: 1, sort: 23, icon: 'Briefcase' },
+    { id: 'menu_42', parent: 'menu_1', name: '职级管理', url: '/system/level', type: 1, sort: 22, icon: 'Medal', perms: 'system:level:list' },
+    { id: 'menu_43', parent: 'menu_1', name: '岗位管理', url: '/system/post', type: 1, sort: 23, icon: 'Briefcase', perms: 'system:post:list' },
     { id: 'menu_44', parent: 'menu_1', name: '租户管理', url: '/system/tenant', type: 1, sort: 24, icon: 'Network' },
     { id: 'menu_21', parent: 'menu_1', name: '通知公告', url: '/system/notice', type: 1, sort: 25, icon: 'Megaphone' }, // 原「公告管理」
     { id: 'menu_45', parent: 'menu_1', name: '行政区划', url: '/system/region', type: 1, sort: 26, icon: 'MapPin' },
@@ -77,13 +77,22 @@
     }
   }
 
-  // ---- 角色管理按钮权限（menu_type=2，挂在 menu_40 下，幂等） ----
-  const ROLE_BUTTONS = [
+  // ---- 按钮权限（menu_type=2，幂等） ----
+  const BUTTONS = [
+    // 角色管理（menu_40）
     { id: 'menu_52', parent: 'menu_40', name: '角色新增', perms: 'system:role:add', sort: 1 },
     { id: 'menu_53', parent: 'menu_40', name: '角色修改', perms: 'system:role:update', sort: 2 },
-    { id: 'menu_54', parent: 'menu_40', name: '角色删除', perms: 'system:role:delete', sort: 3 }
+    { id: 'menu_54', parent: 'menu_40', name: '角色删除', perms: 'system:role:delete', sort: 3 },
+    // 职级管理（menu_42）
+    { id: 'menu_55', parent: 'menu_42', name: '职级新增', perms: 'system:level:add', sort: 1 },
+    { id: 'menu_56', parent: 'menu_42', name: '职级修改', perms: 'system:level:update', sort: 2 },
+    { id: 'menu_57', parent: 'menu_42', name: '职级删除', perms: 'system:level:delete', sort: 3 },
+    // 岗位管理（menu_43）
+    { id: 'menu_58', parent: 'menu_43', name: '岗位新增', perms: 'system:post:add', sort: 1 },
+    { id: 'menu_59', parent: 'menu_43', name: '岗位修改', perms: 'system:post:update', sort: 2 },
+    { id: 'menu_60', parent: 'menu_43', name: '岗位删除', perms: 'system:post:delete', sort: 3 }
   ]
-  for (const b of ROLE_BUTTONS) {
+  for (const b of BUTTONS) {
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])
     if (exists.length) {
       await ds.query('UPDATE sys_permission SET parent_id=?, name=?, perms=?, menu_type=2, del_flag=0, update_time=NOW() WHERE id=?', [b.parent, b.name, b.perms, b.id])
