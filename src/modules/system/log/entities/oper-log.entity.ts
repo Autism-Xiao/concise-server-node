@@ -7,9 +7,9 @@ export class OperLogEntity {
   @PrimaryGeneratedColumn()
   id: number
 
-  @ApiPropertyOptional({ description: '操作人用户 ID（未登录为空）', example: 1, nullable: true })
-  @Column({ type: 'int', nullable: true, comment: '操作人用户ID' })
-  userId?: number
+  @ApiPropertyOptional({ description: '操作人用户 ID（sys_user 主键，32位字符串）', example: 'e9ca23d68d884d4ebb19d07889727dae', nullable: true })
+  @Column({ type: 'varchar', length: 32, nullable: true, comment: '操作人用户ID' })
+  userId?: string
 
   @ApiPropertyOptional({ description: '操作人用户名', example: 'admin', nullable: true })
   @Column({ length: 32, nullable: true, comment: '操作人用户名' })

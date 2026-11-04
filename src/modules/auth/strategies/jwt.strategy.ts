@@ -20,11 +20,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     })
   }
 
-  /** 校验通过后触发：确认用户仍存在且启用（带角色，供 RolesGuard 使用），返回值挂到 req.user */
+  /** 校验通过后触发：确认用户仍存在且未冻结（带角色，供 RolesGuard 使用），返回值挂到 req.user */
   async validate(payload: JwtPayload) {
-    const user = await this.userService.findOneWithRoles(payload.id)
+    const user = await this.userService.findOneWithRoles(String(payload.id))
     if (!user || user.status !== 1) {
-      throw new UnauthorizedException('账号不存在或已被禁用')
+      throw new UnauthorizedException('账号不存在或已被冻结')
     }
     return user
   }

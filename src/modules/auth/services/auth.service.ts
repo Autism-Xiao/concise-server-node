@@ -2,15 +2,14 @@ import { Injectable, UnauthorizedException, BadRequestException, HttpException }
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import type { StringValue } from 'ms'
-import * as bcrypt from 'bcryptjs'
 
-import { UserService } from '../../user/user.service'
+import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
 import { CaptchaService } from './captcha.service'
 import { LoginDto } from '../dto/login.dto'
 
 export interface JwtPayload {
-  id: number
+  id: string
   username: string
 }
 
@@ -49,13 +48,13 @@ export class AuthService {
         throw new UnauthorizedException('用户名或密码错误')
       }
 
-      const passwordOk = await bcrypt.compare(dto.password, user.password)
-      if (!passwordOk) {
+      // JeecgBoot 兼容校验：PBEWithMD5AndDES(username, password, salt) 与库中 16 位 hex 比对
+      if (!this.userService.verifyPassword(user, dto.password)) {
         throw new UnauthorizedException('用户名或密码错误')
       }
 
-      if (user.status !== 1) {
-        throw new UnauthorizedException('账号已被禁用，请联系管理员')
+      if (user.status !== USER_STATUS.NORMAL) {
+        throw new UnauthorizedException('账号已被冻结，请联系管理员')
       }
 
       await this.logService.recordLogin({ username: dto.username, status: 1, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
@@ -78,7 +77,7 @@ export class AuthService {
       throw new UnauthorizedException('refreshToken 无效或已过期')
     }
 
-    const user = await this.userService.findOne(payload.id)
+    const user = await this.userService.findOne(String(payload.id))
     return this.issueTokens(user)
   }
 

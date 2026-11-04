@@ -51,7 +51,7 @@ export class OperLogInterceptor implements NestInterceptor {
       return next.handle()
     }
 
-    const user = (request as Request & { user?: { id?: number; username?: string } }).user
+    const user = (request as Request & { user?: { id?: string; username?: string } }).user
     if (!user?.id) {
       return next.handle()
     }

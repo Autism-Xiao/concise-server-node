@@ -15,7 +15,7 @@ export interface LoginLogInput {
 }
 
 export interface OperLogInput {
-  userId?: number
+  userId?: string
   username?: string
   module: string
   action: string

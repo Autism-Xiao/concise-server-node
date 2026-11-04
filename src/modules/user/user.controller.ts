@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Request } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Roles } from '../../common/decorators/roles.decorator'
@@ -17,7 +17,7 @@ import { UserService } from './user.service'
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @ApiOperation({ summary: '分页查询用户列表', description: '支持 keyword 模糊匹配用户名/昵称、status 精确过滤' })
+  @ApiOperation({ summary: '分页查询用户列表', description: '支持 keyword 模糊匹配账号/真实姓名/电话、status 精确过滤' })
   @ApiOkResponse({ description: '分页结果', type: [UserEntity] })
   @Get()
   list(@Query() query: QueryUserDto) {
@@ -27,11 +27,11 @@ export class UserController {
   @ApiOperation({ summary: '查询用户详情（含角色与部门）' })
   @ApiOkResponse({ description: '用户信息', type: UserEntity })
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number): Promise<UserEntity | null> {
+  findOne(@Param('id') id: string): Promise<UserEntity> {
     return this.userService.findOneDetail(id)
   }
 
-  @ApiOperation({ summary: '创建用户', description: '密码入库前自动 bcrypt 哈希，响应不返回密码' })
+  @ApiOperation({ summary: '创建用户', description: '32位主键自动生成；密码按 JeecgBoot PBEWithMD5AndDES(username, password, salt) 入库' })
   @OperLog('用户管理')
   @Perms('system:user:add')
   @Post()
@@ -40,25 +40,25 @@ export class UserController {
     return this.userService.stripPassword(user)
   }
 
-  @ApiOperation({ summary: '更新用户' })
+  @ApiOperation({ summary: '更新用户', description: 'username 不可修改（密码算法绑定账号）；改密码自动换新盐' })
   @OperLog('用户管理')
   @Perms('system:user:update')
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto, @Request() req: { user: { username: string } }) {
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto, @Request() req: { user: { username: string } }) {
     return this.userService.update(id, dto, req.user.username)
   }
 
-  @ApiOperation({ summary: '删除用户' })
+  @ApiOperation({ summary: '删除用户（软删除）' })
   @OperLog('用户管理')
   @Perms('system:user:delete')
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
+  delete(@Param('id') id: string) {
     return this.userService.delete(id)
   }
 
   @ApiOperation({ summary: '为用户绑定角色（全量覆盖）' })
   @Put(':id/roles')
-  async assignRoles(@Param('id', ParseIntPipe) id: number, @Body() dto: { roleIds: number[] }) {
+  async assignRoles(@Param('id') id: string, @Body() dto: { roleIds: number[] }) {
     await this.userService.assignRoles(id, dto.roleIds)
     return this.userService.findOneWithRoles(id)
   }

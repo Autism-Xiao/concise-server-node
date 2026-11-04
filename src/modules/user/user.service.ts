@@ -1,14 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
-import * as bcrypt from 'bcryptjs'
 
 import { BusinessException } from '../../common/exceptions/business.exception'
 import { BaseService } from '../../helper/crud/base.service'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
+import { encryptPassword, randomId32, randomSalt } from '../../utils/password.util'
 import { UserEntity } from './entities/user.entity'
 import { RoleEntity } from '../role/entities/role.entity'
 import type { QueryUserDto } from './dto/query-user.dto'
+
+/** 用户状态（对齐 sys_user）：1 正常 / 2 冻结 */
+export const USER_STATUS = { NORMAL: 1, FROZEN: 2 } as const
 
 @Injectable()
 export class UserService extends BaseService<UserEntity> {
@@ -21,16 +24,23 @@ export class UserService extends BaseService<UserEntity> {
     super(repository, '用户')
   }
 
-  /** 创建：密码自动 bcrypt 哈希后入库；支持 roleIds 直接绑角色；operator 为创建人 */
+  /** 创建：生成 32 位主键与密码盐，密码按 JeecgBoot 算法 PBEWithMD5AndDES(username, password, salt) 入库 */
   async create(dto: Partial<UserEntity> & { roleIds?: number[] }, operator?: string): Promise<UserEntity> {
     const data: Partial<UserEntity> = { ...dto }
     delete (data as { roleIds?: number[] }).roleIds
+    data.id = data.id || randomId32()
+    data.salt = randomSalt()
+    if (data.password) {
+      data.password = encryptPassword(data.username as string, data.password, data.salt)
+    }
+    data.status = data.status || USER_STATUS.NORMAL
+    data.delFlag = 0
     if (operator) {
       data.createBy = operator
       data.updateBy = operator
     }
-    if (data.password) {
-      data.password = await bcrypt.hash(data.password, 10)
+    if (!data.createTime) {
+      data.createTime = new Date()
     }
     const user = await super.create(data)
     if (dto.roleIds?.length) {
@@ -39,16 +49,20 @@ export class UserService extends BaseService<UserEntity> {
     return this.findOneDetail(user.id) as Promise<UserEntity>
   }
 
-  /** 更新：若携带密码同样先哈希；携带 roleIds 则重绑角色；operator 为更新人 */
-  async update(id: number, dto: Partial<UserEntity> & { roleIds?: number[] }, operator?: string): Promise<UserEntity> {
+  /** 更新：若携带密码则生成新盐重新加密；携带 roleIds 则重绑角色 */
+  async update(id: string, dto: Partial<UserEntity> & { roleIds?: number[] }, operator?: string): Promise<UserEntity> {
     const data: Partial<UserEntity> = { ...dto }
     delete (data as { roleIds?: number[] }).roleIds
+    delete data.username // 账号不允许修改（密码算法绑定 username）
+    if (data.password) {
+      data.salt = randomSalt()
+      const user = await this.findOneWithPassword(id)
+      data.password = encryptPassword(user?.username ?? '', data.password, data.salt)
+    }
     if (operator) {
       data.updateBy = operator
     }
-    if (data.password) {
-      data.password = await bcrypt.hash(data.password, 10)
-    }
+    data.updateTime = new Date()
     await super.update(id, data)
     if (dto.roleIds) {
       await this.assignRoles(id, dto.roleIds)
@@ -56,34 +70,16 @@ export class UserService extends BaseService<UserEntity> {
     return this.findOneDetail(id) as Promise<UserEntity>
   }
 
-  /** 软删除（对齐 sys_user.del_flag）：置 delFlag=1 而非物理删除；admin 不可删除 */
-  async delete(id: number): Promise<void> {
-    const user = await this.findOne(id)
-    if (user.username === 'admin') {
-      throw new BusinessException('内置管理员账号不允许删除', 400)
-    }
-    await this.repository.update(id, { delFlag: 1 })
-  }
-
-  /** 单查覆盖：过滤已软删用户 */
-  async findOne(id: number): Promise<UserEntity> {
-    const user = await this.repository.findOne({ where: { id, delFlag: 0 } })
-    if (!user) {
-      throw new NotFoundException('用户不存在')
-    }
-    return user
-  }
-
   /** 绑定角色（全量覆盖） */
-  async assignRoles(id: number, roleIds: number[]): Promise<void> {
+  async assignRoles(id: string, roleIds: number[]): Promise<void> {
     await this.findOne(id)
     const roles = await this.roleRepository.findBy({ id: In(roleIds) })
     await this.repository.createQueryBuilder().relation(UserEntity, 'roles').of(id).addAndRemove(roles, [])
   }
 
-  /** 分页列表：支持 keyword 模糊搜索用户名/真实姓名/手机号、status 精确过滤；过滤已软删 */
+  /** 分页列表：支持 keyword 模糊搜索账号/真实姓名/电话、status 精确过滤；过滤已软删 */
   async listByQuery(query: QueryUserDto): Promise<Pagination<UserEntity>> {
-    const qb = this.repository.createQueryBuilder('user').where('user.delFlag = 0').orderBy('user.id', 'DESC')
+    const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 0').orderBy('user.create_time', 'DESC')
 
     if (query.keyword) {
       qb.andWhere('(user.username LIKE :keyword OR user.realname LIKE :keyword OR user.phone LIKE :keyword)', {
@@ -94,7 +90,7 @@ export class UserService extends BaseService<UserEntity> {
       qb.andWhere('user.status = :status', { status: Number(query.status) })
     }
     if (query.deptId !== undefined && query.deptId !== null) {
-      qb.andWhere('user.deptId = :deptId', { deptId: query.deptId })
+      qb.andWhere('user.dept_id = :deptId', { deptId: query.deptId })
     }
 
     const options: PaginateOptions = { page: query.page, pageSize: query.pageSize }
@@ -102,13 +98,22 @@ export class UserService extends BaseService<UserEntity> {
     return paginate(qb, options)
   }
 
+  /** 单查覆盖：过滤已软删用户 */
+  async findOne(id: string): Promise<UserEntity> {
+    const user = await this.repository.findOne({ where: { id, delFlag: 0 } })
+    if (!user) {
+      throw new NotFoundException('用户不存在')
+    }
+    return user
+  }
+
   /** 按 id 查找并带出角色（过滤已软删） */
-  async findOneWithRoles(id: number): Promise<UserEntity | null> {
+  async findOneWithRoles(id: string): Promise<UserEntity | null> {
     return this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true } })
   }
 
   /** 详情：带出角色 + 部门（过滤已软删，不存在抛 404） */
-  async findOneDetail(id: number): Promise<UserEntity> {
+  async findOneDetail(id: string): Promise<UserEntity> {
     const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, dept: true } })
     if (!user) {
       throw new NotFoundException('用户不存在')
@@ -116,26 +121,49 @@ export class UserService extends BaseService<UserEntity> {
     return user
   }
 
-  /** 按 id 查找（含密码，仅供认证场景使用；过滤已软删） */
-  async findOneWithPassword(id: number): Promise<UserEntity | null> {
-    return this.repository.createQueryBuilder('user').addSelect('user.password').where('user.id = :id', { id }).andWhere('user.delFlag = 0').getOne()
-  }
-
-  /** 按用户名查找并带出角色（登录用，密码显式加查；过滤已软删） */
-  async findByUsername(username: string): Promise<UserEntity | null> {
+  /** 按 id 查找（含密码与盐，仅供认证场景使用；过滤已软删） */
+  async findOneWithPassword(id: string): Promise<UserEntity | null> {
     return this.repository
       .createQueryBuilder('user')
-      .addSelect('user.password')
-      .leftJoinAndSelect('user.roles', 'role')
-      .where('user.username = :username', { username })
-      .andWhere('user.delFlag = 0')
+      .addSelect(['user.password', 'user.salt'])
+      .where('user.id = :id', { id })
+      .andWhere('user.del_flag = 0')
       .getOne()
   }
 
-  /** 去掉密码字段，安全返回 */
-  stripPassword(user: UserEntity): Omit<UserEntity, 'password'> {
-    const { password: _password, ...rest } = user
+  /** 按用户名查找并带出角色（登录用，密码与盐显式加查；过滤已软删） */
+  async findByUsername(username: string): Promise<UserEntity | null> {
+    return this.repository
+      .createQueryBuilder('user')
+      .addSelect(['user.password', 'user.salt'])
+      .leftJoinAndSelect('user.roles', 'role')
+      .where('user.username = :username', { username })
+      .andWhere('user.del_flag = 0')
+      .getOne()
+  }
+
+  /** 软删除（对齐 sys_user.del_flag）：置 del_flag=1 而非物理删除；admin 不可删除 */
+  async delete(id: string): Promise<void> {
+    const user = await this.findOne(id)
+    if (user.username === 'admin') {
+      throw new BusinessException('内置管理员账号不允许删除', 400)
+    }
+    await this.repository.update(id, { delFlag: 1 })
+  }
+
+  /** 校验登录密码：JeecgBoot 算法 PBEWithMD5AndDES(username, password, salt) */
+  verifyPassword(user: UserEntity, plainPassword: string): boolean {
+    if (!user.password || !user.salt) {
+      return false
+    }
+    return encryptPassword(user.username, plainPassword, user.salt) === user.password
+  }
+
+  /** 去掉密码与盐字段，安全返回 */
+  stripPassword(user: UserEntity): Omit<UserEntity, 'password' | 'salt'> {
+    const { password: _password, salt: _salt, ...rest } = user
     void _password
+    void _salt
     return rest
   }
 }

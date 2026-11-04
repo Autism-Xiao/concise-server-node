@@ -23,7 +23,7 @@ export class UploadController {
   @Perms('tools:upload')
   @Post()
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: UPLOAD_FILE_SIZE } }))
-  upload(@UploadedFile() file: Express.Multer.File, @Request() req: { user?: { id: number } }) {
+  upload(@UploadedFile() file: Express.Multer.File, @Request() req: { user?: { id: string } }) {
     return this.uploadService.saveFile(file, req.user?.id)
   }
 }

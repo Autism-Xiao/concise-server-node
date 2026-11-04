@@ -33,8 +33,8 @@ export class StorageEntity {
   size?: string
 
   @ApiPropertyOptional({ description: '上传用户 ID', example: 1, nullable: true })
-  @Column({ name: 'user_id', type: 'int', nullable: true, comment: '上传用户ID' })
-  userId?: number
+  @Column({ name: 'user_id', type: 'varchar', length: 32, nullable: true, comment: '上传用户ID' })
+  userId?: string
 
   @ApiProperty({ description: '创建时间' })
   @CreateDateColumn({ name: 'created_at', comment: '创建时间' })

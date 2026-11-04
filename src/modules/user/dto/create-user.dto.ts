@@ -3,17 +3,17 @@ import { Type } from 'class-transformer'
 import { ArrayMinSize, IsArray, IsDateString, IsEmail, IsIn, IsInt, IsOptional, IsString, Length, MaxLength, Min } from 'class-validator'
 
 export class CreateUserDto {
-  @ApiProperty({ description: '用户名（3~32 位，唯一）', example: 'zhangsan', minLength: 3, maxLength: 32 })
+  @ApiProperty({ description: '登录账号（唯一，3~100 位；密码算法绑定账号，创建后不可改）', example: 'zhangsan', minLength: 3, maxLength: 100 })
   @IsString()
-  @Length(3, 32, { message: '用户名长度须在 3~32 位之间' })
+  @Length(3, 100, { message: '用户名长度须在 3~100 位之间' })
   username: string
 
   @ApiProperty({ description: '真实姓名', example: '张三', maxLength: 100 })
   @IsString()
   @Length(1, 100)
-  realname: string
+  realname?: string
 
-  @ApiProperty({ description: '密码（6~64 位，入库前自动 bcrypt 哈希）', example: '123456', minLength: 6, maxLength: 64 })
+  @ApiProperty({ description: '密码（6~64 位明文，服务端生成盐并按 JeecgBoot 算法加密入库）', example: '123456', minLength: 6, maxLength: 64 })
   @IsString()
   @Length(6, 64, { message: '密码长度须在 6~64 位之间' })
   password: string
@@ -30,7 +30,7 @@ export class CreateUserDto {
   @Type(() => Number)
   sex?: number
 
-  @ApiPropertyOptional({ description: '手机号', example: '18611111111', maxLength: 45 })
+  @ApiPropertyOptional({ description: '电话', example: '18611111111', maxLength: 45 })
   @IsOptional()
   @IsString()
   @MaxLength(45)
@@ -42,7 +42,7 @@ export class CreateUserDto {
   @MaxLength(45)
   telephone?: string
 
-  @ApiPropertyOptional({ description: '邮箱', example: 'zhangsan@test.com', maxLength: 64 })
+  @ApiPropertyOptional({ description: '邮箱', example: 'zhangsan@test.com', maxLength: 45 })
   @IsOptional()
   @IsEmail({}, { message: '邮箱格式不正确' })
   email?: string
@@ -58,9 +58,9 @@ export class CreateUserDto {
   @MaxLength(100)
   workNo?: string
 
-  @ApiPropertyOptional({ description: '状态：0 禁用 / 1 启用', example: 1, enum: [0, 1] })
+  @ApiPropertyOptional({ description: '状态：1 正常 / 2 冻结', example: 1, enum: [1, 2] })
   @IsOptional()
-  @IsIn([0, 1])
+  @IsIn([1, 2])
   status?: number
 
   @ApiPropertyOptional({ description: '角色 ID 列表', example: [1], type: [Number] })

@@ -12,7 +12,7 @@ export class QueryUserDto extends PagerDto {
   @MaxLength(32)
   keyword?: string
 
-  @ApiPropertyOptional({ description: '状态过滤：0 禁用 / 1 启用', example: '1', enum: ['0', '1'] })
+  @ApiPropertyOptional({ description: '状态过滤：1 正常 / 2 冻结', example: '1', enum: ['1', '2'] })
   @IsOptional()
   @IsString()
   status?: string

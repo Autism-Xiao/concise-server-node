@@ -13,7 +13,7 @@ export class UploadService {
   constructor(private readonly storageService: StorageService) {}
 
   /** 保存一个上传文件，返回相对访问路径（静态目录挂载在 /public） */
-  async saveFile(file: Express.Multer.File | undefined, userId?: number): Promise<{ path: string }> {
+  async saveFile(file: Express.Multer.File | undefined, userId?: string): Promise<{ path: string }> {
     if (!file) {
       throw new NotFoundException('未找到上传文件')
     }
