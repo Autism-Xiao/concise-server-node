@@ -2,7 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
-import { BusinessException } from '../../common/exceptions/business.exception'
+import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
+import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
 import { encryptPassword, randomId32, randomSalt } from '../../utils/password.util'
@@ -119,7 +120,7 @@ export class UserService extends BaseService<UserEntity> {
     const depts = ids.length ? await this.deptRepository.find({ where: { id: In(ids), delFlag: '0' } }) : []
     if (depts.length !== ids.length) {
       const found = new Set(depts.map(dept => dept.id))
-      throw new BusinessException(`部门不存在或已删除：${ids.filter(depId => !found.has(depId)).join(',')}`, 400)
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, `部门不存在或已删除：${ids.filter(depId => !found.has(depId)).join(',')}`)
     }
     const deptMap = new Map(depts.map(dept => [dept.id, dept]))
     const ordered = ids.map(depId => deptMap.get(depId) as DeptEntity)
@@ -230,7 +231,7 @@ export class UserService extends BaseService<UserEntity> {
   async delete(id: string): Promise<void> {
     const user = await this.findOne(id)
     if (user.username === 'admin') {
-      throw new BusinessException('内置管理员账号不允许删除', 400)
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, '内置管理员账号不允许删除')
     }
     await this.repository.update(id, { delFlag: 1 })
   }

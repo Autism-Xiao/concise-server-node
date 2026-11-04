@@ -1,8 +1,10 @@
-import { Injectable, UnauthorizedException, BadRequestException, HttpException } from '@nestjs/common'
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import type { StringValue } from 'ms'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
 import { CaptchaService } from './captcha.service'
@@ -35,26 +37,21 @@ export class AuthService {
     try {
       // 验证码开关：CAPTCHA_ENABLED=true 时强制校验（防爆破）
       if (this.configService.get<string>('CAPTCHA_ENABLED') === 'true') {
-        if (!dto.captchaId || !dto.captchaCode) {
-          throw new BadRequestException('请输入验证码')
-        }
-        if (!(await this.captchaService.verify(dto.captchaId, dto.captchaCode))) {
-          throw new BadRequestException('验证码错误或已过期')
-        }
+        await this.captchaService.assertValid(dto.captchaId, dto.captchaCode)
       }
 
       const user = await this.userService.findByUsername(dto.username)
       if (!user) {
-        throw new UnauthorizedException('用户名或密码错误')
+        throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
       }
 
       // JeecgBoot 兼容校验：PBEWithMD5AndDES(username, password, salt) 与库中 16 位 hex 比对
       if (!this.userService.verifyPassword(user, dto.password)) {
-        throw new UnauthorizedException('用户名或密码错误')
+        throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
       }
 
       if (user.status !== USER_STATUS.NORMAL) {
-        throw new UnauthorizedException('账号已被冻结，请联系管理员')
+        throw new BizException(BizErrorCode.ACCOUNT_DISABLED, '账号已被冻结，请联系管理员', HttpStatus.FORBIDDEN)
       }
 
       await this.logService.recordLogin({ username: dto.username, status: 1, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
@@ -74,7 +71,7 @@ export class AuthService {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET')
       })
     } catch {
-      throw new UnauthorizedException('refreshToken 无效或已过期')
+      throw new BizException(BizErrorCode.UNAUTHORIZED, 'refreshToken 无效或已过期', HttpStatus.UNAUTHORIZED)
     }
 
     // 与登录返回保持同构：带角色与部门（depts / dept / deptId）

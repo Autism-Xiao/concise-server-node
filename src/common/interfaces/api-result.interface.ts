@@ -20,3 +20,6 @@ export interface ApiResult<T = unknown> {
   /** 服务端响应时间戳（毫秒） */
   timestamp: number
 }
+
+/** 兼容命名：部分脚手架/文档里叫 ApiResponse，与 ApiResult 完全等价 */
+export type ApiResponse<T = unknown> = ApiResult<T>
