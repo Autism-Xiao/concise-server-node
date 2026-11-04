@@ -72,3 +72,4 @@
 | 2026-11-04 | [角色管理V1-CRUD重构](./2026-11-04-角色管理V1-CRUD重构.md) | 本轮 | /api/v1/roles 七接口；roleCode 唯一拦截、内置 admin 保护、有用户绑定拒删+清关联行；补 system:role:* 按钮权限数据 |
 | 2026-11-04 | [部门职级岗位V1接口](./2026-11-04-部门职级岗位V1接口.md) | 本轮 | /api/v1/depts、/api/v1/levels（新表 sys_level）、/api/v1/posts（新表 sys_position 对齐 jeecg）；collation 必须跟库内既有表一致（unicode_ci）的坑 |
 | 2026-11-04 | [日志管理对齐JeecgBoot单表sys_log](./2026-11-04-日志管理对齐JeecgBoot单表sys_log.md) | 本轮 | login_log+oper_log 合并为单表 sys_log（jeecg 结构，status 0成功1失败），存量迁移；/api/v1/logs 八接口；前端日志两页全真实数据、删除/清空对接后端 |
+| 2026-11-04 | [通知公告对齐JeecgBoot-sys_announcement](./2026-11-04-通知公告对齐JeecgBoot-sys_announcement.md) | 本轮 | notice 表重建为 sys_announcement（titile/msg_content/send_status 等 jeecg 字段，软删），存量迁移；/api/v1/notices 八接口（发布/撤销/软删保护）；前端公告页对接真实数据 |
