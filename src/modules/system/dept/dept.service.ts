@@ -45,6 +45,7 @@ export class DeptService extends BaseService<DeptEntity> {
 
   /** 更新：父级不能指向自己或自己的后代（防环）；改父级时同步重算 orgCode */
   async update(id: string, dto: DeepPartial<DeptEntity>): Promise<DeptEntity> {
+    const before = await this.findOne(id)
     if (dto.parentId !== undefined) {
       const parentId = dto.parentId || null
       if (parentId === id) {
@@ -64,17 +65,30 @@ export class DeptService extends BaseService<DeptEntity> {
       }
     }
     dto.updateTime = new Date()
-    return super.update(id, dto)
+    const updated = await super.update(id, dto)
+    // 机构编码变了，把挂了该部门的用户 sys_user.org_code 一并刷新（上面存的是冗余值）
+    if (updated.orgCode && updated.orgCode !== before.orgCode) {
+      await this.repository.manager.query('UPDATE `sys_user` u JOIN `sys_user_depart` ud ON ud.`user_id` = u.`id` SET u.`org_code` = ? WHERE ud.`dep_id` = ?', [
+        updated.orgCode,
+        id
+      ])
+    }
+    return updated
   }
 
-  /** 删除：有下级或挂了用户时不允许删（软删，置 del_flag='1'） */
+  /** 删除：有下级或挂了（未删除的）用户时不允许删（软删，置 del_flag='1'） */
   async delete(id: string): Promise<void> {
     await this.findOne(id)
     const childCount = await this.repository.count({ where: { parentId: id, delFlag: '0' } })
     if (childCount > 0) {
       throw new BadRequestException('该部门下存在子部门，无法删除')
     }
-    const userCount = await this.repository.manager.count(UserEntity, { where: { deptId: id } })
+    // 走 sys_user_depart 关联表统计，并排除已软删用户（否则删过的人会一直挡住部门删除）
+    const userCount = await this.repository.manager
+      .createQueryBuilder(UserEntity, 'user')
+      .innerJoin('user.depts', 'dept', 'dept.id = :deptId', { deptId: id })
+      .where('user.del_flag = 0')
+      .getCount()
     if (userCount > 0) {
       throw new BadRequestException('该部门下存在用户，无法删除')
     }

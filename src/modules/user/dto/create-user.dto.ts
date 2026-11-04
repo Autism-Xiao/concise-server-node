@@ -70,7 +70,17 @@ export class CreateUserDto {
   @IsString({ each: true })
   roleIds?: string[]
 
-  @ApiPropertyOptional({ description: '所属部门 ID（sys_depart.id），不传为未分配', example: 'dept_1' })
+  @ApiPropertyOptional({
+    description: '所属部门 ID 列表（sys_depart.id，按顺序写入 sys_user_depart，第一个为主部门），传空数组表示清空',
+    example: ['dept_1', 'dept_2'],
+    type: [String]
+  })
+  @IsOptional()
+  @IsArray({ message: 'deptIds 必须是数组' })
+  @IsString({ each: true, message: 'deptIds 元素必须是字符串' })
+  deptIds?: string[]
+
+  @ApiPropertyOptional({ description: '【已废弃，请用 deptIds】单个部门 ID，等价于 deptIds: [deptId]', example: 'dept_1', deprecated: true })
   @IsOptional()
   @IsString()
   deptId?: string

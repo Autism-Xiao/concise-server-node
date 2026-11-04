@@ -1,11 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Column, Entity, PrimaryColumn } from 'typeorm'
+import { Column, Entity, ManyToMany, PrimaryColumn } from 'typeorm'
+import { UserEntity } from '../../../user/entities/user.entity'
 
 /**
  * 组织机构表（对齐 JeecgBoot sys_depart）
  * - 主键 32 位字符串；parent_id 为 null/'' 视为顶级
  * - org_code 唯一且必填（JeecgBoot 用它做机构编码，也用于用户 sys_user.org_code）
  * - status / del_flag 为 varchar：'1'/'0'（JeecgBoot 原样）
+ * - 部门↔用户走 sys_user_depart（dep_id + user_id），一个部门可挂多个用户
  */
 @Entity('sys_depart')
 export class DeptEntity {
@@ -96,4 +98,8 @@ export class DeptEntity {
   @ApiPropertyOptional({ description: '是否有叶子节点：1 是 / 0 否', example: 0, nullable: true })
   @Column({ type: 'tinyint', default: 0, comment: '是否有叶子节点: 1是0否' })
   izLeaf?: number
+
+  /** 反向关系：仅用于 TypeORM 关系映射，不参与 JSON 序列化场景（不加载即不出现） */
+  @ManyToMany(() => UserEntity, user => user.depts)
+  users?: UserEntity[]
 }

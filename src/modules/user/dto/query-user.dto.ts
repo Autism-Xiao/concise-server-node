@@ -16,8 +16,13 @@ export class QueryUserDto extends PagerDto {
   @IsString()
   status?: string
 
-  @ApiPropertyOptional({ description: '部门 ID 过滤（sys_depart.id）', example: 'dept_1' })
+  @ApiPropertyOptional({ description: '部门 ID 过滤（单个，sys_depart.id，命中用户的任一部门即返回）', example: 'dept_1' })
   @IsOptional()
   @IsString()
   deptId?: string
+
+  @ApiPropertyOptional({ description: '部门 ID 过滤（多个，英文逗号分隔；与 deptId 同时传取并集）', example: 'dept_1,dept_2' })
+  @IsOptional()
+  @IsString()
+  deptIds?: string
 }

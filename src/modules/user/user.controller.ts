@@ -62,4 +62,15 @@ export class UserController {
     await this.userService.assignRoles(id, dto.roleIds)
     return this.userService.findOneWithRoles(id)
   }
+
+  @ApiOperation({
+    summary: '为用户绑定部门（全量覆盖）',
+    description: '写入 sys_user_depart；数组顺序即主次，第一个为主部门，同步 depart_ids 与 org_code'
+  })
+  @OperLog('用户管理')
+  @Put(':id/depts')
+  async assignDepts(@Param('id') id: string, @Body() dto: { deptIds: string[] }) {
+    await this.userService.assignDepts(id, dto.deptIds ?? [])
+    return this.userService.findOneDetail(id)
+  }
 }

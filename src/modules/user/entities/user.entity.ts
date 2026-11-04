@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Column, Entity, JoinColumn, JoinTable, ManyToMany, ManyToOne, PrimaryColumn } from 'typeorm'
+import { Column, Entity, JoinTable, ManyToMany, PrimaryColumn } from 'typeorm'
 import { RoleEntity } from '../../role/entities/role.entity'
 import { DeptEntity } from '../../system/dept/entities/dept.entity'
 
@@ -8,6 +8,8 @@ import { DeptEntity } from '../../system/dept/entities/dept.entity'
  * - 主键为 32 位字符串（非自增），由 randomId32() 生成
  * - 密码为 JeecgBoot 兼容的 PBEWithMD5AndDES(username, password, salt)，16 位 hex
  * - 全局 SnakeNamingStrategy 下驼峰属性自动映射下划线列名
+ * - 部门：多对多走 sys_user_depart（对齐 JeecgBoot，一个用户可挂多个部门）；
+ *   主部门 = depart_ids 的第一个 id，其机构编码冗余到 org_code 供数据权限过滤
  */
 @Entity('sys_user')
 export class UserEntity {
@@ -93,12 +95,31 @@ export class UserEntity {
   })
   roles: RoleEntity[]
 
-  @ApiPropertyOptional({ description: '所属部门 ID，空为未分配（本项目扩展列，对应 sys_depart.id）', example: 'dept_1', nullable: true })
-  @Column({ type: 'varchar', length: 32, nullable: true, comment: '所属部门ID，空为未分配（本项目扩展）' })
-  deptId?: string | null
+  @ApiPropertyOptional({ description: '所属机构编码（主部门 org_code 冗余，用于数据权限过滤）', example: 'A01', nullable: true })
+  @Column({ type: 'varchar', length: 64, nullable: true, comment: '登录会话的机构编码' })
+  orgCode?: string | null
 
-  @ApiPropertyOptional({ description: '所属部门', type: DeptEntity, required: false })
-  @ManyToOne(() => DeptEntity, { createForeignKeyConstraints: false, nullable: true })
-  @JoinColumn({ name: 'dept_id' })
+  @ApiPropertyOptional({
+    description: '所属部门 ID 集合（逗号分隔，顺序即主次，首个为主部门）',
+    example: 'dept_1,dept_2',
+    nullable: true
+  })
+  @Column({ type: 'varchar', length: 1000, nullable: true, comment: '所属部门id集合' })
+  departIds?: string | null
+
+  @ApiProperty({ description: '所属部门列表（sys_user_depart 多对多）', type: [DeptEntity], required: false })
+  @ManyToMany(() => DeptEntity, dept => dept.users)
+  @JoinTable({
+    name: 'sys_user_depart',
+    joinColumns: [{ name: 'user_id', referencedColumnName: 'id' }],
+    inverseJoinColumns: [{ name: 'dep_id', referencedColumnName: 'id' }]
+  })
+  depts?: DeptEntity[]
+
+  /**
+   * 主部门（= depts[0]），非数据库列，由 UserService 组装
+   * 保留该字段是为了兼容旧前端/旧接口里单个 dept 的返回结构
+   */
+  @ApiPropertyOptional({ description: '主部门（部门列表第一个元素，兼容字段）', type: DeptEntity, required: false })
   dept?: DeptEntity | null
 }
