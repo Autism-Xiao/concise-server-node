@@ -2,11 +2,13 @@ import { ValidationPipe } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { ConfigService } from '@nestjs/config'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
+import type { NestExpressApplication } from '@nestjs/platform-express'
+import path from 'node:path'
 import { AppModule, ObserveInstrument } from './app.module'
 import { LoggerService } from './shared/logger/logger.service'
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     instrument: ObserveInstrument,
     bufferLogs: true
   })
@@ -19,6 +21,9 @@ async function bootstrap() {
   const globalPrefix = configService.get<string>('app.globalPrefix', 'api')
 
   app.setGlobalPrefix(globalPrefix)
+
+  // 静态资源目录：public/upload 下的上传文件可直接以 {host}/upload/... 访问
+  app.useStaticAssets(path.join(process.cwd(), 'public'))
 
   // 全局 DTO 校验管道：自动转换类型 + 剔除未声明属性
   app.useGlobalPipes(
