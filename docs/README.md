@@ -21,6 +21,7 @@
 | 2026-11-04 | [prettier配置替换](./2026-11-04-prettier配置替换.md) | `773b014` | Prettier 风格定制：单引号/无分号/160 列/无尾逗号/arrowParens avoid |
 | 2026-11-04 | [Swagger接口文档](./2026-11-04-Swagger接口文档.md) | `912b3ed` | /api/docs 在线 UI + /api/docs-json，DTO @ApiProperty + Controller @ApiTags 约定 |
 | 2026-11-04 | [user表对齐sys_user](./2026-11-04-user表对齐sys_user.md) | `752407a` | 参照 JeecgBoot：表注释、nickname→realname、补 9 字段、软删除 del_flag、多词列名显式映射 |
+| 2026-11-04 | [user表替换为JeecgBoot-sys_user](./2026-11-04-user表替换为JeecgBoot-sys_user.md) | `d0c19bb` | 换 sys_user 表（字符串主键+JeecgBoot 密码算法 PBEWithMD5AndDES）+ 全局 snake_case 命名策略 |
 
 ### 02 认证与权限
 
