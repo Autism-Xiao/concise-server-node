@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Roles } from '../../common/decorators/roles.decorator'
@@ -18,12 +18,12 @@ export class RoleController {
   @ApiOkResponse({ description: '角色列表', type: [RoleEntity] })
   @Get()
   list() {
-    return this.roleService['roleRepository'].find({ relations: { menus: true } })
+    return this.roleService['roleRepository'].find({ relations: { permissions: true } })
   }
 
   @ApiOperation({ summary: '角色详情（含已授权菜单）' })
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number): Promise<RoleEntity> {
+  findOne(@Param('id') id: string): Promise<RoleEntity> {
     return this.roleService.findOneWithMenus(id)
   }
 
@@ -35,7 +35,7 @@ export class RoleController {
 
   @ApiOperation({ summary: '更新角色' })
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateRoleDto) {
+  update(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
     if (dto.menuIds) {
       return this.roleService.assignMenus(id, dto.menuIds).then(() => this.roleService.findOneWithMenus(id))
     }
@@ -44,14 +44,14 @@ export class RoleController {
 
   @ApiOperation({ summary: '为角色绑定菜单权限（全量覆盖）' })
   @Put(':id/menus')
-  async assignMenus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateRoleDto) {
-    await this.roleService.assignMenus(id, dto.menuIds as number[])
+  async assignMenus(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    await this.roleService.assignMenus(id, dto.menuIds as string[])
     return this.roleService.findOneWithMenus(id)
   }
 
   @ApiOperation({ summary: '删除角色' })
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
+  delete(@Param('id') id: string) {
     return this.roleService.delete(id)
   }
 }

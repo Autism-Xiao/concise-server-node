@@ -1,34 +1,27 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Type } from 'class-transformer'
-import { ArrayMinSize, IsArray, IsInt, IsOptional, IsString, Length } from 'class-validator'
+import { ArrayMinSize, IsArray, IsOptional, IsString, Length } from 'class-validator'
 
 export class CreateRoleDto {
-  @ApiProperty({ description: '角色标识（英文，用于 @Roles() 匹配）', example: 'admin' })
+  @ApiProperty({ description: '角色名称（中文展示）', example: '运营' })
   @IsString()
-  @Length(2, 32)
-  name: string
+  @Length(1, 200)
+  roleName: string
 
-  @ApiProperty({ description: '角色名称（中文展示）', example: '管理员' })
+  @ApiProperty({ description: '角色编码（英文，用于 @Roles() 匹配，唯一）', example: 'operator' })
   @IsString()
-  @Length(1, 32)
-  label: string
+  @Length(2, 100)
+  roleCode: string
 
-  @ApiPropertyOptional({ description: '状态：0 禁用 / 1 启用', example: 1, enum: [0, 1] })
-  @IsOptional()
-  @IsInt()
-  status?: number
-
-  @ApiPropertyOptional({ description: '备注' })
+  @ApiPropertyOptional({ description: '描述', example: '运营角色，可管理公告与任务' })
   @IsOptional()
   @IsString()
   @Length(0, 255)
-  remark?: string
+  description?: string
 
-  @ApiPropertyOptional({ description: '授权菜单 ID 列表', type: [Number] })
+  @ApiPropertyOptional({ description: '授权菜单/按钮 ID 列表（sys_permission.id）', type: [String] })
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @IsInt({ each: true })
-  @Type(() => Number)
-  menuIds?: number[]
+  @IsString({ each: true })
+  menuIds?: string[]
 }

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository } from 'typeorm'
 
+import { randomId32 } from '../../utils/password.util'
 import { paginate, type PaginateOptions, type Pagination } from '../paginate'
 
 /**
@@ -33,10 +34,19 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
     return entity
   }
 
-  /** 创建 */
+  /** 创建：字符串主键实体自动生成 32 位 id（数字自增主键不干预） */
   async create(dto: DeepPartial<T>): Promise<T> {
     const entity = this.repository.create(dto)
+    if (!entity.id && this.hasStringPrimaryKey()) {
+      Object.assign(entity, { id: randomId32() })
+    }
     return this.repository.save(entity)
+  }
+
+  /** 主键是否为字符串列（varchar/char）——用于决定是否自动生成 id */
+  private hasStringPrimaryKey(): boolean {
+    const column = this.repository.metadata.findColumnWithPropertyName('id')
+    return !!column && (column.type === 'varchar' || column.type === 'char')
   }
 
   /** 按 id 更新，不存在时抛 404 */

@@ -6,7 +6,7 @@ import { PERMS_KEY } from '../decorators/perms.decorator'
 
 /** 权限标识实体的最小结构（避免守卫直接依赖业务实体造成循环） */
 interface PermRow {
-  permission: string | null
+  perms: string | null
 }
 
 /**
@@ -34,22 +34,23 @@ export class PermsGuard implements CanActivate {
     }
 
     // admin 角色拥有全部按钮权限
-    if (roles.some((role: { name: string }) => role.name === 'admin')) {
+    if (roles.some((role: { roleCode: string }) => role.roleCode === 'admin')) {
       return true
     }
 
-    const roleIds = roles.map((role: { id: number }) => role.id)
-    // 实时查库：角色 → role_menus → menu.permission（禁用菜单不算数）
+    const roleIds = roles.map((role: { id: string }) => role.id)
+    // 实时查库：角色 → sys_role_permission → sys_permission.perms（无效/已删除菜单不算数）
     const rows = await this.dataSource
       .createQueryBuilder()
-      .select('menu.permission', 'permission')
-      .from('menu', 'menu')
-      .innerJoin('role_menus', 'rm', 'rm.menuId = menu.id')
-      .where('rm.roleId IN (:...roleIds)', { roleIds })
-      .andWhere('menu.status = 1')
+      .select('p.perms', 'perms')
+      .from('sys_permission', 'p')
+      .innerJoin('sys_role_permission', 'rp', 'rp.permission_id = p.id')
+      .where('rp.role_id IN (:...roleIds)', { roleIds })
+      .andWhere("p.status = '1'")
+      .andWhere('p.del_flag = 0')
       .getRawMany<PermRow>()
 
-    const owned = new Set(rows.map(row => row.permission).filter((p): p is string => !!p))
+    const owned = new Set(rows.map(row => row.perms).filter((p): p is string => !!p))
     if (required.some(perm => owned.has(perm))) {
       return true
     }

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Perms } from '../../../common/decorators/perms.decorator'
@@ -23,7 +23,7 @@ export class DeptController {
     return this.deptService.getTree()
   }
 
-  @ApiOperation({ summary: '部门分页/全量列表' })
+  @ApiOperation({ summary: '部门全量列表（扁平，排除已删除）' })
   @Get()
   list() {
     return this.deptService.listAll()
@@ -31,11 +31,11 @@ export class DeptController {
 
   @ApiOperation({ summary: '部门详情' })
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
+  findOne(@Param('id') id: string) {
     return this.deptService.findOne(id)
   }
 
-  @ApiOperation({ summary: '创建部门' })
+  @ApiOperation({ summary: '创建部门', description: 'orgCode 不传则按层级自动生成' })
   @OperLog('部门管理')
   @Perms('system:dept:add')
   @Post()
@@ -47,15 +47,15 @@ export class DeptController {
   @OperLog('部门管理')
   @Perms('system:dept:update')
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDeptDto) {
+  update(@Param('id') id: string, @Body() dto: UpdateDeptDto) {
     return this.deptService.update(id, dto)
   }
 
-  @ApiOperation({ summary: '删除部门' })
+  @ApiOperation({ summary: '删除部门（软删）' })
   @OperLog('部门管理')
   @Perms('system:dept:delete')
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
+  delete(@Param('id') id: string) {
     return this.deptService.delete(id)
   }
 }

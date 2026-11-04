@@ -1,50 +1,84 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { IsIn, IsInt, IsOptional, IsString, Length } from 'class-validator'
+import { IsIn, IsInt, IsOptional, IsString, Length, MaxLength } from 'class-validator'
 
 export class CreateMenuDto {
-  @ApiProperty({ description: '菜单名称', example: '用户管理' })
+  @ApiProperty({ description: '菜单标题', example: '用户管理' })
   @IsString()
-  @Length(1, 32)
+  @Length(1, 255)
   name: string
 
-  @ApiProperty({ description: '类型：0 目录 / 1 菜单 / 2 按钮', example: 1, enum: [0, 1, 2] })
+  @ApiProperty({ description: '菜单类型：0 一级菜单 / 1 子菜单 / 2 按钮权限', example: 1, enum: [0, 1, 2] })
   @IsInt()
   @IsIn([0, 1, 2])
-  type: number
+  menuType: number
+
+  @ApiPropertyOptional({ description: '父级 ID，不传为顶级', example: 'menu_1' })
+  @IsOptional()
+  @IsString()
+  parentId?: string | null
 
   @ApiPropertyOptional({ description: '路由路径', example: '/system/user' })
   @IsOptional()
   @IsString()
-  path?: string
+  @MaxLength(255)
+  url?: string
 
   @ApiPropertyOptional({ description: '前端组件路径', example: 'system/user/index' })
   @IsOptional()
   @IsString()
+  @MaxLength(255)
   component?: string
+
+  @ApiPropertyOptional({ description: '组件名', example: 'system-user' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  componentName?: string
 
   @ApiPropertyOptional({ description: '图标', example: 'user' })
   @IsOptional()
   @IsString()
+  @MaxLength(255)
   icon?: string
 
-  @ApiPropertyOptional({ description: '权限标识（按钮级，如 system:user:add）', example: 'system:user:list' })
+  @ApiPropertyOptional({ description: '权限编码（按钮级，如 system:user:add）', example: 'system:user:add' })
   @IsOptional()
   @IsString()
-  permission?: string
+  @MaxLength(255)
+  perms?: string
 
-  @ApiPropertyOptional({ description: '父级菜单 ID，0 为顶级', example: 0 })
+  @ApiPropertyOptional({ description: '菜单排序', example: 1 })
   @IsOptional()
   @IsInt()
-  parentId?: number
+  sortNo?: number
 
-  @ApiPropertyOptional({ description: '排序号，越小越靠前', example: 0 })
-  @IsOptional()
-  @IsInt()
-  sort?: number
-
-  @ApiPropertyOptional({ description: '状态：0 禁用 / 1 启用', example: 1, enum: [0, 1] })
+  @ApiPropertyOptional({ description: '是否路由菜单：0 否 / 1 是', example: 1, enum: [0, 1] })
   @IsOptional()
   @IsInt()
   @IsIn([0, 1])
-  status?: number
+  isRoute?: number
+
+  @ApiPropertyOptional({ description: '一级菜单跳转地址', example: '/system/user' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  redirect?: string
+
+  @ApiPropertyOptional({ description: '是否隐藏路由：0 否 / 1 是', example: 0, enum: [0, 1] })
+  @IsOptional()
+  @IsInt()
+  @IsIn([0, 1])
+  hidden?: number
+
+  @ApiPropertyOptional({ description: '状态：0 无效 / 1 有效', example: '1', enum: ['0', '1'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['0', '1'])
+  status?: string
+
+  @ApiPropertyOptional({ description: '描述' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  description?: string
 }

@@ -58,7 +58,7 @@ export class UserController {
 
   @ApiOperation({ summary: '为用户绑定角色（全量覆盖）' })
   @Put(':id/roles')
-  async assignRoles(@Param('id') id: string, @Body() dto: { roleIds: number[] }) {
+  async assignRoles(@Param('id') id: string, @Body() dto: { roleIds: string[] }) {
     await this.userService.assignRoles(id, dto.roleIds)
     return this.userService.findOneWithRoles(id)
   }

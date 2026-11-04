@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository } from 'typeorm'
+import { IsNull, Repository, type DeepPartial } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
 import { UserEntity } from '../../user/entities/user.entity'
@@ -9,6 +9,11 @@ import type { CreateDeptDto } from './dto/create-dept.dto'
 
 export interface DeptTreeItem extends DeptEntity {
   children: DeptTreeItem[]
+}
+
+/** 顶级部门的 parent_id 约定（JeecgBoot 用 null 或空串） */
+function isRootParent(parentId?: string | null): boolean {
+  return parentId === null || parentId === undefined || parentId === ''
 }
 
 @Injectable()
@@ -20,36 +25,52 @@ export class DeptService extends BaseService<DeptEntity> {
     super(repository, '部门')
   }
 
-  /** 创建：校验父级存在（0 为顶级） */
+  /** 创建：校验父级存在、自动生成 orgCode */
   async create(dto: CreateDeptDto): Promise<DeptEntity> {
-    if (dto.parentId !== 0) {
-      await this.findOne(dto.parentId)
+    const parentId = dto.parentId || null
+    if (parentId) {
+      await this.findOne(parentId)
     }
-    return super.create(dto)
+    const orgCode = dto.orgCode || (await this.generateOrgCode(parentId))
+    return super.create({
+      ...dto,
+      parentId,
+      orgCode,
+      status: dto.status ?? '1',
+      delFlag: '0',
+      orgCategory: dto.orgCategory ?? '2',
+      createTime: new Date()
+    })
   }
 
-  /** 更新：父级不能指向自己或自己的后代（防环） */
-  async update(id: number, dto: Partial<DeptEntity>): Promise<DeptEntity> {
+  /** 更新：父级不能指向自己或自己的后代（防环）；改父级时同步重算 orgCode */
+  async update(id: string, dto: DeepPartial<DeptEntity>): Promise<DeptEntity> {
     if (dto.parentId !== undefined) {
-      if (dto.parentId === id) {
+      const parentId = dto.parentId || null
+      if (parentId === id) {
         throw new BadRequestException('父级部门不能是自身')
       }
-      if (dto.parentId !== 0) {
-        await this.findOne(dto.parentId)
+      if (parentId) {
+        await this.findOne(parentId)
         const all = await this.repository.find()
         const descendantIds = this.collectDescendantIds(all, id)
-        if (descendantIds.has(dto.parentId)) {
+        if (descendantIds.has(parentId)) {
           throw new BadRequestException('父级部门不能是自己的下级')
         }
       }
+      dto.parentId = parentId
+      if (!dto.orgCode) {
+        dto.orgCode = await this.generateOrgCode(parentId)
+      }
     }
+    dto.updateTime = new Date()
     return super.update(id, dto)
   }
 
-  /** 删除：有下级或挂了用户时不允许删 */
-  async delete(id: number): Promise<void> {
+  /** 删除：有下级或挂了用户时不允许删（软删，置 del_flag='1'） */
+  async delete(id: string): Promise<void> {
     await this.findOne(id)
-    const childCount = await this.repository.count({ where: { parentId: id } })
+    const childCount = await this.repository.count({ where: { parentId: id, delFlag: '0' } })
     if (childCount > 0) {
       throw new BadRequestException('该部门下存在子部门，无法删除')
     }
@@ -57,24 +78,53 @@ export class DeptService extends BaseService<DeptEntity> {
     if (userCount > 0) {
       throw new BadRequestException('该部门下存在用户，无法删除')
     }
-    await super.delete(id)
+    await this.repository.update(id, { delFlag: '1' })
   }
 
-  /** 全量部门（按 sort 升序） */
+  /** 全量部门（按 depart_order 升序，排除已删除） */
   async listAll(): Promise<DeptEntity[]> {
-    return this.repository.find({ order: { sort: 'ASC', id: 'ASC' } })
+    return this.repository.find({ where: { delFlag: '0' }, order: { departOrder: 'ASC', id: 'ASC' } })
   }
 
-  /** 扁平列表转树（parentId = 0 为顶级） */
+  /** 扁平列表转树（parent_id 为 null/'' 视为顶级） */
   async getTree(): Promise<DeptTreeItem[]> {
     const all = await this.listAll()
-    return buildDeptTree(all, 0)
+    return buildDeptTree(all, null)
+  }
+
+  /** 顶级部门 */
+  async listRoots(): Promise<DeptEntity[]> {
+    return this.repository.find({ where: { parentId: IsNull(), delFlag: '0' }, order: { departOrder: 'ASC' } })
+  }
+
+  /**
+   * 生成机构编码，JeecgBoot 风格两位字母递增：
+   * - 顶级：A01、A02 ...
+   * - 子级：父编码 + A01（如 A01A01）
+   */
+  private async generateOrgCode(parentId: string | null): Promise<string> {
+    const siblings = await this.repository.find({ where: parentId ? { parentId } : { parentId: IsNull() } })
+    let prefix = 'A'
+    if (parentId) {
+      const parent = await this.repository.findOne({ where: { id: parentId } })
+      if (!parent) {
+        throw new BadRequestException('父级部门不存在')
+      }
+      prefix = parent.orgCode
+    }
+    let index = siblings.length + 1
+    let code = `${prefix}A${String(index).padStart(2, '0')}`
+    while ((await this.repository.count({ where: { orgCode: code } })) > 0) {
+      index++
+      code = `${prefix}A${String(index).padStart(2, '0')}`
+    }
+    return code
   }
 
   /** 收集某部门所有后代 id */
-  private collectDescendantIds(all: DeptEntity[], rootId: number): Set<number> {
-    const result = new Set<number>()
-    const walk = (parentId: number) => {
+  private collectDescendantIds(all: DeptEntity[], rootId: string): Set<string> {
+    const result = new Set<string>()
+    const walk = (parentId: string) => {
       for (const dept of all) {
         if (dept.parentId === parentId && !result.has(dept.id)) {
           result.add(dept.id)
@@ -88,9 +138,9 @@ export class DeptService extends BaseService<DeptEntity> {
 }
 
 /** list-to-tree：一次取全量后内存组装，不递归查库 */
-export function buildDeptTree(all: DeptEntity[], parentId: number): DeptTreeItem[] {
+export function buildDeptTree(all: DeptEntity[], parentId: string | null): DeptTreeItem[] {
   return all
-    .filter(dept => dept.parentId === parentId)
+    .filter(dept => (parentId === null ? isRootParent(dept.parentId) : dept.parentId === parentId))
     .map(dept =>
       // 实体实例展开为 plain object 组树（响应走 JSON 序列化，无原型丢失问题）
       // oxlint-disable-next-line typescript(no-misused-spread)

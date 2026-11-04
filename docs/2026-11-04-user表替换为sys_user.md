@@ -1,10 +1,10 @@
-# 2026-11-04 user 表替换为 JeecgBoot sys_user + 全局 snake_case 命名策略
+# 2026-11-04 user 表替换为  sys_user + 全局 snake_case 命名策略
 
-> 按用户要求三步走：① 删除旧 `user` 表，以 JeecgBoot `sys_user` 表结构与初始数据为主重建；② 登录等代码全面适配新表（字符串主键、JeecgBoot 密码算法）；③ 全局启用 snake_case 命名策略。
+> 按用户要求三步走：① 删除旧 `user` 表，以  `sys_user` 表结构与初始数据为主重建；② 登录等代码全面适配新表（字符串主键、 密码算法）；③ 全局启用 snake_case 命名策略。
 
 ## 一、登录密码算法（本次最核心的破译）
 
-JeecgBoot `sys_user.password` 是 16 位 hex，来自 `PasswordUtil.encrypt(username, password, salt)`（PBEWithMD5AndDES，可逆加密）：
+ `sys_user.password` 是 16 位 hex，来自 `PasswordUtil.encrypt(username, password, salt)`（PBEWithMD5AndDES，可逆加密）：
 
 ```
 1. 密钥派生（RFC 2898 PBKDF1，MD5，迭代 1000 次）：
@@ -15,9 +15,9 @@ JeecgBoot `sys_user.password` 是 16 位 hex，来自 `PasswordUtil.encrypt(user
 3. 输出 = 8 字节密文的十六进制（16 位）
 ```
 
-**验证**：admin/123456 + salt RCGTeGiH → `cb362cfeefbf3d8d` ✓、jeecg/123456 → `eee378a1258530cb` ✓、ceshi/123456 → `a9932bb12d2cbc5a` ✓，三条与 JeecgBoot 初始数据逐位一致。
+**验证**：admin/123456 + salt RCGTeGiH → `cb362cfeefbf3d8d` ✓、jeecg/123456 → `eee378a1258530cb` ✓、ceshi/123456 → `a9932bb12d2cbc5a` ✓，三条与  初始数据逐位一致。
 
-**测试账号即 JeecgBoot 默认：admin / 123456**（还有 ceshi/zhangsan/jeecg，密码都是 123456）。
+**测试账号即  默认：admin / 123456**（还有 ceshi/zhangsan/jeecg，密码都是 123456）。
 
 ### 新增 `src/utils/password.util.ts`
 
@@ -27,7 +27,7 @@ import { DES, mode, pad, enc, lib } from 'crypto-js'
 
 const ITERATION_COUNT = 1000
 
-/** JeecgBoot 兼容加密：返回 16 位十六进制密码串 */
+/**  兼容加密：返回 16 位十六进制密码串 */
 export function encryptPassword(username: string, password: string, salt: string): string {
   const derived = deriveKeyIV(password, salt)
   const key = lib.WordArray.create(derived.key)
@@ -135,8 +135,8 @@ function snakeCase(str: string, char = '_'): string {
 
 迁移 `1793765557497`：
 
-1. `DROP TABLE user` → 按 JeecgBoot 定义建 `sys_user`（34 列全量：id varchar(32) 主键、password/salt、org_code、status 1正常/2冻结、del_flag、work_no 唯一、create_time/update_time、user_identity/depart_ids/client_id/bpm_status/sign 等），额外加一列 `dept_id int`（本项目扩展，对接部门模块，JeecgBoot 用 sys_user_depart 中间表做部门关联，我们先用简单外键列）
-2. **导入 JeecgBoot 初始数据 4 条**：ceshi/zhangsan/jeecg/admin（含原密码与盐）
+1. `DROP TABLE user` → 按  定义建 `sys_user`（34 列全量：id varchar(32) 主键、password/salt、org_code、status 1正常/2冻结、del_flag、work_no 唯一、create_time/update_time、user_identity/depart_ids/client_id/bpm_status/sign 等），额外加一列 `dept_id int`（本项目扩展，对接部门模块， 用 sys_user_depart 中间表做部门关联，我们先用简单外键列）
+2. **导入  初始数据 4 条**：ceshi/zhangsan/jeecg/admin（含原密码与盐）
 3. `user_roles` 重建：`user_id` int → varchar(32)；admin 用户绑定本库 admin 角色
 4. `oper_log.user_id` int → varchar(32)、`tool_storage.user_id` int → varchar(32)
 
@@ -157,15 +157,15 @@ function snakeCase(str: string, char = '_'): string {
 ## 五、遇到的坑（重点学习）
 
 1. **TypeORM 1.x 删掉了 SnakeNamingStrategy**——从 0.3 升到 1.x 的人几乎都会踩，需要自行实现（网上老教程直接 `import { SnakeNamingStrategy } from 'typeorm'` 会报 TS2305）
-2. **Node/OpenSSL 3 禁用 DES**——`crypto.createCipheriv('des-cbc')` 直接 unsupported；JeecgBoot 的 PBEWithMD5AndDES 离不开 DES，用 crypto-js 的纯 JS 实现补位
-3. **JeecgBoot 密码算法的参数顺序**——`encrypt(username, password, salt)`：PBE 密钥由 password 派生，被 DES 加密的明文却是 username；盐参与的是密钥派生（PBKDF1 迭代），不是 CBC 的 IV 之外的独立输入
+2. **Node/OpenSSL 3 禁用 DES**——`crypto.createCipheriv('des-cbc')` 直接 unsupported； 的 PBEWithMD5AndDES 离不开 DES，用 crypto-js 的纯 JS 实现补位
+3. ** 密码算法的参数顺序**——`encrypt(username, password, salt)`：PBE 密钥由 password 派生，被 DES 加密的明文却是 username；盐参与的是密钥派生（PBKDF1 迭代），不是 CBC 的 IV 之外的独立输入
 4. **改密码必须连盐一起换**——盐随机生成后重新加密；且 username 不可改，否则旧密码全部失效
 5. **换主键类型是牵一发动全身**——本次牵出 3 处 userId 列类型、BaseService 泛型、ParseIntPipe、JwtPayload、拦截器类型共 8 个文件；先全库 grep `userId`、`payload.id`、`req.user.id` 再动手
 
 ## 六、验证记录
 
-- 迁移执行成功；DB 直查确认 `sys_user` 4 条 JeecgBoot 数据 + admin 绑定 admin 角色
-- **admin/123456 登录成功**（JeecgBoot 密码算法验证）✓；错误密码 admin123 被拒 ✓
+- 迁移执行成功；DB 直查确认 `sys_user` 4 条  数据 + admin 绑定 admin 角色
+- **admin/123456 登录成功**（ 密码算法验证）✓；错误密码 admin123 被拒 ✓
 - 创建用户 wangwu（32 位主键、盐+算法加密、createBy=admin）→ **新用户密码登录成功** → 软删后列表消失 ✓
 - snake 策略回归：menus/tree、depts/tree、dict-items/code、notices/published、logs/login 全部正常 ✓
 - build / eslint / oxlint 全绿
@@ -174,4 +174,4 @@ function snakeCase(str: string, char = '_'): string {
 
 - **测试账号**：admin/123456（管理员）、jeecg、zhangsan、ceshi 密码均 123456
 - **下一张表**：role → `sys_role`（name→role_name、label→role_code...）、menu → `sys_permission`、dept → `sys_depart`，套路同本轮：迁移改名/重建 + 实体对齐 + snake 策略自动映射
-- **密码算法说明**：PBEWithMD5AndDES 是 JeecgBoot 历史包袱（DES 已不安全），保持兼容是本表对齐的前提；若后续脱离 JeecgBoot 数据可整体换 bcrypt
+- **密码算法说明**：PBEWithMD5AndDES 是  历史包袱（DES 已不安全），保持兼容是本表对齐的前提；若后续脱离  数据可整体换 bcrypt

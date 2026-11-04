@@ -87,15 +87,15 @@ export class UserEntity {
   @ApiProperty({ description: '角色列表', type: [RoleEntity], required: false })
   @ManyToMany(() => RoleEntity, role => role.users)
   @JoinTable({
-    name: 'user_roles',
+    name: 'sys_user_role',
     joinColumns: [{ name: 'user_id', referencedColumnName: 'id' }],
     inverseJoinColumns: [{ name: 'role_id', referencedColumnName: 'id' }]
   })
   roles: RoleEntity[]
 
-  @ApiPropertyOptional({ description: '所属部门 ID，0/空 为未分配（本项目扩展列）', example: 1, nullable: true })
-  @Column({ type: 'int', nullable: true, comment: '所属部门ID，0为未分配（本项目扩展）' })
-  deptId?: number
+  @ApiPropertyOptional({ description: '所属部门 ID，空为未分配（本项目扩展列，对应 sys_depart.id）', example: 'dept_1', nullable: true })
+  @Column({ type: 'varchar', length: 32, nullable: true, comment: '所属部门ID，空为未分配（本项目扩展）' })
+  deptId?: string | null
 
   @ApiPropertyOptional({ description: '所属部门', type: DeptEntity, required: false })
   @ManyToOne(() => DeptEntity, { createForeignKeyConstraints: false, nullable: true })

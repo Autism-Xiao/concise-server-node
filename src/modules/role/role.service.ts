@@ -16,13 +16,12 @@ export class RoleService extends BaseService<RoleEntity> {
     super(roleRepository, '角色')
   }
 
-  /** 创建角色，支持 menuIds 绑定菜单权限 */
+  /** 创建角色，支持 menuIds 绑定菜单权限（id 由 BaseService 自动生成 32 位） */
   async createRole(dto: CreateRoleDto): Promise<RoleEntity> {
     const role = await this.create({
-      name: dto.name,
-      label: dto.label,
-      status: dto.status,
-      remark: dto.remark
+      roleName: dto.roleName,
+      roleCode: dto.roleCode,
+      description: dto.description
     })
     if (dto.menuIds?.length) {
       await this.assignMenus(role.id, dto.menuIds)
@@ -30,19 +29,25 @@ export class RoleService extends BaseService<RoleEntity> {
     return this.findOneWithMenus(role.id)
   }
 
-  /** 绑定菜单权限（全量覆盖） */
-  async assignMenus(id: number, menuIds: number[]): Promise<void> {
+  /** 绑定菜单权限（全量覆盖：多退少补） */
+  async assignMenus(id: string, menuIds: string[]): Promise<void> {
     await this.findOne(id)
     const menus = await this.roleRepository.manager.getRepository(MenuEntity).find({ where: { id: In(menuIds) } })
     if (menus.length !== menuIds.length) {
       throw new NotFoundException('存在无效的菜单 ID')
     }
-    await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'menus').of(id).addAndRemove(menus, [])
+    const nextIds = new Set(menuIds)
+    const current = await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).loadMany<MenuEntity>()
+    const currentIds = new Set(current.map(menu => menu.id))
+    // 只新增差集、删除差集，避免重复插入关联行
+    const toAdd = menus.filter(menu => !currentIds.has(menu.id))
+    const toRemove = current.filter(menu => !nextIds.has(menu.id))
+    await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).addAndRemove(toAdd, toRemove)
   }
 
-  /** 查角色详情（含菜单） */
-  async findOneWithMenus(id: number): Promise<RoleEntity> {
-    const role = await this.roleRepository.findOne({ where: { id }, relations: { menus: true } })
+  /** 查角色详情（含菜单权限） */
+  async findOneWithMenus(id: string): Promise<RoleEntity> {
+    const role = await this.roleRepository.findOne({ where: { id }, relations: { permissions: true } })
     if (!role) {
       throw new NotFoundException('角色不存在')
     }
@@ -50,7 +55,7 @@ export class RoleService extends BaseService<RoleEntity> {
   }
 
   /** 按 id 列表查角色 */
-  async findByIds(ids: number[]): Promise<RoleEntity[]> {
+  async findByIds(ids: string[]): Promise<RoleEntity[]> {
     return this.roleRepository.findBy({ id: In(ids) })
   }
 }

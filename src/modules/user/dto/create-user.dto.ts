@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Type } from 'class-transformer'
-import { ArrayMinSize, IsArray, IsDateString, IsEmail, IsIn, IsInt, IsOptional, IsString, Length, MaxLength, Min } from 'class-validator'
+import { ArrayMinSize, IsArray, IsDateString, IsEmail, IsIn, IsOptional, IsString, Length, MaxLength } from 'class-validator'
 
 export class CreateUserDto {
   @ApiProperty({ description: '登录账号（唯一，3~100 位；密码算法绑定账号，创建后不可改）', example: 'zhangsan', minLength: 3, maxLength: 100 })
@@ -63,18 +63,15 @@ export class CreateUserDto {
   @IsIn([1, 2])
   status?: number
 
-  @ApiPropertyOptional({ description: '角色 ID 列表', example: [1], type: [Number] })
+  @ApiPropertyOptional({ description: '角色 ID 列表（sys_role.id，32 位字符串）', example: ['f6817f48af4fb3af11b9e8bf182f618b'], type: [String] })
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @IsInt({ each: true })
-  @Type(() => Number)
-  roleIds?: number[]
+  @IsString({ each: true })
+  roleIds?: string[]
 
-  @ApiPropertyOptional({ description: '所属部门 ID，0 为未分配', example: 1, minimum: 0 })
+  @ApiPropertyOptional({ description: '所属部门 ID（sys_depart.id），不传为未分配', example: 'dept_1' })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Type(() => Number)
-  deptId?: number
+  @IsString()
+  deptId?: string
 }

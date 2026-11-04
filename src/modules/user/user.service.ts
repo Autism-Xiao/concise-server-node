@@ -25,9 +25,9 @@ export class UserService extends BaseService<UserEntity> {
   }
 
   /** 创建：生成 32 位主键与密码盐，密码按 JeecgBoot 算法 PBEWithMD5AndDES(username, password, salt) 入库 */
-  async create(dto: Partial<UserEntity> & { roleIds?: number[] }, operator?: string): Promise<UserEntity> {
+  async create(dto: Partial<UserEntity> & { roleIds?: string[] }, operator?: string): Promise<UserEntity> {
     const data: Partial<UserEntity> = { ...dto }
-    delete (data as { roleIds?: number[] }).roleIds
+    delete (data as { roleIds?: string[] }).roleIds
     data.id = data.id || randomId32()
     data.salt = randomSalt()
     if (data.password) {
@@ -50,9 +50,9 @@ export class UserService extends BaseService<UserEntity> {
   }
 
   /** 更新：若携带密码则生成新盐重新加密；携带 roleIds 则重绑角色 */
-  async update(id: string, dto: Partial<UserEntity> & { roleIds?: number[] }, operator?: string): Promise<UserEntity> {
+  async update(id: string, dto: Partial<UserEntity> & { roleIds?: string[] }, operator?: string): Promise<UserEntity> {
     const data: Partial<UserEntity> = { ...dto }
-    delete (data as { roleIds?: number[] }).roleIds
+    delete (data as { roleIds?: string[] }).roleIds
     delete data.username // 账号不允许修改（密码算法绑定 username）
     if (data.password) {
       data.salt = randomSalt()
@@ -70,11 +70,17 @@ export class UserService extends BaseService<UserEntity> {
     return this.findOneDetail(id) as Promise<UserEntity>
   }
 
-  /** 绑定角色（全量覆盖） */
-  async assignRoles(id: string, roleIds: number[]): Promise<void> {
+  /** 绑定角色（全量覆盖：多退少补） */
+  async assignRoles(id: string, roleIds: string[]): Promise<void> {
     await this.findOne(id)
     const roles = await this.roleRepository.findBy({ id: In(roleIds) })
-    await this.repository.createQueryBuilder().relation(UserEntity, 'roles').of(id).addAndRemove(roles, [])
+    const nextIds = new Set(roleIds)
+    const current = await this.repository.createQueryBuilder().relation(UserEntity, 'roles').of(id).loadMany<RoleEntity>()
+    const currentIds = new Set(current.map(role => role.id))
+    // 只新增差集、删除差集，避免重复插入关联行
+    const toAdd = roles.filter(role => !currentIds.has(role.id))
+    const toRemove = current.filter(role => !nextIds.has(role.id))
+    await this.repository.createQueryBuilder().relation(UserEntity, 'roles').of(id).addAndRemove(toAdd, toRemove)
   }
 
   /** 分页列表：支持 keyword 模糊搜索账号/真实姓名/电话、status 精确过滤；过滤已软删 */

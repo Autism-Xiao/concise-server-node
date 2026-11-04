@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Roles } from '../../common/decorators/roles.decorator'
@@ -20,7 +20,7 @@ export class MenuController {
     return this.menuService.getTree()
   }
 
-  @ApiOperation({ summary: '菜单全量列表（扁平）' })
+  @ApiOperation({ summary: '菜单全量列表（扁平，排除已删除）' })
   @ApiOkResponse({ description: '菜单列表', type: [MenuEntity] })
   @Get()
   list() {
@@ -29,7 +29,7 @@ export class MenuController {
 
   @ApiOperation({ summary: '菜单详情' })
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
+  findOne(@Param('id') id: string) {
     return this.menuService.findOne(id)
   }
 
@@ -41,13 +41,13 @@ export class MenuController {
 
   @ApiOperation({ summary: '更新菜单' })
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateMenuDto) {
+  update(@Param('id') id: string, @Body() dto: UpdateMenuDto) {
     return this.menuService.update(id, dto)
   }
 
   @ApiOperation({ summary: '删除菜单' })
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
+  delete(@Param('id') id: string) {
     return this.menuService.delete(id)
   }
 }
