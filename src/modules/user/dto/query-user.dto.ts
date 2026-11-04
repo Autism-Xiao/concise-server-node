@@ -6,7 +6,7 @@ import { PagerDto } from '../../../common/dto/pager.dto'
 
 /** 用户列表查询参数 */
 export class QueryUserDto extends PagerDto {
-  @ApiPropertyOptional({ description: '关键字：模糊匹配用户名/昵称', example: '张' })
+  @ApiPropertyOptional({ description: '关键字：模糊匹配用户名/真实姓名/手机号', example: '张' })
   @IsOptional()
   @IsString()
   @MaxLength(32)

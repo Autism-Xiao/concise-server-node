@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Roles } from '../../common/decorators/roles.decorator'
@@ -35,8 +35,8 @@ export class UserController {
   @OperLog('用户管理')
   @Perms('system:user:add')
   @Post()
-  async create(@Body() dto: CreateUserDto) {
-    const user = await this.userService.create(dto)
+  async create(@Body() dto: CreateUserDto, @Request() req: { user: { username: string } }) {
+    const user = await this.userService.create(dto, req.user.username)
     return this.userService.stripPassword(user)
   }
 
@@ -44,8 +44,8 @@ export class UserController {
   @OperLog('用户管理')
   @Perms('system:user:update')
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
-    return this.userService.update(id, dto)
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto, @Request() req: { user: { username: string } }) {
+    return this.userService.update(id, dto, req.user.username)
   }
 
   @ApiOperation({ summary: '删除用户' })
