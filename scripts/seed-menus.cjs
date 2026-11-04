@@ -46,10 +46,10 @@
     { id: 'menu_46', parent: 'menu_18', name: '登录日志', url: '/system/log/login', type: 1, sort: 15, icon: 'LogIn' },
     { id: 'menu_47', parent: 'menu_18', name: '操作日志', url: '/system/log/operation', type: 1, sort: 16, icon: 'FileText' },
     // ---- 运维管理子菜单 ----
-    { id: 'menu_48', parent: 'menu_38', name: '定时任务', url: '/ops/job', type: 1, sort: 18, icon: 'Timer' },
-    { id: 'menu_49', parent: 'menu_38', name: '在线用户', url: '/ops/online', type: 1, sort: 19, icon: 'UserCheck' },
-    { id: 'menu_50', parent: 'menu_38', name: '服务监控', url: '/ops/server', type: 1, sort: 20, icon: 'Activity' },
-    { id: 'menu_51', parent: 'menu_38', name: '缓存监控', url: '/ops/cache', type: 1, sort: 21, icon: 'Package' }
+    { id: 'menu_48', parent: 'menu_38', name: '定时任务', url: '/ops/job', type: 1, sort: 18, icon: 'Timer', perms: 'system:job:list' },
+    { id: 'menu_49', parent: 'menu_38', name: '在线用户', url: '/ops/online', type: 1, sort: 19, icon: 'UserCheck', perms: 'system:online:list' },
+    { id: 'menu_50', parent: 'menu_38', name: '服务监控', url: '/ops/server', type: 1, sort: 20, icon: 'Activity', perms: 'system:monitor:server' },
+    { id: 'menu_51', parent: 'menu_38', name: '缓存监控', url: '/ops/cache', type: 1, sort: 21, icon: 'Package', perms: 'system:monitor:cache' }
   ]
 
   const parentIds = new Set(MENUS.filter(m => m.type === 0).map(m => m.id))
@@ -90,7 +90,16 @@
     // 岗位管理（menu_43）
     { id: 'menu_58', parent: 'menu_43', name: '岗位新增', perms: 'system:post:add', sort: 1 },
     { id: 'menu_59', parent: 'menu_43', name: '岗位修改', perms: 'system:post:update', sort: 2 },
-    { id: 'menu_60', parent: 'menu_43', name: '岗位删除', perms: 'system:post:delete', sort: 3 }
+    { id: 'menu_60', parent: 'menu_43', name: '岗位删除', perms: 'system:post:delete', sort: 3 },
+    // 定时任务（menu_48）
+    { id: 'menu_61', parent: 'menu_48', name: '任务新增', perms: 'system:job:add', sort: 1 },
+    { id: 'menu_62', parent: 'menu_48', name: '任务修改', perms: 'system:job:update', sort: 2 },
+    { id: 'menu_63', parent: 'menu_48', name: '任务删除', perms: 'system:job:delete', sort: 3 },
+    { id: 'menu_64', parent: 'menu_48', name: '任务执行', perms: 'system:job:run', sort: 4 },
+    // 在线用户（menu_49）
+    { id: 'menu_65', parent: 'menu_49', name: '强制下线', perms: 'system:online:kick', sort: 1 },
+    // 缓存监控（menu_51）
+    { id: 'menu_66', parent: 'menu_51', name: '清理缓存', perms: 'system:monitor:cache:clear', sort: 1 }
   ]
   for (const b of BUTTONS) {
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])
