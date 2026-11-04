@@ -88,8 +88,19 @@ export class LogController {
   async exportLoginLog(@Query() query: QueryLoginLogDto, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
     const rows = await this.logService.exportLoginLog(query)
     const csv = toCsv(
-      ['ID', '用户名', '结果', '说明', 'IP', 'User-Agent', '登录时间'],
-      rows.map(row => [row.id, row.username, row.status === 1 ? '成功' : '失败', row.message, row.ip, row.userAgent, formatDateTime(row.createdAt)])
+      ['ID', '用户名', '结果', '说明', 'IP', '归属地', '浏览器', '操作系统', 'User-Agent', '登录时间'],
+      rows.map(row => [
+        row.id,
+        row.username,
+        row.status === 1 ? '成功' : '失败',
+        row.message,
+        row.ip,
+        row.location ?? '未知',
+        row.browser ?? '未知',
+        row.os ?? '未知',
+        row.userAgent,
+        formatDateTime(row.createdAt)
+      ])
     )
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename="login-logs-${Date.now()}.csv"`)

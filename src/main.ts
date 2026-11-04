@@ -22,6 +22,9 @@ async function bootstrap() {
 
   app.setGlobalPrefix(globalPrefix)
 
+  // 信任反向代理头（X-Forwarded-For 等）：挂在 Nginx 后面时 req.ip 才是客户端真实 IP，登录日志/操作日志依赖它
+  app.set('trust proxy', true)
+
   // 静态资源目录：public/upload 下的上传文件可直接以 {host}/upload/... 访问
   app.useStaticAssets(path.join(process.cwd(), 'public'))
 

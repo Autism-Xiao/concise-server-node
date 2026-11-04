@@ -27,6 +27,18 @@ export class LoginLogEntity {
   @Column({ length: 255, nullable: true, comment: 'User-Agent' })
   userAgent?: string
 
+  @ApiPropertyOptional({ description: '浏览器（UA 解析，如 Chrome 156）', example: 'Chrome 156', nullable: true })
+  @Column({ length: 64, nullable: true, comment: '浏览器（UA解析）' })
+  browser?: string
+
+  @ApiPropertyOptional({ description: '操作系统（UA 解析，如 Windows 10）', example: 'Windows 10', nullable: true })
+  @Column({ length: 64, nullable: true, comment: '操作系统（UA解析）' })
+  os?: string
+
+  @ApiPropertyOptional({ description: 'IP 归属地（本机/内网IP/省市 运营商）', example: '本机', nullable: true })
+  @Column({ length: 128, nullable: true, comment: 'IP归属地（ip2region）' })
+  location?: string
+
   @ApiProperty({ description: '登录时间' })
   @CreateDateColumn({ name: 'created_at', comment: '登录时间' })
   createdAt: Date

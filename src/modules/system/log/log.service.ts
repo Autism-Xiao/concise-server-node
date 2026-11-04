@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { paginate, type Pagination } from '../../../helper/paginate'
+import { parseRequestInfo } from '../../../utils/request-info.util'
 import { LoginLogEntity } from './entities/login-log.entity'
 import { OperLogEntity } from './entities/oper-log.entity'
 
@@ -39,10 +40,13 @@ export class LogService {
     private readonly operLogRepository: Repository<OperLogEntity>
   ) {}
 
-  /** 记录一次登录尝试（成功或失败） */
+  /** 记录一次登录尝试（成功或失败）；浏览器/系统/归属地在写入时统一解析，调用方只给 ip + userAgent 原料 */
   async recordLogin(input: LoginLogInput): Promise<void> {
     try {
-      await this.loginLogRepository.save(this.loginLogRepository.create(input))
+      // trust proxy 开启后 IPv4 可能以 ::ffff: 前缀（IPv4-mapped IPv6）落库，统一清洗成纯 IPv4
+      const ip = input.ip.replace(/^::ffff:/, '')
+      const { browser, os, location } = parseRequestInfo(ip, input.userAgent)
+      await this.loginLogRepository.save(this.loginLogRepository.create({ ...input, ip, browser, os, location }))
     } catch (error) {
       console.error('[LogService] 登录日志写入失败:', error)
     }
