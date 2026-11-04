@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
-import { parseCsv } from '../../utils/csv.util'
 import { RoleEntity } from './entities/role.entity'
 import { MenuEntity } from '../menu/entities/menu.entity'
 import type { CreateRoleDto } from './dto/create-role.dto'
@@ -22,9 +21,9 @@ export interface RoleImportResult {
   errors: Array<{ row: number; roleCode: string; message: string }>
 }
 
-/** 导入单文件上限：2000 行、2MB，防止一次性灌爆内存 */
+/** 导入单文件上限：2000 行、5MB，防止一次性灌爆内存 */
 export const ROLE_IMPORT_MAX_ROWS = 2000
-export const ROLE_IMPORT_MAX_SIZE = 2 * 1024 * 1024
+export const ROLE_IMPORT_MAX_SIZE = 5 * 1024 * 1024
 
 /** 角色编码规则：字母开头，允许字母/数字/下划线/冒号/点/短横线，最长 100 */
 const ROLE_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_:.-]*$/
@@ -54,7 +53,8 @@ export class RoleService extends BaseService<RoleEntity> {
     const role = await this.create({
       roleName: dto.roleName,
       roleCode: dto.roleCode,
-      description: dto.description
+      description: dto.description,
+      createTime: new Date()
     })
     if (dto.menuIds?.length) {
       await this.assignMenus(role.id, dto.menuIds)
@@ -139,17 +139,12 @@ export class RoleService extends BaseService<RoleEntity> {
   }
 
   /**
-   * 从 CSV 文本导入角色（按 roleCode 判定新增或更新）
+   * 导入角色（入参为已解析的二维表格数据，xlsx/csv 由 controller 负责解析）
    * - 新增：roleName/roleCode/description 入库，不绑定菜单权限
    * - 已存在：只覆盖 roleName/description（不传 description 则保持原值），已有授权不受影响
    * - 单行失败不影响其他行，最终返回统计 + 失败明细
    */
-  async importRoles(text: string): Promise<RoleImportResult> {
-    // utf8 解码失败会产生替换字符，明确报错比入库乱码好排查
-    if (text.includes('\uFFFD')) {
-      throw new BadRequestException('文件编码不是 UTF-8，请用 Excel 另存为「CSV UTF-8（逗号分隔）」后重试')
-    }
-    const rows = parseCsv(text)
+  async importRoles(rows: string[][]): Promise<RoleImportResult> {
     if (!rows.length) {
       throw new BadRequestException('文件内容为空，请下载模板后填写')
     }
@@ -203,7 +198,7 @@ export class RoleService extends BaseService<RoleEntity> {
           })
           result.updated += 1
         } else {
-          const created = await this.create({ roleName: roleName || roleCode, roleCode, description: description || undefined })
+          const created = await this.create({ roleName: roleName || roleCode, roleCode, description: description || undefined, createTime: new Date() })
           existingByCode.set(roleCode, created)
           result.created += 1
         }
