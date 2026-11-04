@@ -31,7 +31,7 @@
     // ---- 系统管理子菜单 ----
     { id: 'menu_2', parent: 'menu_1', name: '用户管理', url: '/system/users', type: 1, sort: 7, icon: 'Users' }, // 原 /system/user 修正
     { id: 'menu_39', parent: 'menu_1', name: '菜单管理', url: '/system/menu', type: 1, sort: 8, icon: 'ListTree' },
-    { id: 'menu_40', parent: 'menu_1', name: '角色权限', url: '/system/role', type: 1, sort: 9, icon: 'ShieldCheck' },
+    { id: 'menu_40', parent: 'menu_1', name: '角色权限', url: '/system/role', type: 1, sort: 9, icon: 'ShieldCheck', perms: 'system:role:list' },
     { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 10, icon: 'Building2' },
     { id: 'menu_14', parent: 'menu_1', name: '字典管理', url: '/system/dict', type: 1, sort: 11, icon: 'Database', status: '0' }, // 停用
     { id: 'menu_18', parent: 'menu_1', name: '日志管理', url: '/system/log', type: 1, sort: 12, icon: 'ScrollText' },
@@ -61,18 +61,38 @@
     const isLeaf = 1 // 目前菜单项都是叶子；有子级的目录由下方二次修正
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [m.id])
     if (exists.length) {
-      await ds.query(
-        'UPDATE sys_permission SET parent_id=?, name=?, url=?, menu_type=?, status=?, sort_no=?, icon=?, del_flag=0, update_time=NOW() WHERE id=?',
-        [m.parent, m.name, m.url, m.type, status, m.sort, m.icon ?? null, m.id]
-      )
+      const sql = 'UPDATE sys_permission SET parent_id=?, name=?, url=?, menu_type=?, status=?, sort_no=?, icon=?, del_flag=0, update_time=NOW()' + (m.perms ? ', perms=?' : '') + ' WHERE id=?'
+      const params = [m.parent, m.name, m.url, m.type, status, m.sort, m.icon ?? null]
+      if (m.perms) params.push(m.perms)
+      params.push(m.id)
+      await ds.query(sql, params)
       updated++
     } else {
       await ds.query(
-        `INSERT INTO sys_permission (id, parent_id, name, url, menu_type, status, sort_no, icon, is_route, is_leaf, hidden, perms_type, del_flag, rule_flag, create_by, create_time)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, '1', 0, 0, 'seed', NOW())`,
-        [m.id, m.parent, m.name, m.url, m.type, status, m.sort, m.icon ?? null, isLeaf]
+        `INSERT INTO sys_permission (id, parent_id, name, url, menu_type, perms, status, sort_no, icon, is_route, is_leaf, hidden, perms_type, del_flag, rule_flag, create_by, create_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, '1', 0, 0, 'seed', NOW())`,
+        [m.id, m.parent, m.name, m.url, m.type, m.perms ?? null, status, m.sort, m.icon ?? null, isLeaf]
       )
       inserted++
+    }
+  }
+
+  // ---- 角色管理按钮权限（menu_type=2，挂在 menu_40 下，幂等） ----
+  const ROLE_BUTTONS = [
+    { id: 'menu_52', parent: 'menu_40', name: '角色新增', perms: 'system:role:add', sort: 1 },
+    { id: 'menu_53', parent: 'menu_40', name: '角色修改', perms: 'system:role:update', sort: 2 },
+    { id: 'menu_54', parent: 'menu_40', name: '角色删除', perms: 'system:role:delete', sort: 3 }
+  ]
+  for (const b of ROLE_BUTTONS) {
+    const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])
+    if (exists.length) {
+      await ds.query('UPDATE sys_permission SET parent_id=?, name=?, perms=?, menu_type=2, del_flag=0, update_time=NOW() WHERE id=?', [b.parent, b.name, b.perms, b.id])
+    } else {
+      await ds.query(
+        `INSERT INTO sys_permission (id, parent_id, name, perms, menu_type, is_route, is_leaf, hidden, perms_type, del_flag, rule_flag, create_by, create_time)
+         VALUES (?, ?, ?, ?, 2, 1, 1, 0, '1', 0, 0, 'seed', NOW())`,
+        [b.id, b.parent, b.name, b.perms]
+      )
     }
   }
 

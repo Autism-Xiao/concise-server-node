@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { ArrayMinSize, IsArray, IsOptional, IsString, Length } from 'class-validator'
+import { IsArray, IsOptional, IsString, Length } from 'class-validator'
 
 export class CreateRoleDto {
   @ApiProperty({ description: '角色名称（中文展示）', example: '运营' })
@@ -18,10 +18,9 @@ export class CreateRoleDto {
   @Length(0, 255)
   description?: string
 
-  @ApiPropertyOptional({ description: '授权菜单/按钮 ID 列表（sys_permission.id）', type: [String] })
+  @ApiPropertyOptional({ description: '授权菜单/按钮 ID 列表（sys_permission.id）；空数组表示清空授权', type: [String] })
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
   menuIds?: string[]
 }
