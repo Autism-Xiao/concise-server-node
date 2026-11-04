@@ -7,6 +7,8 @@ import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
+import { MenuService, buildMenuTree, type MenuTreeItem } from '../../menu/menu.service'
+import type { MenuEntity } from '../../menu/entities/menu.entity'
 import { CaptchaService } from './captcha.service'
 import { LoginDto } from '../dto/login.dto'
 
@@ -22,6 +24,19 @@ export interface LoginResult {
   userInfo: Record<string, unknown>
 }
 
+/** 登录后权限汇总（对齐 JeecgBoot GetUserPermissionByToken） */
+export interface PermissionResult {
+  /** 角色 code 数组，如 ['admin'] */
+  roles: string[]
+  /** 按钮权限编码汇总；超级管理员返回 ['*'] */
+  permissions: string[]
+  /** 按角色过滤后的菜单树（不含按钮节点，保留祖先层级），侧边栏/动态路由数据源 */
+  menus: MenuTreeItem[]
+}
+
+/** 拥有全部权限的超级角色 code */
+const SUPER_ROLES = new Set(['admin', 'superadmin'])
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -29,7 +44,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly logService: LogService,
-    private readonly captchaService: CaptchaService
+    private readonly captchaService: CaptchaService,
+    private readonly menuService: MenuService
   ) {}
 
   /** 登录：验证码校验（可开关）→ 账号密码校验 → 签发双令牌；成败都记入登录日志 */
@@ -61,6 +77,51 @@ export class AuthService {
       await this.logService.recordLogin({ username: dto.username, status: 0, message, ip: meta.ip, userAgent: meta.userAgent })
       throw error
     }
+  }
+
+  /** 登录后权限汇总：角色 code、按钮权限、按角色过滤的菜单树（前端侧边栏与按钮级控制的数据源） */
+  async getPermissions(userId: string): Promise<PermissionResult> {
+    const user = await this.userService.findOneWithRolePermissions(userId)
+    if (!user) {
+      throw new BizException(BizErrorCode.UNAUTHORIZED, '账号不存在或已被冻结', HttpStatus.UNAUTHORIZED)
+    }
+
+    const roles = (user.roles ?? []).map(role => role.roleCode).filter(Boolean)
+    const isAdmin = roles.some(code => SUPER_ROLES.has(code))
+    // 有效菜单（未删除、状态有效），按 sort_no 升序
+    const allMenus = (await this.menuService.listAll()).filter(menu => menu.status === '1')
+
+    if (isAdmin) {
+      return { roles, permissions: ['*'], menus: buildMenuTree(allMenus, null) }
+    }
+
+    // 非超管：汇总各角色授权的菜单/按钮 id
+    const allowedIds = new Set<string>()
+    for (const role of user.roles ?? []) {
+      for (const perm of role.permissions ?? []) {
+        allowedIds.add(perm.id)
+      }
+    }
+
+    // 按钮权限编码（menuType=2 且配置了 perms）
+    const permissions = [...new Set(allMenus.filter(menu => menu.menuType === 2 && allowedIds.has(menu.id) && menu.perms).map(menu => menu.perms as string))]
+
+    // 菜单树：授权节点 + 补齐祖先链（子菜单可见则父级目录必须可见），按钮节点不进树
+    const keepIds = new Set<string>()
+    for (const menu of allMenus) {
+      if (menu.menuType === 2 || !allowedIds.has(menu.id)) continue
+      let current: MenuEntity | undefined = menu
+      while (current) {
+        keepIds.add(current.id)
+        current = current.parentId ? allMenus.find(m => m.id === current?.parentId) : undefined
+      }
+    }
+    const menus = buildMenuTree(
+      allMenus.filter(menu => menu.menuType !== 2 && keepIds.has(menu.id)),
+      null
+    )
+
+    return { roles, permissions, menus }
   }
 
   /** 用 refreshToken 换新令牌对 */

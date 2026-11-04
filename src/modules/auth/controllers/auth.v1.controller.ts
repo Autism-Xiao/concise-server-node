@@ -1,10 +1,10 @@
 import { Body, Controller, Get, Post, Request } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { LoginDto, LoginResultDto } from '../dto/login.dto'
-import { AuthService } from '../services/auth.service'
+import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
 
 /**
@@ -12,7 +12,8 @@ import { CaptchaService } from '../services/captcha.service'
  *
  * 版本策略：URL 前缀做版本，老版本路由（/api/auth/**）继续保留，前端可逐个切换；
  * 等其余模块也迁到 v1 后，旧路由再统一下线。
- * 目前只迁「验证码 + 登录」两个入口，refresh / profile 仍在旧路由。
+ * 目前：验证码 / 登录 / 权限汇总在 v1，refresh / profile 仍在旧路由。
+ * 约定：后续新增或修改的接口一律挂在 v1 下。
  */
 @ApiTags('认证 V1')
 @Controller('v1/auth')
@@ -39,5 +40,16 @@ export class AuthV1Controller {
   login(@Body() dto: LoginDto, @Request() req: { ip: string; headers: Record<string, string | string[] | undefined> }) {
     const userAgent = req.headers['user-agent']
     return this.authService.login(dto, { ip: req.ip ?? '', userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent })
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
+    summary: '获取当前用户权限（v1）',
+    description: '登录后调用一次：角色 code、按钮权限汇总（超管为 ["*"]）、按角色过滤的菜单树（侧边栏数据源）'
+  })
+  @ApiOkResponse({ description: '权限汇总', type: Object as () => PermissionResult })
+  @Get('permissions')
+  permissions(@Request() req: { user: { id: string } }) {
+    return this.authService.getPermissions(req.user.id)
   }
 }

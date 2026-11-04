@@ -191,6 +191,18 @@ export class UserService extends BaseService<UserEntity> {
     return user
   }
 
+  /** 按 id 查找并带出角色及其授权的菜单/按钮（权限接口用，过滤已软删） */
+  async findOneWithRolePermissions(id: string): Promise<UserEntity | null> {
+    const user = await this.repository.findOne({
+      where: { id, delFlag: 0 },
+      relations: { roles: { permissions: true }, depts: true }
+    })
+    if (user) {
+      this.applyDepts(user)
+    }
+    return user
+  }
+
   /** 详情：带出角色 + 部门（过滤已软删，不存在抛 404） */
   async findOneDetail(id: string): Promise<UserEntity> {
     const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true } })

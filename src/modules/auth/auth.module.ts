@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt'
 import type { StringValue } from 'ms'
 
 import { UserModule } from '../user/user.module'
+import { MenuModule } from '../menu/menu.module'
 import { LogModule } from '../system/log/log.module'
 import { RedisModule } from '../../shared/redis/redis.module'
 import { AuthController } from './controllers/auth.controller'
@@ -16,6 +17,7 @@ import { JwtStrategy } from './strategies/jwt.strategy'
 @Module({
   imports: [
     UserModule,
+    MenuModule,
     LogModule,
     RedisModule,
     JwtModule.registerAsync({
