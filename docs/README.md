@@ -80,3 +80,4 @@
 | 2026-11-04 | [角色管理导入导出接口](./2026-11-04-角色管理导入导出接口.md) | 本轮 | 新增 CSV 导出/导入/模板三接口（`/api/v1/roles/export`、`/import-template`、`/import`），按 roleCode 幂等新增或更新且不动菜单授权；csv.util 补 parseCsv；按钮权限 menu_67/68；前端角色页加导入导出按钮与导入报告弹窗 |
 | 2026-11-04 | [角色导出改为xlsx](./2026-11-04-角色导出改为xlsx.md) | 本轮 | 导出/模板改回真 Excel（exceljs，表头加粗+冻结首行+自动筛选+列宽），导入主吃 .xlsx 兼容 .csv；新增 utils/xlsx.util；顺带修掉新建角色不写 create_time 导致列表与导出「创建时间」为空 |
 | 2026-11-04 | [字典项分页pageSize超限修复](./2026-11-04-字典项分页pageSize超限修复.md) | 本轮 | 前端 fetchDictItems 硬编码 pageSize=200 撞上后端 PagerDto @Max(100)，字典右栏空白；改为按 100 条翻页取全量（上限 20 页），返回 DictItem[] |
+| 2026-11-04 | [角色批量删除与标签页按需挂载](./2026-11-04-角色批量删除与标签页按需挂载.md) | 本轮 | 前端角色页加勾选批量删除（Promise.allSettled 逐条结算，失败不阻断）；TabPageRenderer 改按需挂载（刷新时只挂当前页，避免多标签同时发请求）；补两处 tests 脚本 |
