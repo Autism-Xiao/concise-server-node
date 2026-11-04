@@ -83,6 +83,8 @@
     { id: 'menu_52', parent: 'menu_40', name: '角色新增', perms: 'system:role:add', sort: 1 },
     { id: 'menu_53', parent: 'menu_40', name: '角色修改', perms: 'system:role:update', sort: 2 },
     { id: 'menu_54', parent: 'menu_40', name: '角色删除', perms: 'system:role:delete', sort: 3 },
+    { id: 'menu_67', parent: 'menu_40', name: '角色导出', perms: 'system:role:export', sort: 4 },
+    { id: 'menu_68', parent: 'menu_40', name: '角色导入', perms: 'system:role:import', sort: 5 },
     // 职级管理（menu_42）
     { id: 'menu_55', parent: 'menu_42', name: '职级新增', perms: 'system:level:add', sort: 1 },
     { id: 'menu_56', parent: 'menu_42', name: '职级修改', perms: 'system:level:update', sort: 2 },

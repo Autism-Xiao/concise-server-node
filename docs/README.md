@@ -77,3 +77,4 @@
 | 2026-11-04 | [职级岗位示例数据-jeecg职务职级字典](./2026-11-04-职级岗位示例数据-jeecg职务职级字典.md) | 本轮 | scripts/seed-level-post.cjs 幂等灌数：职级 5 条（jeecg position_rank 员工/小组长/部门经理/副总经理 + 总经理）、岗位 5 条（挂总公司/研发部）；level_rank 越大越高，与 jeecg 序号同向 |
 | 2026-11-04 | [缓存监控前缀分组修复](./2026-11-04-缓存监控前缀分组修复.md) | 本轮 | monitor.service 前缀归属改为「已知前缀最长匹配 + 一级前缀兜底」，修掉 online:session/online:revoked 被合并成 online: 且描述永远显示「业务缓存」的问题 |
 | 2026-11-04 | [数据字典对齐JeecgBoot-sys_dict](./2026-11-04-数据字典对齐JeecgBoot-sys_dict.md) | 本轮 | dict_type/dict_item 重建为 sys_dict/sys_dict_item（jeecg 字段，存量迁移+drop 旧表）；合并为 dict 模块，/api/v1/dicts 与 /api/v1/dict-items 十接口；前端字典页改左右分栏并接真实数据；menu_14 启用 |
+| 2026-11-04 | [角色管理导入导出接口](./2026-11-04-角色管理导入导出接口.md) | 本轮 | 新增 CSV 导出/导入/模板三接口（`/api/v1/roles/export`、`/import-template`、`/import`），按 roleCode 幂等新增或更新且不动菜单授权；csv.util 补 parseCsv；按钮权限 menu_67/68；前端角色页加导入导出按钮与导入报告弹窗 |
