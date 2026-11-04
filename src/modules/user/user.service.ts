@@ -259,14 +259,16 @@ export class UserService extends BaseService<UserEntity> {
   private stripUnwritableFields(data: Partial<UserEntity>): void {
     delete data.depts
     delete data.dept
+    delete data.deptId
     delete data.departIds
     delete data.orgCode
   }
 
-  /** 按 depart_ids 顺序整理部门，并把 depts[0] 同步到兼容字段 dept */
+  /** 按 depart_ids 顺序整理部门，并把 depts[0] 同步到兼容字段 dept / deptId */
   private applyDepts(user: UserEntity): void {
     user.depts = this.orderDepts(user.depts ?? [], user.departIds)
     user.dept = user.depts[0] ?? null
+    user.deptId = user.dept?.id ?? null
   }
 
   /** 批量补部门（列表页一次查关联表，避免 N+1） */
@@ -282,6 +284,7 @@ export class UserService extends BaseService<UserEntity> {
     for (const user of users) {
       user.depts = deptMap.get(user.id) ?? []
       user.dept = user.depts[0] ?? null
+      user.deptId = user.dept?.id ?? null
     }
   }
 

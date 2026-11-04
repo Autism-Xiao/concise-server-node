@@ -77,7 +77,8 @@ export class AuthService {
       throw new UnauthorizedException('refreshToken 无效或已过期')
     }
 
-    const user = await this.userService.findOne(String(payload.id))
+    // 与登录返回保持同构：带角色与部门（depts / dept / deptId）
+    const user = await this.userService.findOneDetail(String(payload.id))
     return this.issueTokens(user)
   }
 

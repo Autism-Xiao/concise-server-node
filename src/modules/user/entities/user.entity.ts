@@ -122,4 +122,11 @@ export class UserEntity {
    */
   @ApiPropertyOptional({ description: '主部门（部门列表第一个元素，兼容字段）', type: DeptEntity, required: false })
   dept?: DeptEntity | null
+
+  /**
+   * 主部门 ID（= dept.id），非数据库列，由 UserService 组装
+   * 旧接口/旧前端读的是 user.deptId，这里保留只读兼容；写入请用 depts / deptIds
+   */
+  @ApiPropertyOptional({ description: '主部门 ID（兼容旧字段，等价于 dept.id），只读', example: 'dept_1', deprecated: true })
+  deptId?: string | null
 }

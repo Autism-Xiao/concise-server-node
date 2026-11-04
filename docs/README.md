@@ -23,7 +23,8 @@
 | 2026-11-04 | [user表对齐sys_user](./2026-11-04-user表对齐sys_user.md) | `752407a` | 参照 JeecgBoot：表注释、nickname→realname、补 9 字段、软删除 del_flag、多词列名显式映射 |
 | 2026-11-04 | [user表替换为JeecgBoot-sys_user](./2026-11-04-user表替换为JeecgBoot-sys_user.md) | `d0c19bb` | 换 sys_user 表（字符串主键+JeecgBoot 密码算法 PBEWithMD5AndDES）+ 全局 snake_case 命名策略 |
 | 2026-11-04 | [role-menu-dept对齐JeecgBoot](./2026-11-04-role-menu-dept对齐JeecgBoot.md) | `e838ffe` | role→sys_role、menu→sys_permission、dept→sys_depart；关联表改 sys_user_role/sys_role_permission；org_code 自动生成 |
-| 2026-11-04 | [用户部门多对多sys_user_depart](./2026-11-04-用户部门多对多sys_user_depart.md) | 本轮 | 废弃 sys_user.dept_id，改 sys_user_depart 多对多；depart_ids/org_code 冗余同步、部门删除保护修正 |
+| 2026-11-04 | [用户部门多对多sys_user_depart](./2026-11-04-用户部门多对多sys_user_depart.md) | `6828aa4` | 废弃 sys_user.dept_id，改 sys_user_depart 多对多；depart_ids/org_code 冗余同步、部门删除保护修正 |
+| 2026-11-04 | [接口兼容审计与deptId兼容字段](./2026-11-04-接口兼容审计与deptId兼容字段.md) | 本轮 | 65 个接口逐个审计：仅用户相关 9 个只加字段；补 deptId 只读兼容，refresh 返回同构 |
 
 ### 02 认证与权限
 
