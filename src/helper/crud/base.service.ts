@@ -34,12 +34,13 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
     return entity
   }
 
-  /** 创建：字符串主键实体自动生成 32 位 id（数字自增主键不干预） */
+  /** 创建：字符串主键自动生成 32 位 id（数字自增主键不干预）；实体有 createTime 列且未显式传入时自动补当前时间 */
   async create(dto: DeepPartial<T>): Promise<T> {
     const entity = this.repository.create(dto)
     if (!entity.id && this.hasStringPrimaryKey()) {
       Object.assign(entity, { id: randomId32() })
     }
+    this.stampCreateIfMissing(entity)
     return this.repository.save(entity)
   }
 
@@ -49,10 +50,27 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
     return !!column && (column.type === 'varchar' || column.type === 'char')
   }
 
-  /** 按 id 更新，不存在时抛 404 */
+  /** 实体是否有指定属性名的列 */
+  private hasProperty(name: string): boolean {
+    return !!this.repository.metadata.findColumnWithPropertyName(name)
+  }
+
+  /** createTime 列存在且实体上未赋值时补 new Date()；显式传入（含 @CreateDateColumn 实体）不覆盖 */
+  private stampCreateIfMissing(entity: T): void {
+    if (!this.hasProperty('createTime')) {
+      return
+    }
+    if ((entity as Record<string, unknown>).createTime === undefined) {
+      Object.assign(entity, { createTime: new Date() })
+    }
+  }
+
+  /** 按 id 更新：实体有 updateTime 列且调用方未显式传入时自动补当前时间 */
   async update(id: number | string, dto: DeepPartial<T>): Promise<T> {
     await this.findOne(id)
-    await this.repository.update(id, dto as never)
+    const shouldStamp = this.hasProperty('updateTime') && (dto as Record<string, unknown>).updateTime === undefined
+    const payload = shouldStamp ? ({ ...dto, updateTime: new Date() } as DeepPartial<T>) : dto
+    await this.repository.update(id, payload as never)
     return this.findOne(id)
   }
 
