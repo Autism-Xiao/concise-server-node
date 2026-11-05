@@ -79,6 +79,9 @@
 
   // ---- 按钮权限（menu_type=2，幂等） ----
   const BUTTONS = [
+    // 用户管理（menu_2）：新增/修改/删除已有 menu_7~9，这里只补导入导出
+    { id: 'menu_75', parent: 'menu_2', name: '用户导出', perms: 'system:user:export', sort: 4 },
+    { id: 'menu_76', parent: 'menu_2', name: '用户导入', perms: 'system:user:import', sort: 5 },
     // 角色管理（menu_40）
     { id: 'menu_52', parent: 'menu_40', name: '角色新增', perms: 'system:role:add', sort: 1 },
     { id: 'menu_53', parent: 'menu_40', name: '角色修改', perms: 'system:role:update', sort: 2 },

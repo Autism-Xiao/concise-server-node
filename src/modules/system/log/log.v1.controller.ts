@@ -116,7 +116,18 @@ export class LogV1Controller {
         row.browser ?? '未知',
         row.os ?? '未知',
         formatDateTime(row.createTime)
-      ])
+      ]),
+      {
+        title: '登录日志',
+        subtitle: `导出时间：${formatDateTime(new Date())} · 共 ${rows.length} 条记录`,
+        notes: ['说明：结果列为「成功/失败」，失败原因见说明列；归属地由 IP 库解析，内网地址显示为内网。'],
+        cellStyle: (rowIndex, columnIndex, value) => {
+          if (columnIndex !== 2 || typeof value !== 'string') {
+            return undefined
+          }
+          return value === '成功' ? { fontColor: 'FF0F766E', fillColor: 'FFE7F7F0' } : { fontColor: 'FFB42318', fillColor: 'FFFDECEC' }
+        }
+      }
     )
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename="login-logs-${Date.now()}.xlsx"`)
@@ -166,7 +177,18 @@ export class LogV1Controller {
         row.costTime,
         row.params,
         formatDateTime(row.createTime)
-      ])
+      ]),
+      {
+        title: '操作日志',
+        subtitle: `导出时间：${formatDateTime(new Date())} · 共 ${rows.length} 条记录`,
+        notes: ['说明：耗时单位为毫秒；请求参数中的密码类字段已脱敏；失败原因见错误信息列。'],
+        cellStyle: (rowIndex, columnIndex, value) => {
+          if (columnIndex !== 4 || typeof value !== 'string') {
+            return undefined
+          }
+          return value === '成功' ? { fontColor: 'FF0F766E', fillColor: 'FFE7F7F0' } : { fontColor: 'FFB42318', fillColor: 'FFFDECEC' }
+        }
+      }
     )
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename="oper-logs-${Date.now()}.xlsx"`)

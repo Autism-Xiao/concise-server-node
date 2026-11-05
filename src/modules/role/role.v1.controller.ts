@@ -57,7 +57,12 @@ export class RoleV1Controller {
         { header: '已授权菜单数', width: 14 },
         { header: '创建时间', width: 22 }
       ],
-      roles.map(role => [role.roleName ?? '', role.roleCode, role.description ?? '', role.permissions?.length ?? 0, formatDateTime(role.createTime)])
+      roles.map(role => [role.roleName ?? '', role.roleCode, role.description ?? '', role.permissions?.length ?? 0, formatDateTime(role.createTime)]),
+      {
+        title: '角色列表',
+        subtitle: `导出时间：${formatDateTime(new Date())} · 共 ${roles.length} 条记录`,
+        notes: ['说明：已授权菜单数包含目录、菜单与按钮；角色编码全局唯一，用于接口权限匹配。']
+      }
     )
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename="roles-${Date.now()}.xlsx"`)
