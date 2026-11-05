@@ -35,7 +35,10 @@ export class CaptchaService {
       fontSize: 56
     })
     // 后处理统一配色：字符深灰、干扰线浅灰（fill="none" 的干扰线 path 不动）
-    const svg = rawSvg.replace(/fill="(?!none)[^"]*"/g, 'fill="#3d4a57"').replace(/stroke="[^"]*"/g, 'stroke="#c3ccd6"')
+    const styled = rawSvg.replace(/fill="(?!none)[^"]*"/g, 'fill="#3d4a57"').replace(/stroke="[^"]*"/g, 'stroke="#c3ccd6"')
+    // SVG 默认透明背景，暗色主题下深灰字符压在深色容器上不可读；
+    // 由后端注入固定白底 rect（垫在最前），验证码作为「图片」任何主题下都保持白底可读
+    const svg = styled.replace(/(<svg[^>]*>)/, '$1<rect width="100%" height="100%" fill="#ffffff"/>')
     const captchaId = randomUUID()
     await client.set(CAPTCHA_KEY_PREFIX + captchaId, text.toLowerCase(), 'EX', this.ttlSeconds)
     return debug ? { captchaId, svg, code: text } : { captchaId, svg }
