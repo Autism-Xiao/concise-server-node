@@ -1,8 +1,7 @@
 import { Module } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
 import { JwtModule } from '@nestjs/jwt'
-import type { StringValue } from 'ms'
 
+import { jwtConfig, type JwtConfig } from '../../config'
 import { UserModule } from '../user/user.module'
 import { MenuModule } from '../menu/menu.module'
 import { LogModule } from '../system/log/log.module'
@@ -24,10 +23,11 @@ import { JwtStrategy } from './strategies/jwt.strategy'
     // 在线用户/强制下线：JwtStrategy 用它的会话登记与令牌黑名单
     OnlineModule,
     JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: (configService.get<string>('JWT_EXPIRES_IN') || '2h') as StringValue }
+      // 直接注入 jwt 命名空间（ConfigModule 为全局模块，无需 imports）
+      inject: [jwtConfig.KEY],
+      useFactory: (jwt: JwtConfig) => ({
+        secret: jwt.secret,
+        signOptions: { expiresIn: jwt.expiresIn }
       })
     })
   ],

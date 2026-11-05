@@ -86,3 +86,4 @@
 | 2026-11-05 | [退出登录接口](./2026-11-05-退出登录接口.md) | 本轮 | POST /api/v1/auth/logout：accessToken/refreshToken 拉黑（复用 online:revoked 黑名单，TTL=令牌剩余有效期）+ 删在线会话；refreshToken 刷新前过黑名单防续命；前端 logout() 先通知后端再清凭证 |
 | 2026-11-05 | [分页字段对齐jeecg-IPage](./2026-11-05-分页字段对齐jeecg-IPage.md) | 本轮 | Pagination 改 records/total/size/current/pages（对齐 MyBatis-Plus IPage），job/user 服务与前端 6 处类型 + 4 个页面同步；外层壳本就已是 jeecg 形态未动 |
 | 2026-11-05 | [接口文档只保留V1与系统](./2026-11-05-接口文档只保留V1与系统.md) | 本轮 | 8 个旧版无前缀控制器加 `@ApiExcludeController()`（路由不变、仅隐藏文档），Swagger 只剩 15 个分组：系统 + 全部 V1；坑：docs-json 的 path 带 `/api` 前缀、document.tags 恒为空需遍历 operation.tags |
+| 2026-11-05 | [配置命名空间化SQL-Redis-JWT](./2026-11-05-配置命名空间化SQL-Redis-JWT.md) | 本轮 | 新增 redis/jwt/captcha 三个 `registerAs` 命名空间 + `env.validation.ts` 启动期校验（缺密钥/端口非数字直接起不来）；9 个文件改 `@Inject(xxxConfig.KEY)`，`.env` 键名不变；坑：Windows 空环境变量等于删除、dist-doc 跑服务会因 entities 写死 `dist/**` 报 No metadata 假错 |

@@ -4,6 +4,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core'
 import { createObserveModule } from '@nestjs/observe'
 
 import { configs } from './config'
+import { validateEnv } from './config/env.validation'
 import { AllExceptionsFilter } from './common/filters/any-exception.filter'
 import { TransformInterceptor } from './common/interceptors/transform.interceptor'
 import { OperLogInterceptor } from './common/interceptors/oper-log.interceptor'
@@ -34,12 +35,13 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
 
 @Module({
   imports: [
-    // 多个 env 文件时，第一个优先级最高
+    // 多个 env 文件时，第一个优先级最高；validate 在启动期拦截缺失/格式错误的配置
     ConfigModule.forRoot({
       isGlobal: true,
       expandVariables: true,
       envFilePath: ['.env.local', '.env'],
-      load: [...configs]
+      load: [...configs],
+      validate: validateEnv
     }),
     // 数据库连接（TypeORM + MySQL）
     DatabaseModule,

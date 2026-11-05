@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Post, Request } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
+import { Body, Controller, Get, Inject, Post, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
+import { captchaConfig, type CaptchaConfig } from '../../../config'
 import { Public } from '../../../common/decorators/public.decorator'
 import { LoginDto, LoginResultDto } from '../dto/login.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
@@ -21,16 +21,15 @@ export class AuthV1Controller {
   constructor(
     private readonly authService: AuthService,
     private readonly captchaService: CaptchaService,
-    private readonly configService: ConfigService
+    @Inject(captchaConfig.KEY) private readonly captchaCfg: CaptchaConfig
   ) {}
 
   @ApiOperation({ summary: '获取图形验证码（v1）', description: 'CAPTCHA_ENABLED=true 时登录必用；返回 SVG 与 captchaId' })
   @Public()
   @Get('captcha')
   async captcha() {
-    // CAPTCHA_DEBUG=true 时附带明文 code（仅限开发环境，生产必须关闭）
-    const debug = this.configService.get<string>('CAPTCHA_DEBUG') === 'true'
-    return this.captchaService.generate(debug)
+    // captcha.debug=true 时附带明文 code（仅限开发环境，生产必须关闭）
+    return this.captchaService.generate(this.captchaCfg.debug)
   }
 
   @ApiOperation({ summary: '登录（v1）', description: '校验验证码与账号密码，返回 accessToken / refreshToken 双令牌' })

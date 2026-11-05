@@ -1,8 +1,7 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common'
+import { Injectable, Inject, HttpException, HttpStatus } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
-import { ConfigService } from '@nestjs/config'
-import type { StringValue } from 'ms'
 
+import { captchaConfig, jwtConfig, type CaptchaConfig, type JwtConfig } from '../../../config'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { UserService, USER_STATUS } from '../../user/user.service'
@@ -43,7 +42,8 @@ export class AuthService {
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
+    @Inject(jwtConfig.KEY) private readonly jwt: JwtConfig,
+    @Inject(captchaConfig.KEY) private readonly captcha: CaptchaConfig,
     private readonly logService: LogService,
     private readonly captchaService: CaptchaService,
     private readonly menuService: MenuService,
@@ -53,8 +53,8 @@ export class AuthService {
   /** 登录：验证码校验（可开关）→ 账号密码校验 → 签发双令牌；成败都记入登录日志 */
   async login(dto: LoginDto, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
     try {
-      // 验证码开关：CAPTCHA_ENABLED=true 时强制校验（防爆破）
-      if (this.configService.get<string>('CAPTCHA_ENABLED') === 'true') {
+      // 验证码开关：captcha.enabled=true 时强制校验（防爆破）
+      if (this.captcha.enabled) {
         await this.captchaService.assertValid(dto.captchaId, dto.captchaCode)
       }
 
@@ -132,7 +132,7 @@ export class AuthService {
     let payload: JwtPayload
     try {
       payload = this.jwtService.verify<JwtPayload>(refreshToken, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET')
+        secret: this.jwt.refreshSecret
       })
     } catch {
       throw new BizException(BizErrorCode.UNAUTHORIZED, 'refreshToken 无效或已过期', HttpStatus.UNAUTHORIZED)
@@ -169,10 +169,7 @@ export class AuthService {
   /** 签发 accessToken + refreshToken */
   private async issueTokens(user: import('../../user/entities/user.entity').UserEntity): Promise<LoginResult> {
     const payload: JwtPayload = { id: user.id, username: user.username }
-    const secret = this.configService.get<string>('JWT_SECRET')
-    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET')
-    const expiresIn = (this.configService.get<string>('JWT_EXPIRES_IN') || '2h') as StringValue
-    const refreshExpiresIn = (this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d') as StringValue
+    const { secret, refreshSecret, expiresIn, refreshExpiresIn } = this.jwt
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, { secret, expiresIn }),

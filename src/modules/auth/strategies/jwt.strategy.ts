@@ -1,8 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common'
 import { PassportStrategy } from '@nestjs/passport'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 
+import { jwtConfig, type JwtConfig } from '../../../config'
 import { UserService } from '../../user/user.service'
 import { OnlineService, type SessionRequest } from '../../ops/online/online.service'
 import type { JwtPayload } from '../services/auth.service'
@@ -33,14 +33,14 @@ function extractToken(request: RequestWithToken): string | null {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    configService: ConfigService,
+    @Inject(jwtConfig.KEY) jwt: JwtConfig,
     private readonly userService: UserService,
     private readonly onlineService: OnlineService
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') as string,
+      secretOrKey: jwt.secret,
       passReqToCallback: true
     })
   }
