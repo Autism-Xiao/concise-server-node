@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { QueryOnlineDto } from './dto/query-online.dto'
 import { OnlineService } from './online.service'
 
@@ -15,7 +14,6 @@ import { OnlineService } from './online.service'
  */
 @ApiTags('在线用户 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/online')
 export class OnlineV1Controller {
   constructor(private readonly onlineService: OnlineService) {}

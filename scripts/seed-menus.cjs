@@ -23,14 +23,14 @@
   const MENUS = [
     // ---- 顶级 ----
     { id: 'menu_35', parent: null, name: '仪表盘', url: '/dashboard', type: 0, sort: 1, icon: 'LayoutDashboard' },
-    { id: 'menu_27', parent: null, name: '任务', url: '/tasks', type: 0, sort: 2, icon: 'ListTodo' }, // 原「任务管理」上移
+    { id: 'menu_27', parent: null, name: '任务', url: '/tasks', type: 0, sort: 2, icon: 'ListTodo', perms: 'system:task:list' }, // 原「任务管理」上移
     { id: 'menu_36', parent: null, name: '应用', url: '/apps', type: 0, sort: 3, icon: 'AppWindow' },
     { id: 'menu_37', parent: null, name: '聊天', url: '/chats', type: 0, sort: 4, icon: 'MessagesSquare' },
     { id: 'menu_1', parent: null, name: '系统管理', url: '/system', type: 0, sort: 6, icon: 'Settings' },
     { id: 'menu_38', parent: null, name: '运维管理', url: '/ops', type: 0, sort: 17, icon: 'Server' },
     // ---- 系统管理子菜单 ----
-    { id: 'menu_2', parent: 'menu_1', name: '用户管理', url: '/system/users', type: 1, sort: 7, icon: 'Users' }, // 原 /system/user 修正
-    { id: 'menu_39', parent: 'menu_1', name: '菜单管理', url: '/system/menu', type: 1, sort: 8, icon: 'ListTree' },
+    { id: 'menu_2', parent: 'menu_1', name: '用户管理', url: '/system/users', type: 1, sort: 7, icon: 'Users', perms: 'system:user:list' }, // 原 /system/user 修正
+    { id: 'menu_39', parent: 'menu_1', name: '菜单管理', url: '/system/menu', type: 1, sort: 8, icon: 'ListTree', perms: 'system:menu:list' },
     { id: 'menu_40', parent: 'menu_1', name: '角色权限', url: '/system/role', type: 1, sort: 9, icon: 'ShieldCheck', perms: 'system:role:list' },
     { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 10, icon: 'Building2', perms: 'system:dept:list' },
     { id: 'menu_14', parent: 'menu_1', name: '数据字典', url: '/system/dict', type: 1, sort: 11, icon: 'Database', perms: 'system:dict:list' },
@@ -40,11 +40,11 @@
     { id: 'menu_42', parent: 'menu_1', name: '职级管理', url: '/system/level', type: 1, sort: 22, icon: 'Medal', perms: 'system:level:list' },
     { id: 'menu_43', parent: 'menu_1', name: '岗位管理', url: '/system/post', type: 1, sort: 23, icon: 'Briefcase', perms: 'system:post:list' },
     { id: 'menu_44', parent: 'menu_1', name: '租户管理', url: '/system/tenant', type: 1, sort: 24, icon: 'Network' },
-    { id: 'menu_21', parent: 'menu_1', name: '通知公告', url: '/system/notice', type: 1, sort: 25, icon: 'Megaphone' }, // 原「公告管理」
+    { id: 'menu_21', parent: 'menu_1', name: '通知公告', url: '/system/notice', type: 1, sort: 25, icon: 'Megaphone', perms: 'system:notice:list' }, // 原「公告管理」
     { id: 'menu_45', parent: 'menu_1', name: '行政区划', url: '/system/region', type: 1, sort: 26, icon: 'MapPin' },
     // ---- 日志管理子菜单 ----
-    { id: 'menu_46', parent: 'menu_18', name: '登录日志', url: '/system/log/login', type: 1, sort: 15, icon: 'LogIn' },
-    { id: 'menu_47', parent: 'menu_18', name: '操作日志', url: '/system/log/operation', type: 1, sort: 16, icon: 'FileText' },
+    { id: 'menu_46', parent: 'menu_18', name: '登录日志', url: '/system/log/login', type: 1, sort: 15, icon: 'LogIn', perms: 'system:log:login' },
+    { id: 'menu_47', parent: 'menu_18', name: '操作日志', url: '/system/log/operation', type: 1, sort: 16, icon: 'FileText', perms: 'system:log:oper' },
     // ---- 运维管理子菜单 ----
     { id: 'menu_48', parent: 'menu_38', name: '定时任务', url: '/ops/job', type: 1, sort: 18, icon: 'Timer', perms: 'system:job:list' },
     { id: 'menu_49', parent: 'menu_38', name: '在线用户', url: '/ops/online', type: 1, sort: 19, icon: 'UserCheck', perms: 'system:online:list' },

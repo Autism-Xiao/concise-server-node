@@ -4,7 +4,6 @@ import { IsOptional, IsString } from 'class-validator'
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { MonitorService } from './monitor.service'
 
 class ClearCacheDto {
@@ -21,7 +20,6 @@ class ClearCacheDto {
  */
 @ApiTags('运维监控 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/monitor')
 export class MonitorV1Controller {
   constructor(private readonly monitorService: MonitorService) {}

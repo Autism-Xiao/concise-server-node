@@ -48,6 +48,14 @@ export class RoleService extends BaseService<RoleEntity> {
     return roles.filter(role => (role.roleName ?? '').toLowerCase().includes(keyword) || (role.roleCode ?? '').toLowerCase().includes(keyword))
   }
 
+  /** 角色下拉选项：只暴露 id/名称/编码，供用户表单分配角色、列表筛选（登录即可用，不含授权明细） */
+  async listOptions(): Promise<Array<{ id: string; roleCode: string; roleName?: string }>> {
+    return this.roleRepository.find({
+      select: { id: true, roleCode: true, roleName: true },
+      order: { createTime: 'ASC' }
+    })
+  }
+
   /** 创建角色，支持 menuIds 绑定菜单权限（id 由 BaseService 自动生成 32 位） */
   async createRole(dto: CreateRoleDto): Promise<RoleEntity> {
     // 超管编码是内置约定，不允许新建同名角色（否则会静默继承全部权限）

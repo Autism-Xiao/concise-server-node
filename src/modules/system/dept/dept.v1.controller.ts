@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { CreateDeptDto } from './dto/create-dept.dto'
 import { UpdateDeptDto } from './dto/update-dept.dto'
 import { DeptEntity } from './entities/dept.entity'
@@ -17,14 +16,15 @@ import { DeptService } from './dept.service'
  */
 @ApiTags('部门管理 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/depts')
 export class DeptV1Controller {
   constructor(private readonly deptService: DeptService) {}
 
-  @ApiOperation({ summary: '部门树（v1）', description: '排除已删除，children 递归组装；未挂部门的用户表单与部门管理页共用' })
+  @ApiOperation({
+    summary: '部门树（v1）',
+    description: '排除已删除，children 递归组装；用户表单/用户列表筛选与部门管理页共用，属登录可用元数据（不校验部门权限）'
+  })
   @ApiOkResponse({ description: '部门树形结构', type: [DeptEntity] })
-  @Perms('system:dept:list')
   @Get('tree')
   tree() {
     return this.deptService.getTree()
@@ -42,8 +42,9 @@ export class DeptV1Controller {
     return this.deptService.listAll().then(all => all.filter(dept => (dept.departName ?? '').includes(keyword)))
   }
 
-  @ApiOperation({ summary: '部门详情（v1）' })
+  @ApiOperation({ summary: '部门详情（v1）', description: '需 system:dept:list' })
   @ApiOkResponse({ description: '部门信息', type: DeptEntity })
+  @Perms('system:dept:list')
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.deptService.findOne(id)

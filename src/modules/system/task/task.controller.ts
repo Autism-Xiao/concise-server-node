@@ -4,7 +4,6 @@ import { Type } from 'class-transformer'
 import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator'
 
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { PagerDto } from '../../../common/dto/pager.dto'
 import { TaskEntity } from './entities/task.entity'
@@ -50,19 +49,20 @@ class ChangeStatusDto {
 @ApiExcludeController()
 @ApiTags('任务管理')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('tasks')
 export class TaskController {
   constructor(private readonly taskService: TaskService) {}
 
-  @ApiOperation({ summary: '任务分页列表' })
+  @ApiOperation({ summary: '任务分页列表', description: '需 system:task:list' })
   @ApiOkResponse({ description: '分页结果', type: [TaskEntity] })
+  @Perms('system:task:list')
   @Get()
   list(@Query() query: QueryTaskDto) {
     return this.taskService.listByQuery(query)
   }
 
-  @ApiOperation({ summary: '任务详情' })
+  @ApiOperation({ summary: '任务详情', description: '需 system:task:list' })
+  @Perms('system:task:list')
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.taskService.findOne(id)

@@ -107,8 +107,9 @@ export class AuthService {
       }
     }
 
-    // 按钮权限编码（menuType=2 且配置了 perms）
-    const permissions = [...new Set(allMenus.filter(menu => menu.menuType === 2 && allowedIds.has(menu.id) && menu.perms).map(menu => menu.perms as string))]
+    // 权限码：菜单节点（决定能否进页面/调列表接口）与按钮节点（决定能否增删改）都算；
+    // 只用 allowedIds 判定，祖先补齐出来的目录不授予权限码
+    const permissions = [...new Set(allMenus.filter(menu => allowedIds.has(menu.id)).flatMap(menu => (menu.perms ? [menu.perms] : [])))]
 
     // 菜单树：授权节点 + 补齐祖先链（子菜单可见则父级目录必须可见），按钮节点不进树
     const keepIds = new Set<string>()

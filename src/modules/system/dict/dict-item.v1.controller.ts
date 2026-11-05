@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { CreateDictItemDto } from './dto/create-dict-item.dto'
 import { QueryDictItemDto } from './dto/query-dict-item.dto'
 import { UpdateDictItemDto } from './dto/update-dict-item.dto'
@@ -30,7 +29,6 @@ export class DictItemV1Controller {
 
   @ApiOperation({ summary: '字典项分页列表（v1）', description: '可按 dictId / keyword / status 过滤，按 sort_order 升序' })
   @ApiOkResponse({ description: '分页结果', type: [SysDictItemEntity] })
-  @Roles('admin')
   @Perms('system:dict:list')
   @Get()
   list(@Query() query: QueryDictItemDto) {
@@ -38,7 +36,6 @@ export class DictItemV1Controller {
   }
 
   @ApiOperation({ summary: '字典项详情（v1）' })
-  @Roles('admin')
   @Perms('system:dict:list')
   @Get(':id')
   findOne(@Param('id') id: string) {
@@ -46,7 +43,6 @@ export class DictItemV1Controller {
   }
 
   @ApiOperation({ summary: '创建字典项（v1）', description: '所属字典必须存在；同一字典下 itemValue 唯一' })
-  @Roles('admin')
   @OperLog('字典项')
   @Perms('system:dict:add')
   @Post()
@@ -55,7 +51,6 @@ export class DictItemV1Controller {
   }
 
   @ApiOperation({ summary: '更新字典项（v1）' })
-  @Roles('admin')
   @OperLog('字典项')
   @Perms('system:dict:update')
   @Put(':id')
@@ -64,7 +59,6 @@ export class DictItemV1Controller {
   }
 
   @ApiOperation({ summary: '删除字典项（v1）', description: '硬删（sys_dict_item 没有 del_flag）' })
-  @Roles('admin')
   @OperLog('字典项')
   @Perms('system:dict:delete')
   @Delete(':id')

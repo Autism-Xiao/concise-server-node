@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { CreateJobDto } from './dto/create-job.dto'
 import { QueryJobDto } from './dto/query-job.dto'
 import { UpdateJobDto } from './dto/update-job.dto'
@@ -18,7 +17,6 @@ import { JobService } from './job.service'
  */
 @ApiTags('定时任务 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/jobs')
 export class JobV1Controller {
   constructor(private readonly jobService: JobService) {}

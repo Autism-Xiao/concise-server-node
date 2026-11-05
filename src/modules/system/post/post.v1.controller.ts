@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { CreatePostDto } from './dto/create-post.dto'
 import { QueryPostDto } from './dto/query-post.dto'
 import { UpdatePostDto } from './dto/update-post.dto'
@@ -17,20 +16,21 @@ import { PostService } from './post.service'
  */
 @ApiTags('岗位管理 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/posts')
 export class PostV1Controller {
   constructor(private readonly postService: PostService) {}
 
-  @ApiOperation({ summary: '岗位列表（v1）', description: 'post_sort 升序，带所属部门；keyword 模糊匹配名称/编码/描述；支持 deptId 过滤' })
+  @ApiOperation({ summary: '岗位列表（v1）', description: 'post_sort 升序，带所属部门；keyword 模糊匹配名称/编码/描述；支持 deptId 过滤；需 system:post:list' })
   @ApiOkResponse({ description: '岗位列表', type: [PostEntity] })
+  @Perms('system:post:list')
   @Get()
   list(@Query() query: QueryPostDto): Promise<PostEntity[]> {
     return this.postService.listByQuery(query)
   }
 
-  @ApiOperation({ summary: '岗位详情（v1）' })
+  @ApiOperation({ summary: '岗位详情（v1）', description: '需 system:post:list' })
   @ApiOkResponse({ description: '岗位信息', type: PostEntity })
+  @Perms('system:post:list')
   @Get(':id')
   findOne(@Param('id') id: string): Promise<PostEntity> {
     return this.postService.findOne(id)

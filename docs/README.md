@@ -88,3 +88,4 @@
 | 2026-11-05 | [接口文档只保留V1与系统](./2026-11-05-接口文档只保留V1与系统.md) | 本轮 | 8 个旧版无前缀控制器加 `@ApiExcludeController()`（路由不变、仅隐藏文档），Swagger 只剩 15 个分组：系统 + 全部 V1；坑：docs-json 的 path 带 `/api` 前缀、document.tags 恒为空需遍历 operation.tags |
 | 2026-11-05 | [配置命名空间化SQL-Redis-JWT](./2026-11-05-配置命名空间化SQL-Redis-JWT.md) | 本轮 | 新增 redis/jwt/captcha 三个 `registerAs` 命名空间 + `env.validation.ts` 启动期校验（缺密钥/端口非数字直接起不来）；9 个文件改 `@Inject(xxxConfig.KEY)`，`.env` 键名不变；坑：Windows 空环境变量等于删除、dist-doc 跑服务会因 entities 写死 `dist/**` 报 No metadata 假错 |
 | 2026-11-05 | [超管角色授权收口](./2026-11-05-超管角色授权收口.md) | 本轮 | 抽 `isSuperRole/hasSuperRole` 统一三处超管判定（auth 汇总 / PermsGuard / RolesGuard）；授权接口对超管 400 拒绝、禁止占用 admin/superadmin 编码；`getMenuIds` 对超管返回全部 69 个菜单 id；前端禁用授权/删除按钮并把"已授权"显示为「全部（内置）」 |
+| 2026-11-05 | [菜单授权与接口权限打通](./2026-11-05-菜单授权与接口权限打通.md) | 本轮 | 修「勾了菜单却看不到数据」：11 个 v1 控制器 + tasks 去掉类级 `@Roles('admin')`（它短路了方法级 `@Perms`），查询接口统一用 `system:xxx:list`；权限汇总不再只收按钮节点；前端空菜单树不再回退静态全量菜单；新增 `GET /v1/roles/options` 供跨模块下拉 |

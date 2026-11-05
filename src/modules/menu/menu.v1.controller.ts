@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
-import { Roles } from '../../common/decorators/roles.decorator'
 import { CreateMenuDto } from './dto/create-menu.dto'
 import { UpdateMenuDto } from './dto/update-menu.dto'
 import { MenuEntity } from './entities/menu.entity'
@@ -17,25 +16,29 @@ import { MenuService } from './menu.service'
  */
 @ApiTags('菜单管理 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/menus')
 export class MenuV1Controller {
   constructor(private readonly menuService: MenuService) {}
 
-  @ApiOperation({ summary: '菜单树（v1）', description: '目录/菜单/按钮三级结构，角色授权弹窗与登录权限接口共用同一张表' })
+  @ApiOperation({
+    summary: '菜单树（v1）',
+    description: '目录/菜单/按钮三级结构；角色授权弹窗、登录权限接口共用，属登录可用元数据（不校验菜单权限）'
+  })
   @Get('tree')
   tree() {
     return this.menuService.getTree()
   }
 
-  @ApiOperation({ summary: '菜单全量列表（v1，扁平，排除已删除）' })
+  @ApiOperation({ summary: '菜单全量列表（v1，扁平，排除已删除）', description: '需 system:menu:list' })
   @ApiOkResponse({ description: '菜单列表', type: [MenuEntity] })
+  @Perms('system:menu:list')
   @Get()
   list() {
     return this.menuService.listAll()
   }
 
-  @ApiOperation({ summary: '菜单详情（v1）' })
+  @ApiOperation({ summary: '菜单详情（v1）', description: '需 system:menu:list' })
+  @Perms('system:menu:list')
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.menuService.findOne(id)

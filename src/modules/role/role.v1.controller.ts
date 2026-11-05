@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiOperation, ApiTa
 import { FileInterceptor } from '@nestjs/platform-express'
 import type { Response } from 'express'
 
-import { Roles } from '../../common/decorators/roles.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
@@ -22,16 +21,26 @@ import { ROLE_IMPORT_MAX_SIZE, RoleService, type RoleImportResult } from './role
  */
 @ApiTags('角色管理 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/roles')
 export class RoleV1Controller {
   constructor(private readonly roleService: RoleService) {}
 
-  @ApiOperation({ summary: '角色列表（v1）', description: '全量返回（角色数量少不分页），含已授权菜单；keyword 模糊匹配名称/编码' })
+  @ApiOperation({ summary: '角色列表（v1）', description: '全量返回（角色数量少不分页），含已授权菜单；keyword 模糊匹配名称/编码；需 system:role:list' })
   @ApiOkResponse({ description: '角色列表', type: [RoleEntity] })
+  @Perms('system:role:list')
   @Get()
   list(@Query() query: QueryRoleDto): Promise<RoleEntity[]> {
     return this.roleService.listByQuery(query)
+  }
+
+  @ApiOperation({
+    summary: '角色下拉选项（v1）',
+    description: '仅返回 id/角色名/角色编码，登录即可用；用户表单分配角色、用户列表角色筛选等跨模块下拉的数据源（不含授权明细）'
+  })
+  @ApiOkResponse({ description: '角色选项数组' })
+  @Get('options')
+  options(): Promise<Array<{ id: string; roleCode: string; roleName?: string }>> {
+    return this.roleService.listOptions()
   }
 
   @ApiOperation({ summary: '导出角色 Excel（v1）', description: '与列表同过滤条件（keyword），不分页；返回 .xlsx，需 system:role:export 权限' })
@@ -112,8 +121,9 @@ export class RoleV1Controller {
     throw new BadRequestException('仅支持 .xlsx（推荐）或 .csv 文件')
   }
 
-  @ApiOperation({ summary: '角色详情（v1，含已授权菜单）' })
+  @ApiOperation({ summary: '角色详情（v1，含已授权菜单）', description: '需 system:role:list' })
   @ApiOkResponse({ description: '角色信息', type: RoleEntity })
+  @Perms('system:role:list')
   @Get(':id')
   findOne(@Param('id') id: string): Promise<RoleEntity> {
     return this.roleService.findOneWithMenus(id)
@@ -151,6 +161,7 @@ export class RoleV1Controller {
     description: '授权弹窗勾选回显用；内置超级管理员返回全部菜单 id（其权限为内置全量）'
   })
   @ApiOkResponse({ description: '已授权 id 数组', schema: { type: 'object', properties: { menuIds: { type: 'array', items: { type: 'string' } } } } })
+  @Perms('system:role:list')
   @Get(':id/menu-ids')
   async menuIds(@Param('id') id: string): Promise<{ menuIds: string[] }> {
     return { menuIds: await this.roleService.getMenuIds(id) }

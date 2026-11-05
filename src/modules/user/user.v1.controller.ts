@@ -1,7 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
-import { Roles } from '../../common/decorators/roles.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { CreateUserDto } from './dto/create-user.dto'
@@ -18,20 +17,24 @@ import { UserService } from './user.service'
  */
 @ApiTags('用户管理 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/users')
 export class UserV1Controller {
   constructor(private readonly userService: UserService) {}
 
-  @ApiOperation({ summary: '分页查询用户列表（v1）', description: '支持 keyword 模糊匹配账号/真实姓名/电话、status 精确过滤、deptId/deptIds 部门过滤' })
+  @ApiOperation({
+    summary: '分页查询用户列表（v1）',
+    description: '支持 keyword 模糊匹配账号/真实姓名/电话、status 精确过滤、deptId/deptIds 部门过滤；需 system:user:list'
+  })
   @ApiOkResponse({ description: '分页结果', type: [UserEntity] })
+  @Perms('system:user:list')
   @Get()
   list(@Query() query: QueryUserDto) {
     return this.userService.listByQuery(query)
   }
 
-  @ApiOperation({ summary: '查询用户详情（v1，含角色与部门）' })
+  @ApiOperation({ summary: '查询用户详情（v1，含角色与部门）', description: '需 system:user:list' })
   @ApiOkResponse({ description: '用户信息', type: UserEntity })
+  @Perms('system:user:list')
   @Get(':id')
   findOne(@Param('id') id: string): Promise<UserEntity> {
     return this.userService.findOneDetail(id)

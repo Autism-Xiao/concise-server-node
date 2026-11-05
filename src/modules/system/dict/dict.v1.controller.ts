@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
-import { Roles } from '../../../common/decorators/roles.decorator'
 import { CreateDictDto } from './dto/create-dict.dto'
 import { QueryDictDto } from './dto/query-dict.dto'
 import { UpdateDictDto } from './dto/update-dict.dto'
@@ -17,7 +16,6 @@ import { SysDictEntity } from './entities/sys-dict.entity'
  */
 @ApiTags('数据字典 V1')
 @ApiBearerAuth('jwt')
-@Roles('admin')
 @Controller('v1/dicts')
 export class DictV1Controller {
   constructor(private readonly dictService: DictService) {}
