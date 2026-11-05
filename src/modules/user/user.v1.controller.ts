@@ -64,6 +64,7 @@ export class UserV1Controller {
 
   @ApiOperation({ summary: '为用户绑定角色（v1，全量覆盖）' })
   @OperLog('用户管理')
+  @Perms('system:user:update')
   @Put(':id/roles')
   async assignRoles(@Param('id') id: string, @Body() dto: { roleIds: string[] }) {
     await this.userService.assignRoles(id, dto.roleIds)
@@ -75,6 +76,7 @@ export class UserV1Controller {
     description: '写入 sys_user_depart；数组顺序即主次，第一个为主部门，同步 depart_ids 与 org_code'
   })
   @OperLog('用户管理')
+  @Perms('system:user:update')
   @Put(':id/depts')
   async assignDepts(@Param('id') id: string, @Body() dto: { deptIds: string[] }) {
     await this.userService.assignDepts(id, dto.deptIds ?? [])

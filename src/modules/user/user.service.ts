@@ -135,7 +135,8 @@ export class UserService extends BaseService<UserEntity> {
 
     await this.repository.update(id, {
       departIds: ids.length ? ids.join(',') : null,
-      orgCode: ordered[0]?.orgCode ?? null
+      orgCode: ordered[0]?.orgCode ?? null,
+      updateTime: new Date()
     })
   }
 

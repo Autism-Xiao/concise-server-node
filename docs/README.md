@@ -81,3 +81,4 @@
 | 2026-11-04 | [角色导出改为xlsx](./2026-11-04-角色导出改为xlsx.md) | 本轮 | 导出/模板改回真 Excel（exceljs，表头加粗+冻结首行+自动筛选+列宽），导入主吃 .xlsx 兼容 .csv；新增 utils/xlsx.util；顺带修掉新建角色不写 create_time 导致列表与导出「创建时间」为空 |
 | 2026-11-04 | [字典项分页pageSize超限修复](./2026-11-04-字典项分页pageSize超限修复.md) | 本轮 | 前端 fetchDictItems 硬编码 pageSize=200 撞上后端 PagerDto @Max(100)，字典右栏空白；改为按 100 条翻页取全量（上限 20 页），返回 DictItem[] |
 | 2026-11-04 | [角色批量删除与标签页按需挂载](./2026-11-04-角色批量删除与标签页按需挂载.md) | 本轮 | 前端角色页加勾选批量删除（Promise.allSettled 逐条结算，失败不阻断）；TabPageRenderer 改按需挂载（刷新时只挂当前页，避免多标签同时发请求）；补两处 tests 脚本 |
+| 2026-11-05 | [后台扫描问题修复](./2026-11-05-后台扫描问题修复.md) | 本轮 | 修 updateRole/assignDepts 不写 updateTime；user 绑定角色/部门与菜单增删改补 @Perms（种子 menu_69~71）；日志导出 CSV 改 xlsx；删 ESM 加载失败的脚手架 spec，新增 csv.util 单测 6 例，npx jest 转绿 |

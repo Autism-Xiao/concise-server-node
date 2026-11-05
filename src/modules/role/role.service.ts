@@ -71,7 +71,7 @@ export class RoleService extends BaseService<RoleEntity> {
       }
       await this.assertCodeAvailable(dto.roleCode)
     }
-    await this.roleRepository.update(id, { roleName: dto.roleName, roleCode: dto.roleCode, description: dto.description })
+    await this.roleRepository.update(id, { roleName: dto.roleName, roleCode: dto.roleCode, description: dto.description, updateTime: new Date() })
     if (dto.menuIds) {
       await this.assignMenus(id, dto.menuIds)
     }

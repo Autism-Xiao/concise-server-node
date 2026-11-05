@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { OperLog } from '../../common/decorators/oper-log.decorator'
+import { Perms } from '../../common/decorators/perms.decorator'
 import { Roles } from '../../common/decorators/roles.decorator'
 import { CreateMenuDto } from './dto/create-menu.dto'
 import { UpdateMenuDto } from './dto/update-menu.dto'
@@ -42,6 +43,7 @@ export class MenuV1Controller {
 
   @ApiOperation({ summary: '创建菜单（v1）', description: '支持目录/菜单/按钮三种类型；父级必须存在' })
   @OperLog('菜单管理')
+  @Perms('system:menu:add')
   @Post()
   create(@Body() dto: CreateMenuDto) {
     return this.menuService.create(dto)
@@ -49,6 +51,7 @@ export class MenuV1Controller {
 
   @ApiOperation({ summary: '更新菜单（v1）', description: '换父级时校验父级存在且不形成循环层级' })
   @OperLog('菜单管理')
+  @Perms('system:menu:update')
   @Put(':id')
   update(@Param('id') id: string, @Body() dto: UpdateMenuDto) {
     return this.menuService.update(id, dto)
@@ -56,6 +59,7 @@ export class MenuV1Controller {
 
   @ApiOperation({ summary: '删除菜单（v1）', description: '软删除（del_flag=1）；存在子菜单时拒绝，需先删子级' })
   @OperLog('菜单管理')
+  @Perms('system:menu:delete')
   @Delete(':id')
   delete(@Param('id') id: string) {
     return this.menuService.delete(id)

@@ -101,7 +101,11 @@
     // 在线用户（menu_49）
     { id: 'menu_65', parent: 'menu_49', name: '强制下线', perms: 'system:online:kick', sort: 1 },
     // 缓存监控（menu_51）
-    { id: 'menu_66', parent: 'menu_51', name: '清理缓存', perms: 'system:monitor:cache:clear', sort: 1 }
+    { id: 'menu_66', parent: 'menu_51', name: '清理缓存', perms: 'system:monitor:cache:clear', sort: 1 },
+    // 菜单管理（menu_39）
+    { id: 'menu_69', parent: 'menu_39', name: '菜单新增', perms: 'system:menu:add', sort: 1 },
+    { id: 'menu_70', parent: 'menu_39', name: '菜单修改', perms: 'system:menu:update', sort: 2 },
+    { id: 'menu_71', parent: 'menu_39', name: '菜单删除', perms: 'system:menu:delete', sort: 3 }
   ]
   for (const b of BUTTONS) {
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])

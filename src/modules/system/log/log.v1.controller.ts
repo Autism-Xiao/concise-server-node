@@ -7,7 +7,8 @@ import { ArrayNotEmpty, IsArray, IsDateString, IsIn, IsOptional, IsString, MaxLe
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { PagerDto } from '../../../common/dto/pager.dto'
-import { formatDateTime, toCsv } from '../../../utils/csv.util'
+import { formatDateTime } from '../../../utils/csv.util'
+import { buildXlsx } from '../../../utils/xlsx.util'
 import { LogService } from './log.service'
 import { SysLogEntity } from './entities/sys-log.entity'
 
@@ -87,13 +88,24 @@ export class LogV1Controller {
     return this.logService.listLoginLog(query)
   }
 
-  @ApiOperation({ summary: '导出登录日志 CSV（v1）', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
+  @ApiOperation({ summary: '导出登录日志 Excel（v1）', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
   @Perms('system:log:export')
   @Get('login/export')
   async exportLoginLog(@Query() query: QueryLoginLogDto, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
     const rows = await this.logService.exportLoginLog(query)
-    const csv = toCsv(
-      ['ID', '用户名', '结果', '说明', 'IP', '归属地', '浏览器', '操作系统', '登录时间'],
+    const buffer = await buildXlsx(
+      '登录日志',
+      [
+        { header: 'ID', width: 34 },
+        { header: '用户名', width: 16 },
+        { header: '结果', width: 10 },
+        { header: '说明', width: 36 },
+        { header: 'IP', width: 18 },
+        { header: '归属地', width: 18 },
+        { header: '浏览器', width: 16 },
+        { header: '操作系统', width: 16 },
+        { header: '登录时间', width: 22 }
+      ],
       rows.map(row => [
         row.id,
         row.operateUserName,
@@ -106,9 +118,9 @@ export class LogV1Controller {
         formatDateTime(row.createTime)
       ])
     )
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
-    res.setHeader('Content-Disposition', `attachment; filename="login-logs-${Date.now()}.csv"`)
-    return new StreamableFile(Buffer.from(csv, 'utf8'))
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="login-logs-${Date.now()}.xlsx"`)
+    return new StreamableFile(buffer)
   }
 
   @ApiOperation({ summary: '登录日志详情（v1）' })
@@ -126,13 +138,24 @@ export class LogV1Controller {
     return this.logService.listOperLog(query)
   }
 
-  @ApiOperation({ summary: '导出操作日志 CSV（v1）', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
+  @ApiOperation({ summary: '导出操作日志 Excel（v1）', description: '与列表同过滤条件，不分页；需 system:log:export 权限' })
   @Perms('system:log:export')
   @Get('oper/export')
   async exportOperLog(@Query() query: QueryOperLogDto, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
     const rows = await this.logService.exportOperLog(query)
-    const csv = toCsv(
-      ['ID', '操作人', '内容', 'IP', '结果', '错误信息', '耗时(ms)', '请求参数', '操作时间'],
+    const buffer = await buildXlsx(
+      '操作日志',
+      [
+        { header: 'ID', width: 34 },
+        { header: '操作人', width: 16 },
+        { header: '内容', width: 40 },
+        { header: 'IP', width: 18 },
+        { header: '结果', width: 10 },
+        { header: '错误信息', width: 30 },
+        { header: '耗时(ms)', width: 12 },
+        { header: '请求参数', width: 44 },
+        { header: '操作时间', width: 22 }
+      ],
       rows.map(row => [
         row.id,
         row.operateUserName,
@@ -145,9 +168,9 @@ export class LogV1Controller {
         formatDateTime(row.createTime)
       ])
     )
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
-    res.setHeader('Content-Disposition', `attachment; filename="oper-logs-${Date.now()}.csv"`)
-    return new StreamableFile(Buffer.from(csv, 'utf8'))
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="oper-logs-${Date.now()}.xlsx"`)
+    return new StreamableFile(buffer)
   }
 
   @ApiOperation({ summary: '操作日志详情（v1）' })
