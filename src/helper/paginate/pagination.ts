@@ -1,23 +1,23 @@
 /**
- * 分页结果包装
+ * 分页结果包装（字段对齐 jeecg-boot / MyBatis-Plus IPage：records / total / size / current / pages）
  */
 export class Pagination<T> {
   /** 当前页数据 */
-  items: T[]
+  records: T[]
   /** 总条数 */
   total: number
-  /** 当前页码 */
-  page: number
+  /** 当前页码（从 1 开始） */
+  current: number
   /** 每页条数 */
-  pageSize: number
+  size: number
   /** 总页数 */
-  totalPages: number
+  pages: number
 
-  constructor(items: T[], total: number, page: number, pageSize: number) {
-    this.items = items
+  constructor(records: T[], total: number, current: number, size: number) {
+    this.records = records
     this.total = total
-    this.page = page
-    this.pageSize = pageSize
-    this.totalPages = Math.ceil(total / pageSize)
+    this.current = current
+    this.size = size
+    this.pages = Math.ceil(total / size)
   }
 }

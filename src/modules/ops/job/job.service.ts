@@ -37,10 +37,10 @@ export class JobService {
 
     const result = await paginate(qb, { page: query.page, pageSize: query.pageSize })
     return new Pagination(
-      result.items.map(job => ({ ...job, ...this.scheduler.recordOf(job.id) })),
+      result.records.map(job => ({ ...job, ...this.scheduler.recordOf(job.id) })),
       result.total,
-      result.page,
-      result.pageSize
+      result.current,
+      result.size
     )
   }
 

@@ -17,10 +17,10 @@ export async function paginate<T extends ObjectLiteral>(qb: SelectQueryBuilder<T
   const page = Math.max(options.page ?? 1, 1)
   const pageSize = Math.max(options.pageSize ?? 10, 1)
 
-  const [items, total] = await qb
+  const [records, total] = await qb
     .skip((page - 1) * pageSize)
     .take(pageSize)
     .getManyAndCount()
 
-  return new Pagination(items, total, page, pageSize)
+  return new Pagination(records, total, page, pageSize)
 }

@@ -170,16 +170,16 @@ export class UserService extends BaseService<UserEntity> {
 
     const options: PaginateOptions = { page: query.page, pageSize: query.pageSize }
     const result = await paginate(qb, options)
-    await this.attachDepts(result.items)
+    await this.attachDepts(result.records)
     // 列表带出角色（前端角色列展示用，只取 id/roleName/roleCode 避免大对象）
-    if (result.items.length) {
+    if (result.records.length) {
       const withRoles = await this.repository.find({
-        where: { id: In(result.items.map(u => u.id)), delFlag: 0 },
+        where: { id: In(result.records.map(u => u.id)), delFlag: 0 },
         select: { id: true, roles: { id: true, roleName: true, roleCode: true } },
         relations: { roles: true }
       })
       const rolesByUser = new Map(withRoles.map(u => [u.id, u.roles ?? []]))
-      for (const user of result.items) {
+      for (const user of result.records) {
         user.roles = rolesByUser.get(user.id) ?? []
       }
     }

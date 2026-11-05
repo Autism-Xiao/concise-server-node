@@ -84,3 +84,4 @@
 | 2026-11-05 | [后台扫描问题修复](./2026-11-05-后台扫描问题修复.md) | 本轮 | 修 updateRole/assignDepts 不写 updateTime；user 绑定角色/部门与菜单增删改补 @Perms（种子 menu_69~71）；日志导出 CSV 改 xlsx；删 ESM 加载失败的脚手架 spec，新增 csv.util 单测 6 例，npx jest 转绿 |
 | 2026-11-05 | [BaseService自动补时间戳](./2026-11-05-BaseService自动补时间戳.md) | 本轮 | create 自动补 createTime、update 自动补 updateTime（列存在且未显式传入时），显式值优先、无列跳过；存量手写样板保持原语义，绕过基类的直连 repository 调用仍需自带 |
 | 2026-11-05 | [退出登录接口](./2026-11-05-退出登录接口.md) | 本轮 | POST /api/v1/auth/logout：accessToken/refreshToken 拉黑（复用 online:revoked 黑名单，TTL=令牌剩余有效期）+ 删在线会话；refreshToken 刷新前过黑名单防续命；前端 logout() 先通知后端再清凭证 |
+| 2026-11-05 | [分页字段对齐jeecg-IPage](./2026-11-05-分页字段对齐jeecg-IPage.md) | 本轮 | Pagination 改 records/total/size/current/pages（对齐 MyBatis-Plus IPage），job/user 服务与前端 6 处类型 + 4 个页面同步；外层壳本就已是 jeecg 形态未动 |
