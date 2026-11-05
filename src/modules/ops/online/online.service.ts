@@ -96,6 +96,27 @@ export class OnlineService {
     }
   }
 
+  /**
+   * 退出登录：令牌拉黑 + 删除在线会话（幂等，不要求会话存在）
+   * - accessToken 拉黑后 JwtStrategy 每次请求都会 401
+   * - refreshToken 一并拉黑（同一黑名单空间，哈希不同不冲突），防止登出后用 refreshToken 续命
+   * - Redis 未启用时静默跳过（JWT 无状态，登出仅退化为前端清 token）
+   */
+  async logout(token: string, ttlSeconds: number, refreshToken?: string, refreshTtlSeconds?: number): Promise<void> {
+    const client = this.client()
+    if (!client) return
+    try {
+      const ttl = Math.max(Math.floor(ttlSeconds), 60)
+      await client.setex(REVOKED_PREFIX + this.hashToken(token), ttl, '1')
+      await client.del(SESSION_PREFIX + this.hashToken(token))
+      if (refreshToken) {
+        await client.setex(REVOKED_PREFIX + this.hashToken(refreshToken), Math.max(Math.floor(refreshTtlSeconds ?? ttl), 60), '1')
+      }
+    } catch (error) {
+      this.warnOnce(`退出登录处理失败：${(error as Error).message}`)
+    }
+  }
+
   /** 是否已被强制下线 */
   async isRevoked(token: string): Promise<boolean> {
     const client = this.client()

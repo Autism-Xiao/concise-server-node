@@ -8,6 +8,7 @@ import { BizException } from '../../../common/exceptions/biz.exception'
 import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
 import { MenuService, buildMenuTree, type MenuTreeItem } from '../../menu/menu.service'
+import { OnlineService } from '../../ops/online/online.service'
 import type { MenuEntity } from '../../menu/entities/menu.entity'
 import { CaptchaService } from './captcha.service'
 import { LoginDto } from '../dto/login.dto'
@@ -45,7 +46,8 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly logService: LogService,
     private readonly captchaService: CaptchaService,
-    private readonly menuService: MenuService
+    private readonly menuService: MenuService,
+    private readonly onlineService: OnlineService
   ) {}
 
   /** 登录：验证码校验（可开关）→ 账号密码校验 → 签发双令牌；成败都记入登录日志 */
@@ -137,8 +139,31 @@ export class AuthService {
     }
 
     // 与登录返回保持同构：带角色与部门（depts / dept / deptId）
+    // 登出时 refreshToken 已拉黑，防止退出登录后继续刷新续命
+    if (await this.onlineService.isRevoked(refreshToken)) {
+      throw new BizException(BizErrorCode.UNAUTHORIZED, '登录状态已失效，请重新登录', HttpStatus.UNAUTHORIZED)
+    }
     const user = await this.userService.findOneDetail(String(payload.id))
     return this.issueTokens(user)
+  }
+
+  /**
+   * 退出登录：accessToken 与 refreshToken（可选）拉黑并删除在线会话
+   * - TTL 取令牌自身的剩余有效期，拉黑到自然过期为止
+   * - 幂等：重复登出 / 令牌已过期均不报错
+   */
+  async logout(token: string, refreshToken?: string): Promise<{ loggedOut: true }> {
+    const ttlOf = (value: string): number => {
+      try {
+        const exp = (this.jwtService.decode(value) as { exp?: number } | null)?.exp
+        const remaining = (exp ?? 0) - Math.floor(Date.now() / 1000)
+        return remaining > 0 ? remaining : 60
+      } catch {
+        return 60
+      }
+    }
+    await this.onlineService.logout(token, ttlOf(token), refreshToken, refreshToken ? ttlOf(refreshToken) : undefined)
+    return { loggedOut: true }
   }
 
   /** 签发 accessToken + refreshToken */

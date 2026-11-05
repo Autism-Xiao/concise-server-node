@@ -83,3 +83,4 @@
 | 2026-11-04 | [角色批量删除与标签页按需挂载](./2026-11-04-角色批量删除与标签页按需挂载.md) | 本轮 | 前端角色页加勾选批量删除（Promise.allSettled 逐条结算，失败不阻断）；TabPageRenderer 改按需挂载（刷新时只挂当前页，避免多标签同时发请求）；补两处 tests 脚本 |
 | 2026-11-05 | [后台扫描问题修复](./2026-11-05-后台扫描问题修复.md) | 本轮 | 修 updateRole/assignDepts 不写 updateTime；user 绑定角色/部门与菜单增删改补 @Perms（种子 menu_69~71）；日志导出 CSV 改 xlsx；删 ESM 加载失败的脚手架 spec，新增 csv.util 单测 6 例，npx jest 转绿 |
 | 2026-11-05 | [BaseService自动补时间戳](./2026-11-05-BaseService自动补时间戳.md) | 本轮 | create 自动补 createTime、update 自动补 updateTime（列存在且未显式传入时），显式值优先、无列跳过；存量手写样板保持原语义，绕过基类的直连 repository 调用仍需自带 |
+| 2026-11-05 | [退出登录接口](./2026-11-05-退出登录接口.md) | 本轮 | POST /api/v1/auth/logout：accessToken/refreshToken 拉黑（复用 online:revoked 黑名单，TTL=令牌剩余有效期）+ 删在线会话；refreshToken 刷新前过黑名单防续命；前端 logout() 先通知后端再清凭证 |

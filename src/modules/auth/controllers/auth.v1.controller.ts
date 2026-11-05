@@ -44,6 +44,22 @@ export class AuthV1Controller {
 
   @ApiBearerAuth('jwt')
   @ApiOperation({
+    summary: '退出登录（v1）',
+    description: 'accessToken 立即失效（进黑名单）并删除在线会话；body 里带 refreshToken 时一并失效，防止登出后刷新续命。'
+  })
+  @Post('logout')
+  logout(@Request() req: { headers: Record<string, string | string[] | undefined> }, @Body() body?: { refreshToken?: string }) {
+    const header = req.headers.authorization
+    const raw = Array.isArray(header) ? header[0] : header
+    const token = raw?.split(' ')[1] ?? ''
+    if (!token) {
+      return { loggedOut: true }
+    }
+    return this.authService.logout(token, body?.refreshToken)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
     summary: '获取当前用户权限（v1）',
     description: '登录后调用一次：角色 code、按钮权限汇总（超管为 ["*"]）、按角色过滤的菜单树（侧边栏数据源）'
   })
