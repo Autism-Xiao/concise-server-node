@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository } from 'typeorm'
+import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { SysDictEntity } from './entities/sys-dict.entity'
 import { SysDictItemEntity } from './entities/sys-dict-item.entity'
@@ -147,5 +148,15 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
     if (await qb.getExists()) {
       throw new BadRequestException(`该字典下已存在值为「${itemValue}」的字典项`)
     }
+  }
+
+  /** 批量删除字典项：逐条硬删，单条失败返回原因 */
+  async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
+    const targets = await this.itemRepository.findBy({ id: In(normalizeBatchIds(ids)) })
+    return runBatchDelete(targets, {
+      getId: item => item.id,
+      getName: item => item.itemText,
+      remove: item => this.deleteItem(item.id)
+    })
   }
 }

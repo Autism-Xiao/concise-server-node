@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
+import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { isSuperRole } from '../../utils/super-role.util'
 import { RoleEntity } from './entities/role.entity'
 import { MenuEntity } from '../menu/entities/menu.entity'
@@ -117,6 +118,16 @@ export class RoleService extends BaseService<RoleEntity> {
         .remove(menus.map(menu => menu.id))
     }
     await this.roleRepository.delete(id)
+  }
+
+  /** 批量删除角色：逐条走 deleteRole，保留「内置角色 / 有用户不可删」的保护并收集原因 */
+  async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
+    const targets = await this.roleRepository.findBy({ id: In(normalizeBatchIds(ids)) })
+    return runBatchDelete(targets, {
+      getId: role => role.id,
+      getName: role => role.roleName,
+      remove: role => this.deleteRole(role.id)
+    })
   }
 
   /**

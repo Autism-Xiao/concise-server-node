@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
+import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { CreateDictItemDto } from './dto/create-dict-item.dto'
@@ -40,6 +41,14 @@ export class DictItemV1Controller {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.dictItemService.findDetail(id)
+  }
+
+  @ApiOperation({ summary: '批量删除字典项（v1）', description: '单次最多 200 条，逐条结算并返回失败原因；需 system:dict:delete' })
+  @OperLog('字典项')
+  @Perms('system:dict:delete')
+  @Post('batch-delete')
+  batchDelete(@Body() dto: BatchDeleteDto) {
+    return this.dictItemService.batchDelete(dto.ids)
   }
 
   @ApiOperation({ summary: '创建字典项（v1）', description: '所属字典必须存在；同一字典下 itemValue 唯一' })

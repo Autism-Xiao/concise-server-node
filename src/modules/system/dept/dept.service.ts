@@ -1,8 +1,9 @@
 import { Injectable, BadRequestException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { IsNull, Repository, type DeepPartial } from 'typeorm'
+import { In, IsNull, Repository, type DeepPartial } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { UserEntity } from '../../user/entities/user.entity'
 import { DeptEntity } from './entities/dept.entity'
 import type { CreateDeptDto } from './dto/create-dept.dto'
@@ -93,6 +94,38 @@ export class DeptService extends BaseService<DeptEntity> {
       throw new BadRequestException('该部门下存在用户，无法删除')
     }
     await this.repository.update(id, { delFlag: '1' })
+  }
+
+  /** 批量删除部门：逐条走 delete，保留「有子部门 / 有用户不可删」的保护并收集原因 */
+  async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
+    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: '0' } })
+    return runBatchDelete(targets, {
+      getId: dept => dept.id,
+      getName: dept => dept.departName,
+      remove: dept => this.delete(dept.id)
+    })
+  }
+
+  /**
+   * 导出：在扁平列表上补「完整路径」（研发部 / 前端组），方便直接看懂层级
+   * 路径用父链上溯拼接，带 20 层保护，异常脏数据不会死循环
+   */
+  async exportDepts(keyword?: string): Promise<Array<DeptEntity & { fullPath: string }>> {
+    const all = await this.listAll()
+    const byId = new Map(all.map(dept => [dept.id, dept]))
+    const resolvePath = (dept: DeptEntity): string => {
+      const names: string[] = []
+      let current: DeptEntity | undefined = dept
+      let depth = 0
+      while (current && depth < 20) {
+        names.unshift(current.departName)
+        current = current.parentId ? byId.get(current.parentId) : undefined
+        depth += 1
+      }
+      return names.join(' / ')
+    }
+    const filtered = keyword ? all.filter(dept => (dept.departName ?? '').includes(keyword)) : all
+    return filtered.map(dept => Object.assign(dept, { fullPath: resolvePath(dept) }))
   }
 
   /** 全量部门（按 depart_order 升序，排除已删除） */

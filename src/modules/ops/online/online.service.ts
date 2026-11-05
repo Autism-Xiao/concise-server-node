@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { createHash } from 'node:crypto'
 
 import { Pagination } from '../../../helper/paginate'
@@ -185,6 +185,27 @@ export class OnlineService {
     const ttl = Math.max(Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000), 60)
     await client.setex(REVOKED_PREFIX + sessionId, ttl, '1')
     await client.del(key)
+  }
+
+  /** 批量强退：逐条踢，会话已过期的不算失败（本来就不在线） */
+  async batchKick(sessionIds: string[]): Promise<{ kicked: number; failed: Array<{ id: string; reason: string }> }> {
+    const ids = [...new Set(sessionIds.map(id => String(id ?? '').trim()).filter(Boolean))]
+    if (!ids.length) {
+      throw new BadRequestException('请选择要下线的用户')
+    }
+    if (ids.length > 200) {
+      throw new BadRequestException('单次最多下线 200 个会话，请分批操作')
+    }
+    const result: { kicked: number; failed: Array<{ id: string; reason: string }> } = { kicked: 0, failed: [] }
+    for (const id of ids) {
+      try {
+        await this.kick(id)
+        result.kicked += 1
+      } catch (error) {
+        result.failed.push({ id, reason: error instanceof Error ? error.message : '下线失败' })
+      }
+    }
+    return result
   }
 
   /** 在线人数（登录页/首页展示可用） */

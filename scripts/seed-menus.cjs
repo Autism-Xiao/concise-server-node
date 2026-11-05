@@ -110,7 +110,22 @@
     { id: 'menu_70', parent: 'menu_39', name: '菜单修改', perms: 'system:menu:update', sort: 2 },
     { id: 'menu_71', parent: 'menu_39', name: '菜单删除', perms: 'system:menu:delete', sort: 3 },
     // 通知公告（menu_21）：查询/新增/修改/发布/删除已有 menu_22~26，这里只补导入
-    { id: 'menu_78', parent: 'menu_21', name: '公告导入', perms: 'system:notice:import', sort: 6 }
+    { id: 'menu_78', parent: 'menu_21', name: '公告导入', perms: 'system:notice:import', sort: 6 },
+    // 职级管理导入导出（menu_42）
+    { id: 'menu_79', parent: 'menu_42', name: '职级导出', perms: 'system:level:export', sort: 4 },
+    { id: 'menu_80', parent: 'menu_42', name: '职级导入', perms: 'system:level:import', sort: 5 },
+    // 岗位管理导入导出（menu_43）
+    { id: 'menu_81', parent: 'menu_43', name: '岗位导出', perms: 'system:post:export', sort: 4 },
+    { id: 'menu_82', parent: 'menu_43', name: '岗位导入', perms: 'system:post:import', sort: 5 },
+    // 数据字典导入导出（menu_14）
+    { id: 'menu_83', parent: 'menu_14', name: '字典导出', perms: 'system:dict:export', sort: 4 },
+    { id: 'menu_84', parent: 'menu_14', name: '字典导入', perms: 'system:dict:import', sort: 5 },
+    // 部门导出（menu_10）
+    { id: 'menu_85', parent: 'menu_10', name: '部门导出', perms: 'system:dept:export', sort: 4 },
+    // 菜单导出（menu_39）
+    { id: 'menu_86', parent: 'menu_39', name: '菜单导出', perms: 'system:menu:export', sort: 4 },
+    // 定时任务导出（menu_48）
+    { id: 'menu_87', parent: 'menu_48', name: '任务导出', perms: 'system:job:export', sort: 5 }
   ]
   for (const b of BUTTONS) {
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])

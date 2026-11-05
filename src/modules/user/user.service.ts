@@ -5,6 +5,7 @@ import { In, Repository, SelectQueryBuilder } from 'typeorm'
 import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
+import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
 import { encryptPassword, randomId32, randomSalt } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
@@ -373,6 +374,16 @@ export class UserService extends BaseService<UserEntity> {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '内置管理员账号不允许删除')
     }
     await this.repository.update(id, { delFlag: 1 })
+  }
+
+  /** 批量删除用户：逐条走 delete，保留「内置管理员不可删」的保护并收集原因 */
+  async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
+    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: 0 } })
+    return runBatchDelete(targets, {
+      getId: user => user.id,
+      getName: user => user.realname || user.username,
+      remove: user => this.delete(user.id)
+    })
   }
 
   /** 校验登录密码：JeecgBoot 算法 PBEWithMD5AndDES(username, password, salt) */

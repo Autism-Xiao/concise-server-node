@@ -1,6 +1,7 @@
-import { Controller, Delete, Get, Param, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 
+import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { QueryOnlineDto } from './dto/query-online.dto'
@@ -30,6 +31,14 @@ export class OnlineV1Controller {
   @Get('count')
   count() {
     return this.onlineService.count()
+  }
+
+  @ApiOperation({ summary: '批量强制下线（v1）', description: '单次最多 200 个会话，逐条踢出并返回失败原因；需 system:online:kick' })
+  @OperLog('在线用户')
+  @Perms('system:online:kick')
+  @Post('batch-kick')
+  batchKick(@Body() dto: BatchDeleteDto) {
+    return this.onlineService.batchKick(dto.ids)
   }
 
   @ApiOperation({ summary: '强制下线（v1）', description: '按会话编号踢出，令牌进黑名单后该用户后续请求一律 401' })

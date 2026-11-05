@@ -18,6 +18,7 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiOperation, ApiTa
 import { FileInterceptor } from '@nestjs/platform-express'
 import type { Response } from 'express'
 
+import { BatchDeleteDto } from '../../common/dto/batch-delete.dto'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
@@ -215,6 +216,14 @@ export class UserV1Controller {
   @Put(':id')
   update(@Param('id') id: string, @Body() dto: UpdateUserDto, @Request() req: { user: { username: string } }) {
     return this.userService.update(id, dto, req.user.username)
+  }
+
+  @ApiOperation({ summary: '批量删除用户（v1）', description: '单次最多 200 条；内置管理员该条失败并返回原因；需 system:user:delete' })
+  @OperLog('用户管理')
+  @Perms('system:user:delete')
+  @Post('batch-delete')
+  batchDelete(@Body() dto: BatchDeleteDto) {
+    return this.userService.batchDelete(dto.ids)
   }
 
   @ApiOperation({ summary: '删除用户（v1，软删除）' })

@@ -19,6 +19,7 @@ import { FileInterceptor } from '@nestjs/platform-express'
 import { IsIn, IsOptional } from 'class-validator'
 import type { Response } from 'express'
 
+import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { PagerDto } from '../../../common/dto/pager.dto'
@@ -179,6 +180,14 @@ export class NoticeV1Controller {
   @Put(':id/revoke')
   revoke(@Param('id') id: string, @Request() req: { user: { username: string } }) {
     return this.noticeService.revoke(id, req.user.username)
+  }
+
+  @ApiOperation({ summary: '批量删除公告（v1）', description: '单次最多 200 条；已发布的公告该条失败并返回原因；需 system:notice:delete' })
+  @OperLog('通知公告')
+  @Perms('system:notice:delete')
+  @Post('batch-delete')
+  batchDelete(@Body() dto: BatchDeleteDto) {
+    return this.noticeService.batchDelete(dto.ids)
   }
 
   @ApiOperation({ summary: '删除公告（v1）', description: '软删除（del_flag=1）；已发布的公告需先撤销' })

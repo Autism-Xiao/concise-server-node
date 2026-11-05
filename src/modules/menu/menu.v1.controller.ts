@@ -1,8 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, Request, Res, StreamableFile } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import type { Response } from 'express'
 
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
+import { formatDateTime } from '../../utils/csv.util'
+import { setDownloadHeaders } from '../../utils/download.util'
+import { buildXlsx } from '../../utils/xlsx.util'
 import { CreateMenuDto } from './dto/create-menu.dto'
 import { UpdateMenuDto } from './dto/update-menu.dto'
 import { MenuEntity } from './entities/menu.entity'
@@ -35,6 +39,51 @@ export class MenuV1Controller {
   @Get()
   list() {
     return this.menuService.listAll()
+  }
+
+  @ApiOperation({
+    summary: '导出菜单权限快照 Excel（v1）',
+    description: '扁平导出全部菜单（含按钮权限）并带上级菜单名，用于权限留档与环境比对；只导出不导入；需 system:menu:export'
+  })
+  @Perms('system:menu:export')
+  @Get('export')
+  async export(@Request() req: { user: { username: string } }, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+    const menus = await this.menuService.listAll()
+    const byId = new Map(menus.map(menu => [menu.id, menu]))
+    const typeText = (type: number) => (type === 0 ? '目录' : type === 1 ? '菜单' : '按钮')
+    const buffer = await buildXlsx(
+      '菜单权限',
+      [
+        { header: '菜单名称', width: 22 },
+        { header: '类型', width: 8, align: 'center' },
+        { header: '上级菜单', width: 22 },
+        { header: '路由地址', width: 28 },
+        { header: '权限标识', width: 28 },
+        { header: '排序', width: 8, align: 'center' },
+        { header: '状态', width: 10, align: 'center' },
+        { header: '图标', width: 18 }
+      ],
+      menus.map(menu => [
+        menu.name,
+        typeText(menu.menuType),
+        menu.parentId ? (byId.get(menu.parentId)?.name ?? '') : '',
+        menu.url ?? '',
+        menu.perms ?? '',
+        menu.sortNo ?? 0,
+        menu.status === '0' ? '停用' : '正常',
+        menu.icon ?? ''
+      ]),
+      {
+        title: '菜单权限快照',
+        subtitle: `导出时间：${formatDateTime(new Date())} · 操作人：${req.user?.username ?? '未知'} · 共 ${menus.length} 条记录`,
+        notes: [
+          '说明：本文件用于权限留档与跨环境比对，不支持导回（菜单主键与父级关系跨库无法对应）。',
+          '「权限标识」与后端接口的 @Perms 声明一一对应，新增接口时应同步在菜单表补按钮权限。'
+        ]
+      }
+    )
+    setDownloadHeaders(res, `menus-${Date.now()}.xlsx`, `菜单权限快照-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
+    return new StreamableFile(buffer)
   }
 
   @ApiOperation({ summary: '菜单详情（v1）', description: '需 system:menu:list' })

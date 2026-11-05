@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository, type SelectQueryBuilder } from 'typeorm'
+import { In, Repository, type SelectQueryBuilder } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { UserEntity } from '../../user/entities/user.entity'
 import { SysAnnouncementEntity } from './entities/sys-announcement.entity'
@@ -247,6 +248,16 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
       throw new BadRequestException('已发布的公告不能直接删除，请先撤销')
     }
     await this.patchById(id, { delFlag: '1', updateTime: new Date() })
+  }
+
+  /** 批量删除公告：逐条走 delete，保留「已发布不可直接删」的保护并收集原因 */
+  async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
+    const targets = await this.announcementRepository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: '0' } })
+    return runBatchDelete(targets, {
+      getId: notice => notice.id,
+      getName: notice => notice.title,
+      remove: notice => this.delete(notice.id)
+    })
   }
 
   /**

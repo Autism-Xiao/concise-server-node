@@ -398,6 +398,8 @@ export interface ReadXlsxOptions {
    * 导入模板头部有大标题，不定位表头会把标题当列名解析
    */
   headerKeys?: string[]
+  /** 读第几个工作表（从 0 开始），默认第一个；字典这类「类型 + 项」双表导入用得到 */
+  sheetIndex?: number
 }
 
 /** 解析结果：rows 含表头行，headerRow 为表头在 Excel 中的真实行号（导入报错定位用） */
@@ -415,7 +417,7 @@ export interface XlsxTable {
 export async function readXlsxTable(buffer: Buffer, options: ReadXlsxOptions = {}): Promise<XlsxTable> {
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer)
-  const sheet = workbook.worksheets[0]
+  const sheet = workbook.worksheets[options.sheetIndex ?? 0]
   if (!sheet) {
     return { rows: [], headerRow: 1 }
   }

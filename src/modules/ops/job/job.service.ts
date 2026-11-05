@@ -44,6 +44,20 @@ export class JobService {
     )
   }
 
+  /** 导出：与列表同筛选条件，单次最多 5000 条（配置备份/跨环境对照用） */
+  async exportJobs(query: QueryJobDto): Promise<JobView[]> {
+    const qb = this.jobRepository.createQueryBuilder('job').where('job.del_flag = 0').orderBy('job.create_time', 'DESC').addOrderBy('job.id', 'DESC')
+    const keyword = query.keyword?.trim()
+    if (keyword) {
+      qb.andWhere('(job.job_class_name LIKE :kw OR job.description LIKE :kw)', { kw: `%${keyword}%` })
+    }
+    if (query.status !== undefined) {
+      qb.andWhere('job.status = :status', { status: query.status })
+    }
+    const jobs = await qb.limit(5000).getMany()
+    return jobs.map(job => ({ ...job, ...this.scheduler.recordOf(job.id) }))
+  }
+
   /** 可选执行器清单（前端下拉） */
   listHandlers() {
     return this.registry.list()

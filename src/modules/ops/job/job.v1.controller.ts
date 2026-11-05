@@ -1,8 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query, Request } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Request, Res, StreamableFile } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import type { Response } from 'express'
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
+import { formatDateTime } from '../../../utils/csv.util'
+import { setDownloadHeaders } from '../../../utils/download.util'
+import { buildXlsx } from '../../../utils/xlsx.util'
 import { CreateJobDto } from './dto/create-job.dto'
 import { QueryJobDto } from './dto/query-job.dto'
 import { UpdateJobDto } from './dto/update-job.dto'
@@ -34,6 +38,49 @@ export class JobV1Controller {
   @Get('handlers')
   handlers() {
     return this.jobService.listHandlers()
+  }
+
+  @ApiOperation({ summary: '导出定时任务 Excel（v1）', description: '与列表同筛选条件，最多 5000 条；用于配置备份与跨环境对照；需 system:job:export' })
+  @Perms('system:job:export')
+  @Get('export')
+  async export(
+    @Query() query: QueryJobDto,
+    @Request() req: { user: { username: string } },
+    @Res({ passthrough: true }) res: Response
+  ): Promise<StreamableFile> {
+    const jobs = await this.jobService.exportJobs(query)
+    const buffer = await buildXlsx(
+      '定时任务',
+      [
+        { header: '执行器标识', width: 26 },
+        { header: 'cron 表达式', width: 22 },
+        { header: '任务参数', width: 20 },
+        { header: '任务描述', width: 40 },
+        { header: '状态', width: 10, align: 'center' },
+        { header: '下次执行', width: 22, align: 'center' },
+        { header: '上次执行', width: 22, align: 'center' },
+        { header: '上次结果', width: 16 },
+        { header: '创建时间', width: 20, align: 'center' }
+      ],
+      jobs.map(job => [
+        job.jobClassName ?? '',
+        job.cronExpression ?? '',
+        job.parameter ?? '',
+        job.description ?? '',
+        job.status === 0 ? '运行中' : '已停止',
+        job.nextRun ?? '',
+        job.lastRun ?? '',
+        job.lastResult ?? '',
+        formatDateTime(job.createTime)
+      ]),
+      {
+        title: '定时任务配置',
+        subtitle: `导出时间：${formatDateTime(new Date())} · 操作人：${req.user?.username ?? '未知'} · 共 ${jobs.length} 条记录${query.keyword ? ` · 筛选：关键字=${query.keyword}` : ''}`,
+        notes: ['说明：执行器标识对应后端代码中注册的 handler，不支持导入（不同环境的 handler 需代码同步）。']
+      }
+    )
+    setDownloadHeaders(res, `jobs-${Date.now()}.xlsx`, `定时任务-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
+    return new StreamableFile(buffer)
   }
 
   @ApiOperation({ summary: '定时任务详情（v1）' })

@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiOperation, ApiTa
 import { FileInterceptor } from '@nestjs/platform-express'
 import type { Response } from 'express'
 
+import { BatchDeleteDto } from '../../common/dto/batch-delete.dto'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
@@ -160,6 +161,14 @@ export class RoleV1Controller {
   @Put(':id')
   update(@Param('id') id: string, @Body() dto: UpdateRoleDto): Promise<RoleEntity> {
     return this.roleService.updateRole(id, dto)
+  }
+
+  @ApiOperation({ summary: '批量删除角色（v1）', description: '单次最多 200 条；内置角色或有用户的角色该条失败并返回原因；需 system:role:delete' })
+  @OperLog('角色管理')
+  @Perms('system:role:delete')
+  @Post('batch-delete')
+  batchDelete(@Body() dto: BatchDeleteDto) {
+    return this.roleService.batchDelete(dto.ids)
   }
 
   @ApiOperation({

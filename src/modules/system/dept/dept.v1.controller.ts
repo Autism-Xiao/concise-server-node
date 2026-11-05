@@ -1,8 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Request, Res, StreamableFile } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import type { Response } from 'express'
 
+import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
+import { formatDateTime } from '../../../utils/csv.util'
+import { setDownloadHeaders } from '../../../utils/download.util'
+import { buildXlsx } from '../../../utils/xlsx.util'
 import { CreateDeptDto } from './dto/create-dept.dto'
 import { UpdateDeptDto } from './dto/update-dept.dto'
 import { DeptEntity } from './entities/dept.entity'
@@ -42,6 +47,47 @@ export class DeptV1Controller {
     return this.deptService.listAll().then(all => all.filter(dept => (dept.departName ?? '').includes(keyword)))
   }
 
+  @ApiOperation({ summary: '导出部门 Excel（v1）', description: '与列表同筛选条件（keyword），带「完整路径」列，便于组织架构留档；需 system:dept:export' })
+  @Perms('system:dept:export')
+  @Get('export')
+  async export(
+    @Query() query: { keyword?: string },
+    @Request() req: { user: { username: string } },
+    @Res({ passthrough: true }) res: Response
+  ): Promise<StreamableFile> {
+    const depts = await this.deptService.exportDepts(query.keyword?.trim())
+    const buffer = await buildXlsx(
+      '部门列表',
+      [
+        { header: '部门名称', width: 22 },
+        { header: '完整路径', width: 40 },
+        { header: '机构编码', width: 16, align: 'center' },
+        { header: '部门负责人', width: 16 },
+        { header: '联系电话', width: 16 },
+        { header: '排序', width: 8, align: 'center' },
+        { header: '状态', width: 10, align: 'center' },
+        { header: '创建时间', width: 20, align: 'center' }
+      ],
+      depts.map(dept => [
+        dept.departName,
+        dept.fullPath,
+        dept.orgCode ?? '',
+        dept.description ?? '',
+        dept.mobile ?? '',
+        dept.departOrder ?? 0,
+        dept.status === '0' ? '停用' : '正常',
+        formatDateTime(dept.createTime)
+      ]),
+      {
+        title: '部门列表',
+        subtitle: `导出时间：${formatDateTime(new Date())} · 操作人：${req.user?.username ?? '未知'} · 共 ${depts.length} 个部门${query.keyword ? ` · 筛选：关键字=${query.keyword}` : ''}`,
+        notes: ['说明：「完整路径」为该部门从顶级到自身的层级链路；机构编码由系统按父子关系生成，导入用户时按部门名称匹配。']
+      }
+    )
+    setDownloadHeaders(res, `depts-${Date.now()}.xlsx`, `部门列表-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
+    return new StreamableFile(buffer)
+  }
+
   @ApiOperation({ summary: '部门详情（v1）', description: '需 system:dept:list' })
   @ApiOkResponse({ description: '部门信息', type: DeptEntity })
   @Perms('system:dept:list')
@@ -64,6 +110,14 @@ export class DeptV1Controller {
   @Put(':id')
   update(@Param('id') id: string, @Body() dto: UpdateDeptDto) {
     return this.deptService.update(id, dto)
+  }
+
+  @ApiOperation({ summary: '批量删除部门（v1）', description: '单次最多 200 条；有子部门或挂有用户的该条失败并返回原因；需 system:dept:delete' })
+  @OperLog('部门管理')
+  @Perms('system:dept:delete')
+  @Post('batch-delete')
+  batchDelete(@Body() dto: BatchDeleteDto) {
+    return this.deptService.batchDelete(dto.ids)
   }
 
   @ApiOperation({ summary: '删除部门（v1，软删除）', description: '存在子部门或挂有未删除用户时拒绝，需先处理下级与用户' })
