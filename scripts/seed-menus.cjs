@@ -108,7 +108,9 @@
     // 菜单管理（menu_39）
     { id: 'menu_69', parent: 'menu_39', name: '菜单新增', perms: 'system:menu:add', sort: 1 },
     { id: 'menu_70', parent: 'menu_39', name: '菜单修改', perms: 'system:menu:update', sort: 2 },
-    { id: 'menu_71', parent: 'menu_39', name: '菜单删除', perms: 'system:menu:delete', sort: 3 }
+    { id: 'menu_71', parent: 'menu_39', name: '菜单删除', perms: 'system:menu:delete', sort: 3 },
+    // 通知公告（menu_21）：查询/新增/修改/发布/删除已有 menu_22~26，这里只补导入
+    { id: 'menu_78', parent: 'menu_21', name: '公告导入', perms: 'system:notice:import', sort: 6 }
   ]
   for (const b of BUTTONS) {
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])
