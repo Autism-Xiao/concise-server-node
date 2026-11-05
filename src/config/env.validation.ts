@@ -72,10 +72,6 @@ class EnvironmentVariables {
   CAPTCHA_ENABLED?: string
 
   @IsOptional()
-  @IsIn(BOOLEAN_STRINGS, { message: 'CAPTCHA_DEBUG 只能是 true/false/1/0/on/off/yes/no' })
-  CAPTCHA_DEBUG?: string
-
-  @IsOptional()
   @IsIn(BOOLEAN_STRINGS, { message: 'REDIS_ENABLED 只能是 true/false/1/0/on/off/yes/no' })
   REDIS_ENABLED?: string
 

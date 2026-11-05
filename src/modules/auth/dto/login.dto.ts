@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { IsNotEmpty, IsOptional, IsString, Length } from 'class-validator'
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Length } from 'class-validator'
 
 export class LoginDto {
   @ApiProperty({ description: '用户名', example: 'admin' })
@@ -12,16 +12,25 @@ export class LoginDto {
   @Length(6, 64, { message: '密码长度须在 6~64 位之间' })
   password: string
 
-  @ApiPropertyOptional({ description: '验证码 ID（CAPTCHA_ENABLED=true 时必填，来自 GET /auth/captcha）' })
+  @ApiPropertyOptional({
+    description: '滑块验证通过后由 POST /auth/captcha/verify 返回的一次性票据（CAPTCHA_ENABLED=true 时必填，2 分钟内有效、只能用一次）',
+    example: '3f1c9e2a-5b7d-4c8e-9a1f-2d3e4f5a6b7c'
+  })
   @IsOptional()
   @IsString()
-  captchaId?: string
+  captchaTicket?: string
+}
 
-  @ApiPropertyOptional({ description: '用户输入的验证码（不区分大小写）', example: 'ab3d' })
-  @IsOptional()
+/** 滑块验证码校验入参 */
+export class VerifyCaptchaDto {
+  @ApiProperty({ description: '验证码 ID，来自 GET /auth/captcha' })
   @IsString()
-  @Length(4, 4, { message: '验证码为 4 位字符' })
-  captchaCode?: string
+  @IsNotEmpty({ message: 'captchaId 不能为空' })
+  captchaId: string
+
+  @ApiProperty({ description: '拼图横向拖动距离（像素），由前端滑块组件回传', example: 137 })
+  @IsNumber({}, { message: 'x 必须是数字' })
+  x: number
 }
 
 export class RefreshTokenDto {

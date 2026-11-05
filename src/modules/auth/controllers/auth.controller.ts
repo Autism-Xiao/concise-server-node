@@ -1,12 +1,11 @@
-import { Body, Controller, Get, Inject, Post, Request, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiExcludeController, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
-import { captchaConfig, type CaptchaConfig } from '../../../config'
 import { Public } from '../../../common/decorators/public.decorator'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { AuthService } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
-import { LoginDto, LoginResultDto, RefreshTokenDto } from '../dto/login.dto'
+import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
 import type { UserEntity } from '../../user/entities/user.entity'
 
 // 旧版无前缀接口：仅为向后兼容保留，不出现在 Swagger 文档中（文档只暴露 V1 + 系统分组）
@@ -16,16 +15,21 @@ import type { UserEntity } from '../../user/entities/user.entity'
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
-    private readonly captchaService: CaptchaService,
-    @Inject(captchaConfig.KEY) private readonly captchaCfg: CaptchaConfig
+    private readonly captchaService: CaptchaService
   ) {}
 
-  @ApiOperation({ summary: '获取图形验证码', description: 'CAPTCHA_ENABLED=true 时登录必用；返回 SVG 与 captchaId' })
+  @ApiOperation({ summary: '获取滑块验证码', description: '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId' })
   @Public()
   @Get('captcha')
-  async captcha() {
-    // captcha.debug=true 时附带明文 code（仅限开发环境，生产必须关闭）
-    return this.captchaService.generate(this.captchaCfg.debug)
+  captcha() {
+    return this.captchaService.create()
+  }
+
+  @ApiOperation({ summary: '校验滑块位置', description: '误差 ±5px 内通过，返回一次性 ticket，登录时作为 captchaTicket 传入' })
+  @Public()
+  @Post('captcha/verify')
+  verifyCaptcha(@Body() dto: VerifyCaptchaDto) {
+    return this.captchaService.verify(dto.captchaId, dto.x)
   }
 
   @ApiOperation({ summary: '登录', description: '校验账号密码，返回 accessToken / refreshToken 双令牌' })

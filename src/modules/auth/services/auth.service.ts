@@ -53,9 +53,9 @@ export class AuthService {
   /** 登录：验证码校验（可开关）→ 账号密码校验 → 签发双令牌；成败都记入登录日志 */
   async login(dto: LoginDto, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
     try {
-      // 验证码开关：captcha.enabled=true 时强制校验（防爆破）
+      // 验证码开关：captcha.enabled=true 时强制校验滑块验证票据（防爆破）
       if (this.captcha.enabled) {
-        await this.captchaService.assertValid(dto.captchaId, dto.captchaCode)
+        await this.captchaService.assertTicket(dto.captchaTicket)
       }
 
       const user = await this.userService.findByUsername(dto.username)

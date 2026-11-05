@@ -1,9 +1,8 @@
-import { Body, Controller, Get, Inject, Post, Request } from '@nestjs/common'
+import { Body, Controller, Get, Post, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
-import { captchaConfig, type CaptchaConfig } from '../../../config'
 import { Public } from '../../../common/decorators/public.decorator'
-import { LoginDto, LoginResultDto } from '../dto/login.dto'
+import { LoginDto, LoginResultDto, VerifyCaptchaDto } from '../dto/login.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
 
@@ -20,16 +19,24 @@ import { CaptchaService } from '../services/captcha.service'
 export class AuthV1Controller {
   constructor(
     private readonly authService: AuthService,
-    private readonly captchaService: CaptchaService,
-    @Inject(captchaConfig.KEY) private readonly captchaCfg: CaptchaConfig
+    private readonly captchaService: CaptchaService
   ) {}
 
-  @ApiOperation({ summary: '获取图形验证码（v1）', description: 'CAPTCHA_ENABLED=true 时登录必用；返回 SVG 与 captchaId' })
+  @ApiOperation({ summary: '获取滑块验证码（v1）', description: '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId；答案存 Redis，5 分钟有效' })
   @Public()
   @Get('captcha')
-  async captcha() {
-    // captcha.debug=true 时附带明文 code（仅限开发环境，生产必须关闭）
-    return this.captchaService.generate(this.captchaCfg.debug)
+  captcha() {
+    return this.captchaService.create()
+  }
+
+  @ApiOperation({
+    summary: '校验滑块位置（v1）',
+    description: '拖动误差 ±5px 内通过，返回一次性 ticket（2 分钟有效），登录时作为 captchaTicket 传入'
+  })
+  @Public()
+  @Post('captcha/verify')
+  verifyCaptcha(@Body() dto: VerifyCaptchaDto) {
+    return this.captchaService.verify(dto.captchaId, dto.x)
   }
 
   @ApiOperation({ summary: '登录（v1）', description: '校验验证码与账号密码，返回 accessToken / refreshToken 双令牌' })
