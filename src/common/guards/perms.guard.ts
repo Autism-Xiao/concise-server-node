@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core'
 import { DataSource } from 'typeorm'
 
 import { PERMS_KEY } from '../decorators/perms.decorator'
+import { hasSuperRole } from '../../utils/super-role.util'
 
 /** 权限标识实体的最小结构（避免守卫直接依赖业务实体造成循环） */
 interface PermRow {
@@ -33,8 +34,8 @@ export class PermsGuard implements CanActivate {
       throw new ForbiddenException('无操作权限')
     }
 
-    // admin 角色拥有全部按钮权限
-    if (roles.some((role: { roleCode: string }) => role.roleCode === 'admin')) {
+    // 超管角色拥有全部按钮权限（与 auth.service / RolesGuard 共用同一判定）
+    if (hasSuperRole(roles)) {
       return true
     }
 

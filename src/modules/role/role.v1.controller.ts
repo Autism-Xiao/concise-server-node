@@ -146,21 +146,25 @@ export class RoleV1Controller {
     return this.roleService.deleteRole(id)
   }
 
-  @ApiOperation({ summary: '查询角色已授权的菜单/按钮 id 列表（v1）', description: '授权弹窗勾选回显用，轻量只返回 id 数组' })
+  @ApiOperation({
+    summary: '查询角色已授权的菜单/按钮 id 列表（v1）',
+    description: '授权弹窗勾选回显用；内置超级管理员返回全部菜单 id（其权限为内置全量）'
+  })
   @ApiOkResponse({ description: '已授权 id 数组', schema: { type: 'object', properties: { menuIds: { type: 'array', items: { type: 'string' } } } } })
   @Get(':id/menu-ids')
   async menuIds(@Param('id') id: string): Promise<{ menuIds: string[] }> {
-    const role = await this.roleService.findOneWithMenus(id)
-    return { menuIds: (role.permissions ?? []).map(menu => menu.id) }
+    return { menuIds: await this.roleService.getMenuIds(id) }
   }
 
-  @ApiOperation({ summary: '保存角色菜单/按钮授权（v1）', description: '全量覆盖：传入完整勾选 id 列表，空数组即清空' })
+  @ApiOperation({
+    summary: '保存角色菜单/按钮授权（v1）',
+    description: '全量覆盖：传入完整勾选 id 列表，空数组即清空；内置超级管理员角色拒绝写入（400）'
+  })
   @OperLog('角色管理')
   @Perms('system:role:update')
   @Put(':id/menus')
   async assignMenus(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
     await this.roleService.assignMenus(id, dto.menuIds as string[])
-    const role = await this.roleService.findOneWithMenus(id)
-    return { menuIds: (role.permissions ?? []).map(menu => menu.id) }
+    return { menuIds: await this.roleService.getMenuIds(id) }
   }
 }

@@ -2,6 +2,7 @@ import { Injectable, Inject, HttpException, HttpStatus } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 
 import { captchaConfig, jwtConfig, type CaptchaConfig, type JwtConfig } from '../../../config'
+import { hasSuperRole } from '../../../utils/super-role.util'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { UserService, USER_STATUS } from '../../user/user.service'
@@ -34,8 +35,7 @@ export interface PermissionResult {
   menus: MenuTreeItem[]
 }
 
-/** 拥有全部权限的超级角色 code */
-const SUPER_ROLES = new Set(['admin', 'superadmin'])
+/** 拥有全部权限的超级角色 code（统一由 utils/super-role.util 判定，勿在各处另写） */
 
 @Injectable()
 export class AuthService {
@@ -90,7 +90,8 @@ export class AuthService {
     }
 
     const roles = (user.roles ?? []).map(role => role.roleCode).filter(Boolean)
-    const isAdmin = roles.some(code => SUPER_ROLES.has(code))
+    // 超管：内置规则全权（不读 sys_role_permission），与 PermsGuard / RolesGuard 共用同一判定
+    const isAdmin = hasSuperRole(user.roles)
     // 有效菜单（未删除、状态有效），按 sort_no 升序
     const allMenus = (await this.menuService.listAll()).filter(menu => menu.status === '1')
 

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
+import { isSuperRole } from '../../utils/super-role.util'
 import { RoleEntity } from './entities/role.entity'
 import { MenuEntity } from '../menu/entities/menu.entity'
 import type { CreateRoleDto } from './dto/create-role.dto'
@@ -49,6 +50,10 @@ export class RoleService extends BaseService<RoleEntity> {
 
   /** 创建角色，支持 menuIds 绑定菜单权限（id 由 BaseService 自动生成 32 位） */
   async createRole(dto: CreateRoleDto): Promise<RoleEntity> {
+    // 超管编码是内置约定，不允许新建同名角色（否则会静默继承全部权限）
+    if (isSuperRole(dto.roleCode)) {
+      throw new BadRequestException(`「${dto.roleCode}」是内置超级管理员角色编码，不允许创建`)
+    }
     await this.assertCodeAvailable(dto.roleCode)
     const role = await this.create({
       roleName: dto.roleName,
@@ -62,12 +67,15 @@ export class RoleService extends BaseService<RoleEntity> {
     return this.findOneWithMenus(role.id)
   }
 
-  /** 更新角色基础信息，可同时传 menuIds 覆盖授权；内置 admin 角色编码不允许修改 */
+  /** 更新角色基础信息，可同时传 menuIds 覆盖授权；内置超管角色的编码不允许修改 */
   async updateRole(id: string, dto: UpdateRoleDto): Promise<RoleEntity> {
     const role = await this.findOne(id)
     if (dto.roleCode && dto.roleCode !== role.roleCode) {
-      if (role.roleCode === 'admin') {
+      if (isSuperRole(role.roleCode)) {
         throw new BadRequestException('内置管理员角色的编码不允许修改')
+      }
+      if (isSuperRole(dto.roleCode)) {
+        throw new BadRequestException(`「${dto.roleCode}」是内置超级管理员角色编码，不允许占用`)
       }
       await this.assertCodeAvailable(dto.roleCode)
     }
@@ -85,7 +93,7 @@ export class RoleService extends BaseService<RoleEntity> {
    */
   async deleteRole(id: string): Promise<void> {
     const role = await this.findOne(id)
-    if (role.roleCode === 'admin') {
+    if (isSuperRole(role.roleCode)) {
       throw new BadRequestException('内置管理员角色不允许删除')
     }
     const users = await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'users').of(id).loadMany<{ id: string }>()
@@ -103,9 +111,16 @@ export class RoleService extends BaseService<RoleEntity> {
     await this.roleRepository.delete(id)
   }
 
-  /** 绑定菜单权限（全量覆盖：多退少补） */
+  /**
+   * 绑定菜单权限（全量覆盖：多退少补）
+   *
+   * 超管角色直接拒绝：其权限来自内置规则（不读关联表），写入既不生效又会产生误导数据。
+   */
   async assignMenus(id: string, menuIds: string[]): Promise<void> {
-    await this.findOne(id)
+    const role = await this.findOne(id)
+    if (isSuperRole(role.roleCode)) {
+      throw new BadRequestException('内置超级管理员拥有全部权限，无需也不允许分配，修改不会生效')
+    }
     const menus = await this.roleRepository.manager.getRepository(MenuEntity).find({ where: { id: In(menuIds) } })
     if (menus.length !== menuIds.length) {
       throw new NotFoundException('存在无效的菜单 ID')
@@ -126,6 +141,23 @@ export class RoleService extends BaseService<RoleEntity> {
       throw new NotFoundException('角色不存在')
     }
     return role
+  }
+
+  /**
+   * 角色已授权的菜单/按钮 id 列表（授权弹窗回显）
+   *
+   * 超管角色返回**全部**菜单 id：其真实权限就是全量（内置规则），
+   * 若按关联表返回「几条脏数据」，前端会显示「已授权 2 项」这种与实际不符的信息。
+   */
+  async getMenuIds(id: string): Promise<string[]> {
+    const role = await this.findOne(id)
+    if (isSuperRole(role.roleCode)) {
+      // 只回显未删除的菜单（与菜单树同源，已软删的节点在树上不存在，回显了也勾不上）
+      const menus = await this.roleRepository.manager.getRepository(MenuEntity).find({ select: { id: true }, where: { delFlag: 0 } })
+      return menus.map(menu => menu.id)
+    }
+    const detail = await this.findOneWithMenus(id)
+    return (detail.permissions ?? []).map(menu => menu.id)
   }
 
   /** 按 id 列表查角色 */
