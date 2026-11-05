@@ -183,15 +183,19 @@ export class RoleService extends BaseService<RoleEntity> {
    * - 新增：roleName/roleCode/description 入库，不绑定菜单权限
    * - 已存在：只覆盖 roleName/description（不传 description 则保持原值），已有授权不受影响
    * - 单行失败不影响其他行，最终返回统计 + 失败明细
+   * - headerRowNumber：表头在 Excel 中的真实行号，用于把「第几行出错」报准
    */
-  async importRoles(rows: string[][]): Promise<RoleImportResult> {
+  async importRoles(rows: string[][], headerRowNumber = 1): Promise<RoleImportResult> {
     if (!rows.length) {
       throw new BadRequestException('文件内容为空，请下载模板后填写')
     }
 
-    const { columns, dataRows } = this.resolveImportColumns(rows)
+    const { columns, dataRows } = this.resolveImportColumns(rows, headerRowNumber)
     if (!columns.roleCode) {
       throw new BadRequestException('未找到「角色编码」列，请使用导入模板的表头')
+    }
+    if (!dataRows.length) {
+      throw new BadRequestException('表头下方没有数据行，请填写后再导入')
     }
     if (dataRows.length > ROLE_IMPORT_MAX_ROWS) {
       throw new BadRequestException(`单次最多导入 ${ROLE_IMPORT_MAX_ROWS} 行，当前 ${dataRows.length} 行，请拆分后重试`)
@@ -251,7 +255,10 @@ export class RoleService extends BaseService<RoleEntity> {
   }
 
   /** 解析导入文件的列位置：有表头按表头名定位，无表头按「角色名称,角色编码,描述」固定顺序 */
-  private resolveImportColumns(rows: string[][]): {
+  private resolveImportColumns(
+    rows: string[][],
+    headerRowNumber = 1
+  ): {
     columns: { roleName?: number; roleCode?: number; description?: number }
     dataRows: Array<{ rowNumber: number; cells: string[] }>
   } {
@@ -260,21 +267,22 @@ export class RoleService extends BaseService<RoleEntity> {
       roleCode: ['角色编码', '权限字符', 'rolecode', 'code'],
       description: ['描述', '备注', 'description', 'remark']
     }
-    const header = rows[0].map(cell => cell.trim().toLowerCase())
+    // 表头可能带必填标记（「角色编码 *」）或前后空格，归一化后比较
+    const header = rows[0].map(cell => cell.replace(/[\s*＊]/g, '').toLowerCase())
     const pick = (keys: string[]) => {
       const index = header.findIndex(cell => keys.includes(cell))
       return index >= 0 ? index : undefined
     }
     const columns = { roleName: pick(aliases.roleName), roleCode: pick(aliases.roleCode), description: pick(aliases.description) }
 
-    // 表头行必须至少命中一个已知列，否则视为无表头的数据文件（行号从 1 开始，方便用户对照 Excel）
+    // 表头行必须至少命中一个已知列，否则视为无表头的数据文件（行号取 Excel 真实行号，方便用户对照定位）
     const hasHeader = columns.roleName !== undefined || columns.roleCode !== undefined || columns.description !== undefined
     if (hasHeader) {
-      return { columns, dataRows: rows.slice(1).map((cells, index) => ({ rowNumber: index + 2, cells })) }
+      return { columns, dataRows: rows.slice(1).map((cells, index) => ({ rowNumber: headerRowNumber + index + 1, cells })) }
     }
     return {
       columns: { roleName: 0, roleCode: 1, description: 2 },
-      dataRows: rows.map((cells, index) => ({ rowNumber: index + 1, cells }))
+      dataRows: rows.map((cells, index) => ({ rowNumber: headerRowNumber + index, cells }))
     }
   }
 

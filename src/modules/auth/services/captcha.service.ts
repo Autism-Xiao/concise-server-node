@@ -9,13 +9,19 @@ import { RedisService } from '../../../shared/redis/redis.service'
 /** 背景图尺寸（与前端 rc-slider-captcha 默认 bgSize 320x160 保持一致，避免缩放导致 x 误差） */
 const BG_WIDTH = 320
 const BG_HEIGHT = 160
-/** 拼图条宽度（与组件默认 puzzleSize 一致，拼图为通高竖条） */
+/** 拼图透明底图宽度（= 方块边长 + 凸起半径，与组件默认 puzzleSize.width 一致，1:1 显示不缩放） */
 const PIECE_WIDTH = 60
+/** 拼图方块边长与凸起半径：经典拼图形状 = 方块 + 顶部圆形凸起 + 右侧圆形凹槽 */
+const PIECE_SIZE = 50
+const KNOB_RADIUS = 10
 /** 校验容差（像素）：拖动落点与答案的偏差范围内视为通过 */
 const TOLERANCE = 5
-/** 拼图答案 x 的取值范围：太靠左拖一下就中，太靠右拖不到头 */
-const X_MIN = PIECE_WIDTH
-const X_MAX = BG_WIDTH - PIECE_WIDTH
+/** 拼图答案 x 的取值范围：太靠左拖一下就中，太靠右拖不到头（右界预留 10px，避免拼图贴边） */
+const X_MIN = 40
+const X_MAX = BG_WIDTH - PIECE_WIDTH - 10
+/** 拼图 y 的取值范围：上下各留 20px，保证凸起不越界 */
+const Y_MIN = 20
+const Y_MAX = BG_HEIGHT - PIECE_SIZE - Y_MIN
 /** 挑战数据 Redis key 前缀（存答案 x），TTL 5 分钟一次性 */
 const CHALLENGE_PREFIX = 'captcha:'
 /** 滑块验证通过 ticket 的 Redis key 前缀，TTL 2 分钟一次性 */
@@ -23,6 +29,23 @@ const TICKET_PREFIX = 'captcha-pass:'
 
 interface ChallengeData {
   x: number
+}
+
+/**
+ * 判断拼图局部坐标是否在拼图形状内
+ * - 形状：PIECE_SIZE 方块 + 顶部圆形凸起（圆心在方块上边中点）+ 右侧圆形凹槽（圆心在方块右边中点，挖除）
+ * - lx 相对拼块左缘（0..PIECE_WIDTH），ly 相对方块顶边（可为负，凸起伸到 -KNOB_RADIUS）
+ */
+function insidePiece(lx: number, ly: number): boolean {
+  const inRect = lx >= 0 && lx < PIECE_SIZE && ly >= 0 && ly < PIECE_SIZE
+  const topKnob = ly >= -KNOB_RADIUS && ly < 0 && Math.hypot(lx - PIECE_SIZE / 2, ly) <= KNOB_RADIUS
+  const rightSlot = lx >= PIECE_SIZE - KNOB_RADIUS && lx < PIECE_WIDTH && ly >= 0 && Math.hypot(lx - PIECE_SIZE, ly - PIECE_SIZE / 2) <= KNOB_RADIUS
+  return (inRect || topKnob) && !rightSlot
+}
+
+/** 局部坐标是否落在形状边界上（四邻域有形状外的点），用于描边 */
+function onPieceEdge(lx: number, ly: number): boolean {
+  return !insidePiece(lx - 1, ly) || !insidePiece(lx + 1, ly) || !insidePiece(lx, ly - 1) || !insidePiece(lx, ly + 1)
 }
 
 /** 柔和随机色（HSL 转 RGB），用于程序化生成背景渐变 */
@@ -41,7 +64,7 @@ function pastel(): { r: number; g: number; b: number } {
 /**
  * 滑块验证码服务（防爆破）
  *
- * 流程：create() 下发「带缺口的背景图 + 拼图条」（dataURL）与 captchaId，答案 x 存 Redis；
+ * 流程：create() 下发「带拼图缺口的背景图 + 拼图块」（dataURL）与 captchaId，答案 x 存 Redis；
  * 用户拖拽后 verify(challengeId, x) 校验位移（容差 ±5px），通过后发放一次性 ticket；
  * 登录时 assertTicket(ticket) 原子消费。challenge 与 ticket 都是一次性（MULTI GET+DEL），
  * 只走 Redis（EX 自动过期），支持多实例部署；未启用 Redis 或故障时直接抛业务错误，不做内存降级。
@@ -58,16 +81,17 @@ export class CaptchaService {
 
   constructor(private readonly redisService: RedisService) {}
 
-  /** 生成滑块挑战：返回背景图/拼图条（PNG dataURL）与 captchaId */
+  /** 生成滑块挑战：返回背景图/拼图块（PNG dataURL）与 captchaId */
   async create(): Promise<{ captchaId: string; bgUrl: string; puzzleUrl: string }> {
     const client = this.requireClient()
     const bg = this.generateBackground()
     const x = X_MIN + Math.floor(Math.random() * (X_MAX - X_MIN + 1))
+    const y = Y_MIN + Math.floor(Math.random() * (Y_MAX - Y_MIN + 1))
 
-    // 拼图条：从原背景上切下通高竖条
-    const puzzle = bg.clone().crop(x, 0, PIECE_WIDTH, BG_HEIGHT)
-    // 背景挖缺口：同区域压暗并描边，视觉上形成「待填补的缺口」
-    this.darkenRegion(bg, x, 0, PIECE_WIDTH, BG_HEIGHT)
+    // 背景挖拼图缺口：形状内压暗、边缘加深，视觉上形成「待填补的凹槽」
+    this.carveNotch(bg, x, y)
+    // 拼图块：通高透明底图，块体从原背景取色（与缺口纹理一一对应），边缘描白增强辨识
+    const puzzle = this.buildPiece(bg, x, y)
 
     const [bgUrl, puzzleUrl] = await Promise.all([bg.getBase64Async(Jimp.MIME_PNG), puzzle.getBase64Async(Jimp.MIME_PNG)])
     const captchaId = randomUUID()
@@ -157,16 +181,33 @@ export class CaptchaService {
     })
   }
 
-  /** 把矩形区域压暗（挖缺口），并在边缘描一圈更深的线增强「凹槽」观感 */
-  private darkenRegion(img: Jimp, x0: number, y0: number, w: number, h: number): void {
-    img.scan(x0, y0, w, h, function (this: Jimp, x, y, idx) {
+  /** 背景挖拼图缺口：形状内像素压暗（边缘更深），模拟凹槽 */
+  private carveNotch(bg: Jimp, x: number, y: number): void {
+    bg.scan(x, y - KNOB_RADIUS, PIECE_WIDTH, PIECE_SIZE + 2 * KNOB_RADIUS, function (this: Jimp, gx, gy, idx) {
+      const lx = gx - x
+      const ly = gy - y
+      if (!insidePiece(lx, ly)) return
       const d = this.bitmap.data
-      const edge = x === x0 || x === x0 + w - 1
-      const f = edge ? 0.35 : 0.55
+      const f = onPieceEdge(lx, ly) ? 0.35 : 0.6
       d[idx] = Math.round(d[idx] * f)
       d[idx + 1] = Math.round(d[idx + 1] * f)
       d[idx + 2] = Math.round(d[idx + 2] * f)
     })
+  }
+
+  /** 生成拼图块透明底图：形状内从背景取色，边缘描白；拼块画在 (x, y)，验证答案仍是 x */
+  private buildPiece(bg: Jimp, x: number, y: number): Jimp {
+    const puzzle = new Jimp(PIECE_WIDTH, BG_HEIGHT, 0x00000000)
+    for (let ly = -KNOB_RADIUS; ly < PIECE_SIZE; ly++) {
+      for (let lx = 0; lx < PIECE_WIDTH; lx++) {
+        if (!insidePiece(lx, ly)) continue
+        const sx = x + lx
+        const sy = y + ly
+        if (sx < 0 || sx >= BG_WIDTH || sy < 0 || sy >= BG_HEIGHT) continue
+        puzzle.setPixelColor(onPieceEdge(lx, ly) ? 0xffffffff : bg.getPixelColor(sx, sy), lx, sy)
+      }
+    }
+    return puzzle
   }
 
   /** 未启用 Redis 时统一抛业务错误（HTTP 200 + code 503），由前端统一拦截提示 */

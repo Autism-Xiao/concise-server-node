@@ -8,6 +8,7 @@ import { Perms } from '../../../common/decorators/perms.decorator'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { PagerDto } from '../../../common/dto/pager.dto'
 import { formatDateTime } from '../../../utils/csv.util'
+import { setDownloadHeaders } from '../../../utils/download.util'
 import { buildXlsx } from '../../../utils/xlsx.util'
 import { LogService } from './log.service'
 import { SysLogEntity } from './entities/sys-log.entity'
@@ -129,8 +130,7 @@ export class LogV1Controller {
         }
       }
     )
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    res.setHeader('Content-Disposition', `attachment; filename="login-logs-${Date.now()}.xlsx"`)
+    setDownloadHeaders(res, `login-logs-${Date.now()}.xlsx`, `登录日志-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
     return new StreamableFile(buffer)
   }
 
@@ -190,8 +190,7 @@ export class LogV1Controller {
         }
       }
     )
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    res.setHeader('Content-Disposition', `attachment; filename="oper-logs-${Date.now()}.xlsx"`)
+    setDownloadHeaders(res, `oper-logs-${Date.now()}.xlsx`, `操作日志-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
     return new StreamableFile(buffer)
   }
 

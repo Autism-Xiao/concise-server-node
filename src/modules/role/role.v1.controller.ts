@@ -6,7 +6,8 @@ import type { Response } from 'express'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
-import { buildXlsx, readXlsxRows } from '../../utils/xlsx.util'
+import { setDownloadHeaders } from '../../utils/download.util'
+import { buildImportTemplateXlsx, buildXlsx, readXlsxTable } from '../../utils/xlsx.util'
 import { CreateRoleDto } from './dto/create-role.dto'
 import { QueryRoleDto } from './dto/query-role.dto'
 import { UpdateRoleDto } from './dto/update-role.dto'
@@ -64,29 +65,38 @@ export class RoleV1Controller {
         notes: ['说明：已授权菜单数包含目录、菜单与按钮；角色编码全局唯一，用于接口权限匹配。']
       }
     )
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    res.setHeader('Content-Disposition', `attachment; filename="roles-${Date.now()}.xlsx"`)
+    setDownloadHeaders(res, `roles-${Date.now()}.xlsx`, `角色列表-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
     return new StreamableFile(buffer)
   }
 
-  @ApiOperation({ summary: '下载角色导入模板 Excel（v1）', description: '表头 + 两行示例的 .xlsx，含列宽与冻结首行；需 system:role:import 权限' })
+  @ApiOperation({
+    summary: '下载角色导入模板 Excel（v1）',
+    description: '首个工作表为填写说明 + 表头（角色编码为必填，带 * 与批注），第二个工作表为填写示例；需 system:role:import'
+  })
   @Perms('system:role:import')
   @Get('import-template')
   async downloadTemplate(@Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
-    const buffer = await buildXlsx(
-      '角色导入',
-      [
-        { header: '角色名称', width: 20 },
-        { header: '角色编码', width: 24 },
-        { header: '描述', width: 40 }
+    const buffer = await buildImportTemplateXlsx({
+      sheetName: '角色导入',
+      title: '角色导入模板',
+      notes: [
+        '填写说明（请从「角色导入」这张表的表头下方开始填写，不要改动表头；示例见第二张表）：',
+        '1. 带 * 的列为必填；「角色编码」已存在时更新该角色，不存在则新增。',
+        '2. 角色编码：字母开头，只能包含字母/数字/下划线/冒号/点/短横线，全局唯一，用于接口权限匹配。',
+        '3. 更新已有角色时只覆盖名称与描述，已授权菜单不受影响；描述留空表示不修改。',
+        '4. 导入不会绑定菜单权限，导入完成后请到角色管理页逐条配置授权。'
       ],
-      [
+      columns: [
+        { header: '角色名称', width: 20, hint: '留空时默认与角色编码相同' },
+        { header: '角色编码', width: 24, required: true, hint: '字母开头，全局唯一；已存在则更新该角色' },
+        { header: '描述', width: 40, hint: '留空表示不修改（新建时为空）' }
+      ],
+      samples: [
         ['运营专员', 'operator', '负责日常运营，仅可查看数据'],
         ['财务审核', 'finance_auditor', '']
       ]
-    )
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    res.setHeader('Content-Disposition', 'attachment; filename="roles-import-template.xlsx"')
+    })
+    setDownloadHeaders(res, 'roles-import-template.xlsx', '角色导入模板.xlsx')
     return new StreamableFile(buffer)
   }
 
@@ -113,7 +123,9 @@ export class RoleV1Controller {
     }
     const filename = file.originalname ?? ''
     if (/\.xlsx$/i.test(filename)) {
-      return this.roleService.importRoles(await readXlsxRows(file.buffer))
+      // 模板头部有大标题与填写说明，按表头关键字定位，避免把标题当列名/把说明当数据
+      const table = await readXlsxTable(file.buffer, { headerKeys: ['角色编码', '权限字符', 'roleCode'] })
+      return this.roleService.importRoles(table.rows, table.headerRow)
     }
     if (/\.csv$/i.test(filename)) {
       const text = file.buffer.toString('utf8')
@@ -121,7 +133,7 @@ export class RoleV1Controller {
       if (text.includes('\uFFFD')) {
         throw new BadRequestException('CSV 文件编码不是 UTF-8，请改用 .xlsx 导入，或另存为「CSV UTF-8（逗号分隔）」')
       }
-      return this.roleService.importRoles(parseCsv(text))
+      return this.roleService.importRoles(parseCsv(text), 1)
     }
     throw new BadRequestException('仅支持 .xlsx（推荐）或 .csv 文件')
   }

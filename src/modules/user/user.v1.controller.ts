@@ -21,6 +21,7 @@ import type { Response } from 'express'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
+import { setDownloadHeaders } from '../../utils/download.util'
 import { buildImportTemplateXlsx, buildXlsx, readXlsxTable } from '../../utils/xlsx.util'
 import { CreateUserDto } from './dto/create-user.dto'
 import { QueryUserDto } from './dto/query-user.dto'
@@ -30,12 +31,6 @@ import { USER_IMPORT_DEFAULT_PASSWORD, USER_IMPORT_MAX_SIZE, UserService } from 
 
 /** 状态着色：正常绿、冻结红，导出后一眼能看出异常账号 */
 const STATUS_STYLE = { 1: { fontColor: 'FF0F766E', fillColor: 'FFE7F7F0' }, 2: { fontColor: 'FFB42318', fillColor: 'FFFDECEC' } }
-
-/** 拼接下载响应头：filename 给老浏览器，filename* 用 UTF-8 保住中文名 */
-function setDownloadHeaders(res: Response, asciiName: string, chineseName: string): void {
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-  res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(chineseName)}`)
-}
 
 /**
  * 用户管理接口 V1：/api/v1/users/**

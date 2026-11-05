@@ -110,6 +110,36 @@ function normalizeDeptIds(deptIds?: string[], deptId?: string): string[] {
   return [...new Set((deptIds ?? (deptId ? [deptId] : [])).filter(Boolean))]
 }
 
+/** 唯一键字段：数据库对这三列建了唯一索引，写入前必须预检，否则用户只会看到 Duplicate entry SQL */
+type UniqueField = 'phone' | 'email' | 'workNo'
+
+/** 唯一键占用信息：谁占了这个值、该账号是否已被软删（软删不释放唯一索引） */
+interface UniqueOwner {
+  username: string
+  deleted: boolean
+}
+
+/** 唯一键归一：去空格 + 小写，邮箱大小写不敏感，手机号/工号容忍用户手输首尾空格 */
+function uniqueKey(value?: string | null): string {
+  return (value ?? '').trim().toLowerCase()
+}
+
+/**
+ * 把数据库写入异常翻译成业务中文
+ * - 唯一键冲突（预检漏网：并发导入、软删账号占用等）不再把 SQL 抛给用户
+ * - 其余异常保留原文，便于排查
+ */
+function describeWriteError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : ''
+  const duplicated = /Duplicate entry '([^']*)' for key '([^']+)'/i.exec(raw)
+  if (duplicated) {
+    const [, value, key] = duplicated
+    const label = /phone/i.test(key) ? '手机号' : /email/i.test(key) ? '邮箱' : /work_?no/i.test(key) ? '工号' : /username/i.test(key) ? '登录账号' : ''
+    return label ? `${label}「${value}」已被其他账号占用，请修改后再导入` : '数据与已有记录冲突（唯一约束），请检查手机号、邮箱、工号是否重复'
+  }
+  return raw || '写入失败'
+}
+
 @Injectable()
 export class UserService extends BaseService<UserEntity> {
   constructor(
@@ -410,6 +440,50 @@ export class UserService extends BaseService<UserEntity> {
     const seenNames = new Set<string>()
     const result: UserImportResult = { total: dataRows.length, created: 0, updated: 0, skipped: 0, failed: 0, errors: [] }
 
+    // 手机号/邮箱/工号在库内唯一（唯一索引不区分软删除），先建占用表做预检
+    const owners: Record<UniqueField, Map<string, UniqueOwner>> = { phone: new Map(), email: new Map(), workNo: new Map() }
+    /** 账号 → 当前占用的唯一键值，更新换绑时用来释放旧值，避免同一份文件里互相误判 */
+    const ownedValues: Record<UniqueField, Map<string, string>> = { phone: new Map(), email: new Map(), workNo: new Map() }
+    for (const user of [...existingUsers, ...deletedUsers]) {
+      const owner: UniqueOwner = { username: user.username, deleted: user.delFlag === 1 }
+      const nameKey = user.username.toLowerCase()
+      for (const field of ['phone', 'email', 'workNo'] as UniqueField[]) {
+        const key = uniqueKey(user[field])
+        if (!key) {
+          continue
+        }
+        owners[field].set(key, owner)
+        ownedValues[field].set(nameKey, key)
+      }
+    }
+
+    /** 该值是否被「别人」占用（自己覆盖自己不算冲突） */
+    const findConflict = (field: UniqueField, label: string, raw: string, selfName: string): string | null => {
+      const key = uniqueKey(raw)
+      if (!key) {
+        return null
+      }
+      const owner = owners[field].get(key)
+      if (!owner || owner.username.toLowerCase() === selfName) {
+        return null
+      }
+      return `${label}「${raw.trim()}」已被账号「${owner.username}」占用${owner.deleted ? '（该账号已删除，但唯一索引仍占用，请先恢复原账号或换一个）' : ''}`
+    }
+
+    /** 写入成功后同步占用表：先释放本账号旧值，再登记新值 */
+    const syncOwner = (field: UniqueField, raw: string, selfName: string, username: string): void => {
+      const previous = ownedValues[field].get(selfName)
+      if (previous && owners[field].get(previous)?.username.toLowerCase() === selfName) {
+        owners[field].delete(previous)
+        ownedValues[field].delete(selfName)
+      }
+      const key = uniqueKey(raw)
+      if (key) {
+        owners[field].set(key, { username, deleted: false })
+        ownedValues[field].set(selfName, key)
+      }
+    }
+
     /** 读取某列文本（列不存在时返回空串） */
     const pick = (cells: string[], field: UserImportField): string => {
       const index = columns[field]
@@ -503,6 +577,17 @@ export class UserService extends BaseService<UserEntity> {
         continue
       }
 
+      const phone = pick(cells, 'phone')
+      const email = pick(cells, 'email')
+      const workNo = pick(cells, 'workNo')
+      // 唯一键预检：跟「别的账号」冲突才拦，自己覆盖自己的值放行
+      const uniqueConflict =
+        findConflict('phone', '手机号', phone, nameKey) ?? findConflict('email', '邮箱', email, nameKey) ?? findConflict('workNo', '工号', workNo, nameKey)
+      if (uniqueConflict) {
+        fail(uniqueConflict)
+        continue
+      }
+
       const current = userByName.get(nameKey)
       try {
         if (current) {
@@ -515,14 +600,17 @@ export class UserService extends BaseService<UserEntity> {
               birthday: birthday ?? undefined,
               status,
               password: password || undefined,
-              phone: pick(cells, 'phone') || undefined,
-              email: pick(cells, 'email') || undefined,
-              workNo: pick(cells, 'workNo') || undefined,
+              phone: phone || undefined,
+              email: email || undefined,
+              workNo: workNo || undefined,
               roleIds,
               deptIds
             },
             operator
           )
+          syncOwner('phone', phone, nameKey, current.username)
+          syncOwner('email', email, nameKey, current.username)
+          syncOwner('workNo', workNo, nameKey, current.username)
           result.updated += 1
         } else {
           if (deletedNames.has(nameKey)) {
@@ -537,19 +625,22 @@ export class UserService extends BaseService<UserEntity> {
               sex,
               birthday: birthday ?? undefined,
               status: status ?? USER_STATUS.NORMAL,
-              phone: pick(cells, 'phone') || undefined,
-              email: pick(cells, 'email') || undefined,
-              workNo: pick(cells, 'workNo') || undefined,
+              phone: phone || undefined,
+              email: email || undefined,
+              workNo: workNo || undefined,
               roleIds,
               deptIds
             },
             operator
           )
           userByName.set(nameKey, created)
+          syncOwner('phone', phone, nameKey, username)
+          syncOwner('email', email, nameKey, username)
+          syncOwner('workNo', workNo, nameKey, username)
           result.created += 1
         }
       } catch (error) {
-        fail(error instanceof Error ? error.message : '写入失败')
+        fail(describeWriteError(error))
       }
     }
 
