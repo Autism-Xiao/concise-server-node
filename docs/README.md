@@ -85,3 +85,4 @@
 | 2026-11-05 | [BaseService自动补时间戳](./2026-11-05-BaseService自动补时间戳.md) | 本轮 | create 自动补 createTime、update 自动补 updateTime（列存在且未显式传入时），显式值优先、无列跳过；存量手写样板保持原语义，绕过基类的直连 repository 调用仍需自带 |
 | 2026-11-05 | [退出登录接口](./2026-11-05-退出登录接口.md) | 本轮 | POST /api/v1/auth/logout：accessToken/refreshToken 拉黑（复用 online:revoked 黑名单，TTL=令牌剩余有效期）+ 删在线会话；refreshToken 刷新前过黑名单防续命；前端 logout() 先通知后端再清凭证 |
 | 2026-11-05 | [分页字段对齐jeecg-IPage](./2026-11-05-分页字段对齐jeecg-IPage.md) | 本轮 | Pagination 改 records/total/size/current/pages（对齐 MyBatis-Plus IPage），job/user 服务与前端 6 处类型 + 4 个页面同步；外层壳本就已是 jeecg 形态未动 |
+| 2026-11-05 | [接口文档只保留V1与系统](./2026-11-05-接口文档只保留V1与系统.md) | 本轮 | 8 个旧版无前缀控制器加 `@ApiExcludeController()`（路由不变、仅隐藏文档），Swagger 只剩 15 个分组：系统 + 全部 V1；坑：docs-json 的 path 带 `/api` 前缀、document.tags 恒为空需遍历 operation.tags |

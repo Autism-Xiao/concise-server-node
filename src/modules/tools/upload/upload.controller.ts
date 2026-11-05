@@ -1,6 +1,6 @@
 import { Controller, Post, Request, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiExcludeController, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { FileUploadDto } from './upload.dto'
@@ -10,6 +10,8 @@ import { UploadService } from './upload.service'
 export const UPLOAD_FILE_SIZE = 10 * 1024 * 1024
 export const UPLOAD_MIMETYPES = ['image/png', 'image/gif', 'image/jpeg', 'image/webp', 'image/svg+xml']
 
+// 旧版无前缀接口：仅为向后兼容保留，不出现在 Swagger 文档中（文档只暴露 V1 + 系统分组）
+@ApiExcludeController()
 @ApiTags('工具 - 上传模块')
 @ApiBearerAuth('jwt')
 @Controller('upload')

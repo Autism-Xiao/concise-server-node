@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common'
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiExcludeController, ApiOkResponse, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger'
 import { Type } from 'class-transformer'
 import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator'
 
@@ -46,6 +46,8 @@ class ChangeStatusDto {
   status: number
 }
 
+// 旧版无前缀接口：仅为向后兼容保留，不出现在 Swagger 文档中（文档只暴露 V1 + 系统分组）
+@ApiExcludeController()
 @ApiTags('任务管理')
 @ApiBearerAuth('jwt')
 @Roles('admin')

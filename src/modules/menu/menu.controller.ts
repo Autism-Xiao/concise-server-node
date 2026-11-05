@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common'
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiExcludeController, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Roles } from '../../common/decorators/roles.decorator'
 import { CreateMenuDto } from './dto/create-menu.dto'
@@ -7,6 +7,8 @@ import { UpdateMenuDto } from './dto/update-menu.dto'
 import { MenuEntity } from './entities/menu.entity'
 import { MenuService } from './menu.service'
 
+// 旧版无前缀接口：仅为向后兼容保留，不出现在 Swagger 文档中（文档只暴露 V1 + 系统分组）
+@ApiExcludeController()
 @ApiTags('菜单管理')
 @ApiBearerAuth('jwt')
 @Roles('admin')

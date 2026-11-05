@@ -1,11 +1,13 @@
 import { Body, Controller, Delete, Get, Query } from '@nestjs/common'
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiExcludeController, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { StorageEntity } from './storage.entity'
 import { DeleteStorageDto, QueryStorageDto } from './storage.dto'
 import { StorageService } from './storage.service'
 
+// 旧版无前缀接口：仅为向后兼容保留，不出现在 Swagger 文档中（文档只暴露 V1 + 系统分组）
+@ApiExcludeController()
 @ApiTags('工具 - 存储模块')
 @ApiBearerAuth('jwt')
 @Controller('storage')

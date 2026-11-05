@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiExcludeController, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
@@ -9,6 +9,8 @@ import { CaptchaService } from '../services/captcha.service'
 import { LoginDto, LoginResultDto, RefreshTokenDto } from '../dto/login.dto'
 import type { UserEntity } from '../../user/entities/user.entity'
 
+// 旧版无前缀接口：仅为向后兼容保留，不出现在 Swagger 文档中（文档只暴露 V1 + 系统分组）
+@ApiExcludeController()
 @ApiTags('认证')
 @Controller('auth')
 export class AuthController {
