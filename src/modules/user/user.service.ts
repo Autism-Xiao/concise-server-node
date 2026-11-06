@@ -8,7 +8,7 @@ import { BaseService } from '../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
 import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
-import { encryptPassword, randomId32, randomSalt } from '../../utils/password.util'
+import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
 import { UserEntity } from './entities/user.entity'
 import { RoleEntity } from '../role/entities/role.entity'
@@ -152,7 +152,7 @@ export class UserService extends BaseService<UserEntity> {
     super(repository, '用户')
   }
 
-  /** 创建：生成 32 位主键与密码盐，密码按 JeecgBoot 算法 PBEWithMD5AndDES(username, password, salt) 入库 */
+  /** 创建：生成 32 位主键；密码统一用 argon2id 哈希（自带盐，不再写 sys_user.salt） */
   async create(dto: UserWriteInput, operator?: string): Promise<UserEntity> {
     const { roleIds, deptIds, deptId, ...rest } = dto
     const data: Partial<UserEntity> = { ...rest }
@@ -160,9 +160,9 @@ export class UserService extends BaseService<UserEntity> {
     // 唯一性预检：数据库唯一索引不区分软删除，必须提前给出可读提示（否则并发/软删占用会以 500 暴露）
     await this.assertUniqueFields(data)
     data.id = data.id || randomId32()
-    data.salt = randomSalt()
     if (data.password) {
-      data.password = encryptPassword(data.username as string, data.password, data.salt)
+      data.password = await hashPassword(data.password)
+      data.salt = null
     }
     data.status = data.status || USER_STATUS.NORMAL
     data.delFlag = 0
@@ -190,18 +190,18 @@ export class UserService extends BaseService<UserEntity> {
     return this.findOneDetail(id) as Promise<UserEntity>
   }
 
-  /** 更新：若携带密码则生成新盐重新加密；携带 roleIds / deptIds 则重绑关联 */
+  /** 更新：携带密码则用 argon2id 重新哈希；携带 roleIds / deptIds 则重绑关联 */
   async update(id: string, dto: UserWriteInput, operator?: string): Promise<UserEntity> {
     const { roleIds, deptIds, deptId, ...rest } = dto
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
-    delete data.username // 账号不允许修改（密码算法绑定 username）
+    delete data.username // 账号不允许修改（改账号会让审计与历史密码哈希对不上）
     await this.findOne(id)
     await this.assertUniqueFields(data, id)
     if (data.password) {
-      data.salt = randomSalt()
-      const user = await this.findOneWithPassword(id)
-      data.password = encryptPassword(user?.username ?? '', data.password, data.salt)
+      // argon2id 自带盐，顺手把历史 jeecg 盐清空，避免后续误按旧算法校验
+      data.password = await hashPassword(data.password)
+      data.salt = null
     }
     if (operator) {
       data.updateBy = operator
@@ -478,12 +478,38 @@ export class UserService extends BaseService<UserEntity> {
     )
   }
 
-  /** 校验登录密码：JeecgBoot 算法 PBEWithMD5AndDES(username, password, salt) */
-  verifyPassword(user: UserEntity, plainPassword: string): boolean {
-    if (!user.password || !user.salt) {
+  /**
+   * 校验登录密码
+   * - 新格式（$argon2id$...）：argon2id 比对
+   * - 旧格式（JeecgBoot 16/32/48 位十六进制）：复算 PBEWithMD5AndDES 比对，
+   *   登录成功后由 upgradePasswordHash 透明升级，无需批量刷库
+   */
+  async verifyPassword(user: UserEntity, plainPassword: string): Promise<boolean> {
+    if (!user.password) {
+      return false
+    }
+    if (isArgon2Hash(user.password)) {
+      return verifyArgon2Password(user.password, plainPassword)
+    }
+    if (!user.salt) {
       return false
     }
     return encryptPassword(user.username, plainPassword, user.salt) === user.password
+  }
+
+  /**
+   * 把旧算法的密码就地升级为 argon2id（登录成功时调用）
+   * 只改 password / salt，不动 update_time —— 用户并没有「修改」账号信息。
+   * 失败不影响本次登录，下次登录会再试一次。
+   */
+  async upgradePasswordHash(id: string, plainPassword: string): Promise<boolean> {
+    try {
+      const hashed = await hashPassword(plainPassword)
+      await this.repository.update(id, { password: hashed, salt: null })
+      return true
+    } catch {
+      return false
+    }
   }
 
   /** 去掉密码与盐字段，安全返回 */

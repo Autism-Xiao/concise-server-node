@@ -3,17 +3,17 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
-import { LoginDto, LoginResultDto, VerifyCaptchaDto } from '../dto/login.dto'
+import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
+import type { UserEntity } from '../../user/entities/user.entity'
 
 /**
  * 认证接口 V1：/api/v1/auth/**
  *
- * 版本策略：URL 前缀做版本，老版本路由（/api/auth/**）继续保留，前端可逐个切换；
- * 等其余模块也迁到 v1 后，旧路由再统一下线。
- * 目前：验证码 / 登录 / 权限汇总在 v1，refresh / profile 仍在旧路由。
- * 约定：后续新增或修改的接口一律挂在 v1 下。
+ * 版本策略：URL 前缀做版本。旧版（/api/auth/**）已默认不注册（见 config/legacy-routes.config.ts），
+ * 因此 **v1 必须自成完整能力**：验证码 / 登录 / 刷新 / 退出 / 权限汇总 / 当前用户信息。
+ * 新增或修改的接口一律挂 v1。
  */
 @ApiTags('认证 V1')
 @Controller('v1/auth')
@@ -68,6 +68,22 @@ export class AuthV1Controller {
       return { loggedOut: true }
     }
     return this.authService.logout(token, body?.refreshToken)
+  }
+
+  @ApiOperation({ summary: '刷新令牌（v1）', description: '用 refreshToken 换取新的令牌对（轮换：旧 refreshToken 立即失效）' })
+  @ApiOkResponse({ description: '新的令牌对与用户信息', type: LoginResultDto })
+  @Public()
+  @RateLimit({ limit: 20, window: 60, message: '刷新过于频繁，请稍后再试' })
+  @Post('refresh')
+  refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refreshToken(dto.refreshToken)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: '当前登录用户信息（v1）', description: '返回脱敏后的用户信息（不含 password / salt）' })
+  @Get('profile')
+  profile(@Request() req: { user: UserEntity }) {
+    return this.authService.getProfile(req.user)
   }
 
   @ApiBearerAuth('jwt')

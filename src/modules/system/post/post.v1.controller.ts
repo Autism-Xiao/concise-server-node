@@ -22,6 +22,7 @@ import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { IMPORT_MAX_SIZE } from '../../../helper/import/excel-import'
+import { Pagination, toPagination } from '../../../helper/paginate'
 import { formatDateTime } from '../../../utils/csv.util'
 import { setDownloadHeaders } from '../../../utils/download.util'
 import { buildImportTemplateXlsx, buildXlsx, readXlsxTable } from '../../../utils/xlsx.util'
@@ -46,11 +47,11 @@ export class PostV1Controller {
   constructor(private readonly postService: PostService) {}
 
   @ApiOperation({ summary: '岗位列表（v1）', description: 'post_sort 升序，带所属部门；keyword 模糊匹配名称/编码/描述；支持 deptId 过滤；需 system:post:list' })
-  @ApiOkResponse({ description: '岗位列表', type: [PostEntity] })
+  @ApiOkResponse({ description: '岗位列表（统一分页结构；size = total，一次全量返回）', type: Pagination })
   @Perms('system:post:list')
   @Get()
-  list(@Query() query: QueryPostDto): Promise<PostEntity[]> {
-    return this.postService.listByQuery(query)
+  async list(@Query() query: QueryPostDto): Promise<Pagination<PostEntity>> {
+    return toPagination(await this.postService.listByQuery(query))
   }
 
   @ApiOperation({ summary: '导出岗位 Excel（v1）', description: '与列表同筛选条件（keyword/deptId），单次最多 5000 行；需 system:post:export' })

@@ -5,6 +5,7 @@ import { IsNull, Repository, type DeepPartial } from 'typeorm'
 import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
+import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 import { MenuEntity } from './entities/menu.entity'
 
 export interface MenuTreeItem extends MenuEntity {
@@ -20,7 +21,8 @@ function isRootParent(parentId?: string | null): boolean {
 export class MenuService extends BaseService<MenuEntity> {
   constructor(
     @InjectRepository(MenuEntity)
-    repository: Repository<MenuEntity>
+    repository: Repository<MenuEntity>,
+    private readonly permissionCache: PermissionCacheService
   ) {
     super(repository, '菜单')
   }
@@ -30,7 +32,7 @@ export class MenuService extends BaseService<MenuEntity> {
     if (dto.parentId) {
       await this.assertParentExists(dto.parentId)
     }
-    return super.create({
+    const menu = await super.create({
       ...dto,
       delFlag: dto.delFlag ?? 0,
       status: dto.status ?? '1',
@@ -40,6 +42,9 @@ export class MenuService extends BaseService<MenuEntity> {
       sortNo: dto.sortNo ?? 0,
       createTime: new Date()
     })
+    // 菜单即权限点：新增一个带 permission 的按钮会改变所有角色的可用权限集合
+    await this.permissionCache.invalidateAll()
+    return menu
   }
 
   /** 更新：维护更新时间；换父级时校验父级存在且不形成环 */
@@ -47,7 +52,10 @@ export class MenuService extends BaseService<MenuEntity> {
     if (dto.parentId) {
       await this.assertNoCycle(id, dto.parentId)
     }
-    return super.update(id, { ...dto, updateTime: new Date() })
+    const menu = await super.update(id, { ...dto, updateTime: new Date() })
+    // 可能改了 permission / status / del_flag，所有角色的权限集合都要重算
+    await this.permissionCache.invalidateAll()
+    return menu
   }
 
   /** 删除：软删除（对齐 sys_permission.del_flag）；存在未删除子级时拒绝，避免挂空父级 */
@@ -61,6 +69,8 @@ export class MenuService extends BaseService<MenuEntity> {
       throw new BizException(BizErrorCode.NOT_FOUND, '菜单不存在')
     }
     await this.repository.update(id, { delFlag: 1, updateTime: new Date() })
+    // 软删的菜单不再算权限（守卫 SQL 有 del_flag = 0 条件），缓存要跟着清
+    await this.permissionCache.invalidateAll()
   }
 
   /** 全量菜单（按 sort_no 升序，排除已删除） */

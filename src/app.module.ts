@@ -16,6 +16,7 @@ import { AppService } from './app.service'
 import { LoggerService } from './shared/logger/logger.service'
 import { DatabaseModule } from './shared/database/database.module'
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module'
+import { PermissionCacheModule } from './shared/permission-cache/permission-cache.module'
 import { UserModule } from './modules/user/user.module'
 import { AuthModule } from './modules/auth/auth.module'
 import { RoleModule } from './modules/role/role.module'
@@ -49,6 +50,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     DatabaseModule,
     // 计数基础设施（限流 / 登录失败锁定），全局模块
     RateLimitModule,
+    // 权限集合缓存（按角色，Redis 优先，写侧主动失效），全局模块
+    PermissionCacheModule,
     // 业务模块
     UserModule,
     AuthModule,

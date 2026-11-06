@@ -7,6 +7,7 @@ import { BatchDeleteDto } from '../../common/dto/batch-delete.dto'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
+import { Pagination, toPagination } from '../../helper/paginate'
 import { setDownloadHeaders } from '../../utils/download.util'
 import { buildImportTemplateXlsx, buildXlsx, readXlsxTable } from '../../utils/xlsx.util'
 import { CreateRoleDto } from './dto/create-role.dto'
@@ -18,8 +19,8 @@ import { ROLE_IMPORT_MAX_SIZE, RoleService, type RoleImportResult } from './role
 /**
  * 角色管理接口 V1：/api/v1/roles/**
  *
- * 版本策略：URL 前缀做版本，老版本路由（/api/roles/**）继续保留兼容；
- * 角色管理页与授权弹窗的数据源都在这里，旧路由待全部迁移后统一下线。
+ * 版本策略：URL 前缀做版本；旧路由（/api/roles/**）默认不注册（见 config/legacy-routes.config.ts）。
+ * 角色管理页与授权弹窗的数据源都在这里。
  */
 @ApiTags('角色管理 V1')
 @ApiBearerAuth('jwt')
@@ -28,11 +29,11 @@ export class RoleV1Controller {
   constructor(private readonly roleService: RoleService) {}
 
   @ApiOperation({ summary: '角色列表（v1）', description: '全量返回（角色数量少不分页），含已授权菜单；keyword 模糊匹配名称/编码；需 system:role:list' })
-  @ApiOkResponse({ description: '角色列表', type: [RoleEntity] })
+  @ApiOkResponse({ description: '角色列表（统一分页结构；字典类数据 size = total，一次全量返回）', type: Pagination })
   @Perms('system:role:list')
   @Get()
-  list(@Query() query: QueryRoleDto): Promise<RoleEntity[]> {
-    return this.roleService.listByQuery(query)
+  async list(@Query() query: QueryRoleDto): Promise<Pagination<RoleEntity>> {
+    return toPagination(await this.roleService.listByQuery(query))
   }
 
   @ApiOperation({

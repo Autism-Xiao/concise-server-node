@@ -1,25 +1,24 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { DataSource } from 'typeorm'
 
 import { PERMS_KEY } from '../decorators/perms.decorator'
 import { hasSuperRole } from '../../utils/super-role.util'
-
-/** 权限标识实体的最小结构（避免守卫直接依赖业务实体造成循环） */
-interface PermRow {
-  perms: string | null
-}
+import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 
 /**
- * 全局按钮级权限守卫：读取 @Perms() 声明，实时查库获取
- * 请求用户所有角色挂载的 menu.permission 集合，任一命中即放行
- * admin 角色直接放行；未声明 @Perms() 的接口不受限
+ * 全局按钮级权限守卫：读取 @Perms() 声明，校验用户是否持有该权限标识
+ *
+ * 权限集合来自 PermissionCacheService（按角色缓存 5 分钟 + 写侧主动失效）：
+ *  - 角色授权、角色删除、菜单权限改动都会立刻失效，改完权限下一次请求即生效；
+ *  - Redis 不可用时自动降级为实时查库，不影响鉴权正确性。
+ *
+ * admin 角色直接放行；未声明 @Perms() 的接口不受限。
  */
 @Injectable()
 export class PermsGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly dataSource: DataSource
+    private readonly permissionCache: PermissionCacheService
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -40,18 +39,9 @@ export class PermsGuard implements CanActivate {
     }
 
     const roleIds = roles.map((role: { id: string }) => role.id)
-    // 实时查库：角色 → sys_role_permission → sys_permission.perms（无效/已删除菜单不算数）
-    const rows = await this.dataSource
-      .createQueryBuilder()
-      .select('p.perms', 'perms')
-      .from('sys_permission', 'p')
-      .innerJoin('sys_role_permission', 'rp', 'rp.permission_id = p.id')
-      .where('rp.role_id IN (:...roleIds)', { roleIds })
-      .andWhere("p.status = '1'")
-      .andWhere('p.del_flag = 0')
-      .getRawMany<PermRow>()
+    // 走缓存：角色 → sys_role_permission → sys_permission.perms（无效/已删除菜单不算数）
+    const owned = await this.permissionCache.getRolesPerms(roleIds)
 
-    const owned = new Set(rows.map(row => row.perms).filter((p): p is string => !!p))
     if (required.some(perm => owned.has(perm))) {
       return true
     }

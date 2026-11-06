@@ -6,7 +6,8 @@ import { DeptEntity } from '../../system/dept/entities/dept.entity'
 /**
  * 用户表（对齐 JeecgBoot sys_user）
  * - 主键为 32 位字符串（非自增），由 randomId32() 生成
- * - 密码为 JeecgBoot 兼容的 PBEWithMD5AndDES(username, password, salt)，16 位 hex
+ * - 密码为 argon2id（@node-rs/argon2）；历史数据仍是 JeecgBoot 的 PBEWithMD5AndDES，
+ *   登录成功后自动透明升级，见 UserService.upgradePasswordHash
  * - 全局 SnakeNamingStrategy 下驼峰属性自动映射下划线列名
  * - 部门：多对多走 sys_user_depart（对齐 JeecgBoot，一个用户可挂多个部门）；
  *   主部门 = depart_ids 的第一个 id，其机构编码冗余到 org_code 供数据权限过滤
@@ -26,13 +27,14 @@ export class UserEntity {
   realname?: string
 
   /** select: false —— 默认查询不带出密码与盐；任何接口响应都不返回 */
-  @ApiPropertyOptional({ description: '密码（PBEWithMD5AndDES 16位hex）', nullable: true })
+  @ApiPropertyOptional({ description: '密码（argon2id PHC 串；历史数据为 jeecg 16~48 位十六进制）', nullable: true })
   @Column({ length: 255, select: false, comment: '密码' })
   password?: string
 
-  @ApiPropertyOptional({ description: '密码盐', nullable: true })
-  @Column({ length: 45, select: false, comment: 'md5密码盐' })
-  salt?: string
+  @ApiPropertyOptional({ description: '历史 jeecg 密码盐（argon2id 自带盐，新数据为 null）', nullable: true })
+  // 显式写 type: 'varchar'：属性类型是 string | null 时 TypeORM 会推断成 Object 而拒绝建连
+  @Column({ type: 'varchar', length: 45, select: false, nullable: true, comment: 'md5密码盐' })
+  salt?: string | null
 
   @ApiPropertyOptional({ description: '头像 URL', nullable: true })
   @Column({ length: 255, nullable: true, comment: '头像' })

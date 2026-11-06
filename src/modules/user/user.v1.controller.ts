@@ -23,8 +23,8 @@ const STATUS_STYLE = { 1: { fontColor: 'FF0F766E', fillColor: 'FFE7F7F0' }, 2: {
 /**
  * 用户管理接口 V1：/api/v1/users/**
  *
- * 版本策略：URL 前缀做版本，老版本路由（/api/users/**）继续保留兼容；
- * 前端用户管理页已切换到 v1，旧路由待全部迁移后统一下线。
+ * 版本策略：URL 前缀做版本；旧路由（/api/users/**）默认不注册（见 config/legacy-routes.config.ts）。
+ * 前端用户管理页已全部走 v1。
  */
 @ApiTags('用户管理 V1')
 @ApiBearerAuth('jwt')

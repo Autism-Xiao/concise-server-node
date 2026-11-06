@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { JwtModule } from '@nestjs/jwt'
 
 import { jwtConfig, type JwtConfig } from '../../config'
+import { LEGACY_ROUTES_ENABLED } from '../../config/legacy-routes.config'
 import { UserModule } from '../user/user.module'
 import { MenuModule } from '../menu/menu.module'
 import { LogModule } from '../system/log/log.module'
@@ -31,7 +32,8 @@ import { JwtStrategy } from './strategies/jwt.strategy'
       })
     })
   ],
-  controllers: [AuthController, AuthV1Controller],
+  // 旧版（无 /v1）控制器默认不注册，见 config/legacy-routes.config.ts
+  controllers: [AuthV1Controller, ...(LEGACY_ROUTES_ENABLED ? [AuthController] : [])],
   providers: [AuthService, CaptchaService, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard]
 })

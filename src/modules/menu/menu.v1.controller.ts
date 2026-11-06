@@ -5,6 +5,7 @@ import type { Response } from 'express'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { formatDateTime } from '../../utils/csv.util'
+import { Pagination, toPagination } from '../../helper/paginate'
 import { setDownloadHeaders } from '../../utils/download.util'
 import { buildXlsx } from '../../utils/xlsx.util'
 import { CreateMenuDto } from './dto/create-menu.dto'
@@ -15,8 +16,8 @@ import { MenuService } from './menu.service'
 /**
  * 菜单管理接口 V1：/api/v1/menus/**
  *
- * 版本策略：URL 前缀做版本，老版本路由（/api/menus/**）继续保留兼容；
- * 菜单管理页与角色授权弹窗的数据源都在这里，旧路由待全部迁移后统一下线。
+ * 版本策略：URL 前缀做版本；旧路由（/api/menus/**）默认不注册（见 config/legacy-routes.config.ts）。
+ * 菜单管理页与角色授权弹窗的数据源都在这里。
  */
 @ApiTags('菜单管理 V1')
 @ApiBearerAuth('jwt')
@@ -34,11 +35,11 @@ export class MenuV1Controller {
   }
 
   @ApiOperation({ summary: '菜单全量列表（v1，扁平，排除已删除）', description: '需 system:menu:list' })
-  @ApiOkResponse({ description: '菜单列表', type: [MenuEntity] })
+  @ApiOkResponse({ description: '菜单列表（统一分页结构；size = total，一次全量返回）', type: Pagination })
   @Perms('system:menu:list')
   @Get()
-  list() {
-    return this.menuService.listAll()
+  async list(): Promise<Pagination<MenuEntity>> {
+    return toPagination(await this.menuService.listAll())
   }
 
   @ApiOperation({

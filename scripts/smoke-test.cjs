@@ -166,8 +166,14 @@ async function main() {
   const permList = perms.json?.result?.perms ?? perms.json?.result?.permissions ?? []
   record(Array.isArray(permList) && permList.length > 0, '权限汇总非空', `共 ${permList.length} 项`)
 
-  const profile = await call('GET', '/auth/profile', { token: adminToken })
-  record(profile.status === 200 && profile.json?.success === true, 'GET /api/auth/profile（旧路由仍在服务）', `status=${profile.status}`)
+  const profile = await call('GET', '/v1/auth/profile', { token: adminToken })
+  record(profile.status === 200 && profile.json?.success === true, 'GET /api/v1/auth/profile', `status=${profile.status}`)
+
+  // 旧版（无 /v1）路由默认不注册：必须 404，不能让同一能力留两条入口
+  {
+    const legacy = await call('GET', '/auth/profile', { token: adminToken })
+    record(legacy.status === 404, '旧版 /api/auth/profile 已下线（404）', `status=${legacy.status}`)
+  }
 
   /* ---------- 3. 读接口全量扫 ---------- */
   section('3. 列表 / 详情读接口')
@@ -311,9 +317,9 @@ async function main() {
         // 低权限令牌访问管理接口应 403
         const denied = await call('GET', '/v1/users?page=1&pageSize=5', { token: t })
         record(denied.status === 403, '低权限用户访问用户列表被拒 (403)', `status=${denied.status}`)
-        // 旧路由（/api/users）权限是否同样生效 —— 重复路由的越权风险点
+        // 旧版 /api/users 已下线：应为 404（而不是 401/403），说明请求根本没进业务层
         const legacy = await call('GET', '/users?page=1&pageSize=5', { token: t })
-        record(legacy.status === 401 || legacy.status === 403, '旧路由 GET /api/users 同样拦截低权限用户', `status=${legacy.status}`)
+        record(legacy.status === 404, '旧路由 GET /api/users 已下线', `status=${legacy.status}`)
         // IDOR：低权限令牌读取超管详情（只读，安全）
         const idorRead = await call('GET', `/v1/users/${ADMIN_ID}`, { token: t })
         record(idorRead.status === 403 || idorRead.status === 401, 'IDOR 低权限读取超管详情被拒', `status=${idorRead.status}`)
@@ -324,7 +330,7 @@ async function main() {
         record(idorDelete.status === 403 || idorDelete.status === 401, '越权删除用户被拒', `status=${idorDelete.status}`)
         // 旧路由写操作同样要有权限（否则旧路由成了绕过新权限的后门）
         const legacyWrite = await call('PUT', `/users/${userId}`, { token: t, body: { realname: 'hacked-by-legacy' } })
-        record(legacyWrite.status === 403 || legacyWrite.status === 401, '旧路由 PUT /api/users/:id 同样拦截低权限用户', `status=${legacyWrite.status}`)
+        record(legacyWrite.status === 404, '旧路由 PUT /api/users/:id 已下线', `status=${legacyWrite.status}`)
         smokeUserToken = t
       } else {
         record(true, '登录链路（验证码开启，预期被拦）', `status=${login.status} msg=${login.json?.message ?? ''}`)
@@ -472,19 +478,25 @@ async function main() {
   const badImport = await call('POST', '/v1/levels/import', { token: adminToken, form: badForm })
   record(badImport.status >= 400 && badImport.status < 500, 'POST import 非 Excel 文件被拒', `status=${badImport.status} msg=${badImport.json?.message}`)
 
-  /* ---------- 7. 旧版 /api/** 重复路由探测 ---------- */
-  section('7. 旧版重复路由（/api/** 无 v1）')
-  const legacyRoutes = [
+  /* ---------- 7. 旧版 /api/** 路由下线校验 ---------- */
+  section('7. 旧版路由（/api/** 无 v1）已下线')
+  const retiredRoutes = [
     ['GET', '/users?page=1&pageSize=5', '旧 用户列表'],
     ['GET', '/roles?page=1&pageSize=5', '旧 角色列表'],
     ['GET', '/menus?page=1&pageSize=5', '旧 菜单列表'],
-    ['GET', '/depts?page=1&pageSize=5', '旧 部门列表'],
-    ['GET', '/tasks?page=1&pageSize=5', '旧 任务列表'],
-    ['GET', '/storage/list', '旧 文件列表']
+    ['GET', '/depts?page=1&pageSize=5', '旧 部门列表']
   ]
-  for (const [m, p, label] of legacyRoutes) {
+  for (const [m, p, label] of retiredRoutes) {
     const r = await call(m, p, { token: adminToken })
-    record(r.status === 200, `${label}  ${m} ${p}`, `status=${r.status}`)
+    record(r.status === 404, `${label} ${m} ${p} 已下线`, `status=${r.status}`)
+  }
+  // 这几个能力本来就没有 v1 版本（任务/文件），不属于"旧路由"，必须继续可用
+  for (const [p, label] of [
+    ['/tasks?page=1&pageSize=5', '任务列表'],
+    ['/storage/list', '文件列表']
+  ]) {
+    const r = await call('GET', p, { token: adminToken })
+    record(r.status === 200, `${label} ${p} 正常服务`, `status=${r.status}`)
   }
 
   /* ---------- 9. 一致性 / 边界 / 安全专项 ---------- */
@@ -533,24 +545,23 @@ async function main() {
     record(Boolean(h.get('x-frame-options') || h.get('content-security-policy')), '存在点击劫持防护头', h.get('x-frame-options') ?? '缺失')
   }
 
-  // 9.5 列表结构符合文档约定：
-  //   {records,total,current,size,pages} —— users / notices / jobs / logs / online（数据量大、需要服务端分页）
-  //   纯数组 —— roles / depts / levels / posts / dicts / menus（字典量级；depts / menus 本质是树，不做分页）
-  // 约定写在 Swagger 描述里（main.ts），这里按契约逐项核对，而不是要求全站只剩一种形态。
+  // 9.5 列表结构全站统一：所有「列表查询」接口都返回 {records,total,current,size,pages}
+  //   前端只需一套读取方式；字典量级数据用 size = total、pages = 1 表示一次全量返回。
+  //   数据源类接口（tree / options / code/:code）不在此列，仍返回数组。
   {
-    const pagedPaths = ['/v1/users', '/v1/notices', '/v1/jobs']
-    const arrayPaths = ['/v1/roles', '/v1/depts', '/v1/levels', '/v1/posts', '/v1/dicts', '/v1/menus']
+    const listPaths = ['/v1/users', '/v1/notices', '/v1/jobs', '/v1/roles', '/v1/depts', '/v1/levels', '/v1/posts', '/v1/dicts', '/v1/menus']
     const wrong = []
-    for (const p of pagedPaths) {
+    for (const p of listPaths) {
       const r = await call('GET', `${p}?page=1&pageSize=2`, { token: adminToken })
       const result = r.json?.result
       if (!Array.isArray(result?.records) || typeof result?.total !== 'number') wrong.push(p)
     }
-    for (const p of arrayPaths) {
+    // 数据源接口保持数组（不是列表查询：下拉/树控件用）
+    for (const p of ['/v1/depts/tree', '/v1/menus/tree', '/v1/roles/options']) {
       const r = await call('GET', p, { token: adminToken })
       if (!Array.isArray(r.json?.result)) wrong.push(p)
     }
-    record(wrong.length === 0, '列表结构符合文档约定（3 个分页 / 6 个数组）', wrong.length ? `不符合：${wrong.join(',')}` : '9 个模块全部符合')
+    record(wrong.length === 0, '列表接口统一 {records,total}，数据源接口保持数组', wrong.length ? `不符合：${wrong.join(',')}` : '9 个列表 + 3 个数据源全部符合')
   }
 
   /* ---------- 8. 清理 ---------- */
@@ -665,11 +676,11 @@ async function main() {
     } else {
       const login = await call('POST', '/v1/auth/login', { body: { username, password } })
       const oldRefresh = login.json?.result?.refreshToken
-      const first = await call('POST', '/auth/refresh', { body: { refreshToken: oldRefresh } })
+      const first = await call('POST', '/v1/auth/refresh', { body: { refreshToken: oldRefresh } })
       record(isOk(first) && first.json.result.refreshToken !== oldRefresh, 'refresh 换发新令牌（轮换生效）', `status=${first.status}`)
 
       // 同一个旧 refreshToken 再用一次：必须 401（10 秒宽限期内只拒绝，不误伤并发刷新）
-      const replay = await call('POST', '/auth/refresh', { body: { refreshToken: oldRefresh } })
+      const replay = await call('POST', '/v1/auth/refresh', { body: { refreshToken: oldRefresh } })
       record(replay.status === 401, '旧 refreshToken 重复使用被拒（401）', `status=${replay.status} code=${replay.json?.code}`)
 
       const access = first.json?.result?.accessToken

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto'
 import { DES, mode, pad, enc, lib } from 'crypto-js'
+import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2'
 
 /**
  * JeecgBoot 兼容密码工具：复现 Java PasswordUtil.encrypt(username, password, salt)
@@ -52,4 +53,54 @@ export function randomSalt(): string {
 /** 生成 32 位无连字符主键（对齐 sys_user.id varchar(32) 风格） */
 export function randomId32(): string {
   return randomBytes(16).toString('hex')
+}
+
+/* ------------------------------------------------------------------ *
+ * 新密码算法：argon2id（@node-rs/argon2，Rust 预编译，无本地编译依赖）
+ *
+ * 为什么换掉 JeecgBoot 的 PBEWithMD5AndDES：
+ *  - 单轮 MD5 + DES 早已不是密码哈希算法，抗 GPU 爆破能力接近于零；
+ *  - 密钥材料只有 8 字节，且盐是 8 位 ASCII，输入空间很小。
+ *
+ * 参数取 OWASP 2024 推荐的「19 MiB / 2 轮 / 1 并行」，实测单次约 18ms，
+ * 输出 97 字符的 PHC 串（$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>），
+ * sys_user.password 是 varchar(255)，余量充足。
+ *
+ * 兼容策略：老数据不批量重算（避免上线时把库写坏），改为「登录时透明升级」——
+ * 校验通过后用 argon2id 覆盖写回，见 UserService.verifyPassword / upgradePasswordHash。
+ * ------------------------------------------------------------------ */
+
+/** argon2id PHC 串前缀，用于区分新旧算法（老格式是 16/32/48 位纯十六进制） */
+const ARGON2_PREFIX = '$argon2id$'
+
+/**
+ * argon2id 参数（OWASP 推荐档位）
+ *
+ * 不显式传 algorithm：@node-rs/argon2 默认就是 Argon2id（其 Algorithm 是 const enum，
+ * 项目开启 isolatedModules 后无法当值引用）。哈希结果以 $argon2id$ 开头，
+ * 若哪天默认值变了，isArgon2Hash 会立刻失配，属于可被发现的失败。
+ */
+const ARGON2_OPTIONS = {
+  memoryCost: 19456,
+  timeCost: 2,
+  parallelism: 1
+} as const
+
+/** 生成 argon2id 密码哈希（异步：约 18ms，不要放在同步路径里循环调用） */
+export function hashPassword(plainPassword: string): Promise<string> {
+  return argonHash(plainPassword, ARGON2_OPTIONS)
+}
+
+/** 判断库里的密码串是否已是 argon2id 格式 */
+export function isArgon2Hash(stored?: string | null): boolean {
+  return !!stored && stored.startsWith(ARGON2_PREFIX)
+}
+
+/** 校验 argon2id 密码；格式非法/库数据损坏一律返回 false，不抛异常 */
+export async function verifyArgon2Password(stored: string, plainPassword: string): Promise<boolean> {
+  try {
+    return await argonVerify(stored, plainPassword)
+  } catch {
+    return false
+  }
 }

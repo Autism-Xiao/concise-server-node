@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository, type EntityManager } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
+import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { isSuperRole } from '../../utils/super-role.util'
 import { randomId32 } from '../../utils/password.util'
@@ -35,7 +36,8 @@ const ROLE_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_:.-]*$/
 export class RoleService extends BaseService<RoleEntity> {
   constructor(
     @InjectRepository(RoleEntity)
-    private readonly roleRepository: Repository<RoleEntity>
+    private readonly roleRepository: Repository<RoleEntity>,
+    private readonly permissionCache: PermissionCacheService
   ) {
     super(roleRepository, '角色')
   }
@@ -147,6 +149,7 @@ export class RoleService extends BaseService<RoleEntity> {
       }
       await repo.delete(id)
     })
+    await this.permissionCache.invalidateRole(id)
   }
 
   /** 批量删除角色：逐条走 deleteRole，保留「内置角色 / 有用户不可删」的保护并收集原因 */
@@ -189,6 +192,10 @@ export class RoleService extends BaseService<RoleEntity> {
     const toAdd = menus.filter(menu => !currentIds.has(menu.id))
     const toRemove = current.filter(menu => !nextIds.has(menu.id))
     await roleRepo.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).addAndRemove(toAdd, toRemove)
+
+    // 授权变了：该角色的权限集合缓存立即失效，保证「改完马上生效」
+    // 事务内调用也安全：即使外层回滚，缓存只是被删掉，下次请求回源自愈
+    await this.permissionCache.invalidateRole(id)
   }
 
   /** 查角色详情（含菜单权限） */

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import { captchaConfig, jwtConfig, type CaptchaConfig, type JwtConfig } from '../../../config'
 import { hasSuperRole } from '../../../utils/super-role.util'
+import { isArgon2Hash } from '../../../utils/password.util'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { RateLimitService } from '../../../shared/rate-limit/rate-limit.service'
@@ -83,13 +84,19 @@ export class AuthService {
         throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
       }
 
-      // JeecgBoot 兼容校验：PBEWithMD5AndDES(username, password, salt) 与库中 16 位 hex 比对
-      if (!this.userService.verifyPassword(user, dto.password)) {
+      // 密码校验：新数据走 argon2id，历史数据走 JeecgBoot PBEWithMD5AndDES（见 UserService.verifyPassword）
+      if (!(await this.userService.verifyPassword(user, dto.password))) {
         throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
       }
 
       if (user.status !== USER_STATUS.NORMAL) {
         throw new BizException(BizErrorCode.ACCOUNT_DISABLED, '账号已被冻结，请联系管理员', HttpStatus.FORBIDDEN)
+      }
+
+      // 透明迁移：老算法密码登录成功后立即改写为 argon2id，不需要停机刷库
+      // 失败不影响本次登录（用户已经验证通过），下次登录会再试一次
+      if (!isArgon2Hash(user.password)) {
+        await this.userService.upgradePasswordHash(user.id, dto.password)
       }
 
       // 登录成功即清零失败计数，避免「白天输错两次、晚上再错三次」被累计误锁
@@ -104,6 +111,11 @@ export class AuthService {
       await this.logService.recordLogin({ username: dto.username, status: 1, message, ip: meta.ip, userAgent: meta.userAgent })
       throw error
     }
+  }
+
+  /** 当前登录用户信息（脱敏，不含 password / salt）：供 GET /v1/auth/profile 使用 */
+  getProfile(user: import('../../user/entities/user.entity').UserEntity) {
+    return this.userService.stripPassword(user)
   }
 
   /** 登录后权限汇总：角色 code、按钮权限、按角色过滤的菜单树（前端侧边栏与按钮级控制的数据源） */

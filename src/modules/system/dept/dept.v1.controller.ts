@@ -6,6 +6,7 @@ import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { formatDateTime } from '../../../utils/csv.util'
+import { Pagination, toPagination } from '../../../helper/paginate'
 import { setDownloadHeaders } from '../../../utils/download.util'
 import { buildXlsx } from '../../../utils/xlsx.util'
 import { CreateDeptDto } from './dto/create-dept.dto'
@@ -16,8 +17,8 @@ import { DeptService } from './dept.service'
 /**
  * 部门管理接口 V1：/api/v1/depts/**
  *
- * 版本策略：URL 前缀做版本，老版本路由（/api/depts/**）继续保留兼容；
- * 前端用户表单的部门数据源已在用旧路由，待全部迁移后统一下线。
+ * 版本策略：URL 前缀做版本；旧路由（/api/depts/**）默认不注册（见 config/legacy-routes.config.ts）。
+ * 前端用户表单的部门数据源走 v1/depts/tree。
  */
 @ApiTags('部门管理 V1')
 @ApiBearerAuth('jwt')
@@ -36,15 +37,13 @@ export class DeptV1Controller {
   }
 
   @ApiOperation({ summary: '部门全量列表（v1，扁平，排除已删除）', description: '支持 keyword 模糊匹配部门名称' })
-  @ApiOkResponse({ description: '部门列表', type: [DeptEntity] })
+  @ApiOkResponse({ description: '部门列表（统一分页结构；size = total，一次全量返回）', type: Pagination })
   @Perms('system:dept:list')
   @Get()
-  list(@Query() query: { keyword?: string }) {
+  async list(@Query() query: { keyword?: string }): Promise<Pagination<DeptEntity>> {
     const keyword = query.keyword?.trim()
-    if (!keyword) {
-      return this.deptService.listAll()
-    }
-    return this.deptService.listAll().then(all => all.filter(dept => (dept.departName ?? '').includes(keyword)))
+    const all = await this.deptService.listAll()
+    return toPagination(keyword ? all.filter(dept => (dept.departName ?? '').includes(keyword)) : all)
   }
 
   @ApiOperation({ summary: '导出部门 Excel（v1）', description: '与列表同筛选条件（keyword），带「完整路径」列，便于组织架构留档；需 system:dept:export' })

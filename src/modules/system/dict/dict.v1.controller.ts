@@ -22,6 +22,7 @@ import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { IMPORT_MAX_SIZE } from '../../../helper/import/excel-import'
+import { Pagination, toPagination } from '../../../helper/paginate'
 import { formatDateTime } from '../../../utils/csv.util'
 import { setDownloadHeaders } from '../../../utils/download.util'
 import { buildWorkbook, readXlsxTable } from '../../../utils/xlsx.util'
@@ -61,11 +62,11 @@ export class DictV1Controller {
   constructor(private readonly dictService: DictService) {}
 
   @ApiOperation({ summary: '字典列表（v1）', description: '字典类型数量少，一次全量返回不分页；keyword 模糊匹配名称/编码；每项带 itemCount' })
-  @ApiOkResponse({ description: '字典列表', type: [SysDictEntity] })
+  @ApiOkResponse({ description: '字典列表（统一分页结构；size = total，一次全量返回）', type: Pagination })
   @Perms('system:dict:list')
   @Get()
-  list(@Query() query: QueryDictDto) {
-    return this.dictService.listByQuery(query)
+  async list(@Query() query: QueryDictDto): Promise<Pagination<SysDictEntity>> {
+    return toPagination(await this.dictService.listByQuery(query))
   }
 
   @ApiOperation({
