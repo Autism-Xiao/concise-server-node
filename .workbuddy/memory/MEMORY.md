@@ -19,3 +19,11 @@
 - 三件套完成（a3ccc51）：① @Perms 按钮级权限（perms.guard.ts 实时查 menu.permission，admin bypass，守卫顺序 Jwt→Roles→Perms）；② 登录日志（AuthService.login 记成败）+ 操作日志（OperLogInterceptor 全局拦截写操作，密码脱敏，@OperLog 声明模块名）；③ 部门模块 system/dept（树+CRUD+防环+删除保护），user 实体加 deptId。日志接口权限用 @Perms 而非 @Roles（auditor 角色 403 验证过）。表：dept/login_log/oper_log、user.deptId。测试数据：auditor1（角色 auditor，仅 system:log:*）。
 - 字典模块完成（02ea1ae）：system/dict-type + dict-item，code 唯一索引、同类型 value 唯一、有字典项禁删；GET /dict-items/code/:code 所有登录用户可用（下拉框数据源）。用户详情/列表/创建/更新返回都带 dept。坑：跨模块 @InjectRepository 必须本模块 forFeature 注册对方实体；select 数组含 'sort' 与原型方法类型冲突（用对象形式）；oxlint no-misused-spread 对实体展开组树加行内 disable。本地测试端口换 3459（3457 被外部代理占用）。演示字典：sys_user_gender、sys_menu_status。
 - 验证码/日志/公告/任务完成（0454f8a）：① svg-captcha 验证码（内存 Map 5min 一次性，GET /auth/captcha @Public，CAPTCHA_ENABLED 开关，CAPTCHA_DEBUG 附明文仅供开发）；② 日志联调支持（startTime/endTime ISO 过滤、/:id 详情、DELETE 批量删 @Perms system:log:delete）；③ 公告 system/notice（草稿/发布 + publishedAt 自动维护 + GET /notices/published 全员）；④ 任务 system/task（状态机：待处理→进行中/已取消，进行中→已完成，已取消可重开）。坑：@Type(()=>Date) 会先转 Date 导致 @IsISO8601 必挂——DTO 保持 string 校验、Service 转 Date；DTO dueDate:string vs 实体 Date 签名用 Omit 交叉类型解决。
+
+## 安全基线（2026-11-06 起，新接口照此办理）
+
+- 全局 `RateLimitGuard` 在最前（120/60/IP/路由）；高危接口用 `@RateLimit({limit,window,by})` 单独收紧
+- 上传只允许位图（png/jpg/gif/webp/bmp），必须过 `detectImageSignature` 文件头校验；禁 SVG
+- 多步写必须 `manager.transaction`，事务内一律 `manager.getRepository()`（默认连接看不到未提交数据）
+- 唯一键写入前必须前置查重（含软删占用）+ 捕获 ER_DUP_ENTRY 转 400（`utils/db-error.util.ts`）
+- 业务异常优先 `BadRequestException`（HTTP 400）而非 500；限流 429 / 锁定 1009
