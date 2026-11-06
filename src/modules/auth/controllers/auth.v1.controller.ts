@@ -5,6 +5,7 @@ import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { ChangePasswordDto } from '../dto/change-password.dto'
 import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
+import { VerifyPasswordDto } from '../dto/verify-password.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
 import type { UserEntity } from '../../user/entities/user.entity'
@@ -104,6 +105,20 @@ export class AuthV1Controller {
   @Get('profile')
   profile(@Request() req: { user: UserEntity }) {
     return this.authService.getProfile(req.user)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
+    summary: '校验当前用户密码（v1）',
+    description: '锁屏解锁等场景校验密码，不产生任何副作用；失败与登录共用失败锁定计数（连错 5 次锁 24 小时）'
+  })
+  // 限流守卫在认证之前执行，req.user 还不存在，by:'account' 退化成按 IP；
+  // 这里只做防滥用兜底（20 次/5 分钟/IP），真正的安全闸门是「失败共享登录锁定计数」
+  @RateLimit({ limit: 20, window: 300, message: '密码校验过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('verify-password')
+  verifyPassword(@Request() req: { user: { username: string } }, @Body() dto: VerifyPasswordDto) {
+    return this.authService.verifyPassword(req.user.username, dto.password)
   }
 
   @ApiBearerAuth('jwt')

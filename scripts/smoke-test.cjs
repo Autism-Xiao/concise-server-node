@@ -659,6 +659,31 @@ async function main() {
     record(last.status === 429 && last.json?.code === 1009, '同账号连续失败 5 次后被锁定（429 / 1009）', `status=${last.status} code=${last.json?.code}`)
   }
 
+  /* ---------- 10.6 校验当前用户密码（锁屏解锁） ---------- */
+  section('10.6 校验当前用户密码（锁屏解锁）')
+  {
+    const options = await call('GET', '/v1/roles/options', { token: adminToken })
+    const roleId = options.json?.result?.[0]?.id
+    const username = `smoke_verify_${STAMP}`
+    const password = crypto.randomBytes(8).toString('hex')
+    await call('POST', '/v1/users', {
+      token: adminToken,
+      body: { username, realname: '密码校验测试', password, roleIds: roleId ? [roleId] : [] }
+    })
+    const login = await call('POST', '/v1/auth/login', { body: { username, password } })
+    const token = login.json?.result?.accessToken
+    const right = await call('POST', '/v1/auth/verify-password', { token, body: { password } })
+    record(right.status === 200 && right.json?.result?.verified === true, '正确密码校验通过', `status=${right.status} code=${right.json?.code}`)
+    // 失败与登录共用锁定计数：累计错 5 次后，即使传正确密码也因锁定被拒（429 / 1009）
+    let wrong = null
+    for (let i = 0; i < 5; i++) {
+      wrong = await call('POST', '/v1/auth/verify-password', { token, body: { password: 'wrong-password' } })
+    }
+    record(wrong.status === 400 && wrong.json?.code === 1007, '错误密码被拒绝（400 / 1007）', `status=${wrong.status} code=${wrong.json?.code}`)
+    const locked = await call('POST', '/v1/auth/verify-password', { token, body: { password } })
+    record(locked.status === 429 && locked.json?.code === 1009, '校验失败与登录共享锁定计数（429 / 1009）', `status=${locked.status} code=${locked.json?.code}`)
+  }
+
   /* ---------- 11. refreshToken 轮换 ---------- */
   section('11. refreshToken 轮换与重放检测')
   {
@@ -712,12 +737,16 @@ async function main() {
     const restoreMine = await call('PUT', '/v1/users/me/watermark', { token: adminToken, body: { enabled: null } })
     record(isOk(restoreMine) && restoreMine.json?.result?.enabled === true, 'enabled=null 恢复继承全局', `enabled=${restoreMine.json?.result?.enabled}`)
 
-    // 样式参数只归全局策略：用户侧传了也必须被丢弃（否则 opacity=0 等于关水印）
+    // 样式参数只归全局策略：用户侧传了也必须被丢弃（否则 opacity=0 等于关水印）。
+    // 断言用「当前全局值」而不是硬编码，避免库里的策略被手动改过导致误报
+    const globalNow = await call('GET', '/v1/system/watermark', { token: adminToken })
+    const globalOpacity = globalNow.json?.result?.opacity
+    const globalFontSize = globalNow.json?.result?.fontSize
     const hacked = await call('PUT', '/v1/users/me/watermark', { token: adminToken, body: { opacity: 0, fontSize: 24, rotate: 0 } })
     record(
-      isOk(hacked) && hacked.json?.result?.opacity === 8 && hacked.json?.result?.fontSize === 14,
+      isOk(hacked) && hacked.json?.result?.opacity === globalOpacity && hacked.json?.result?.fontSize === globalFontSize,
       '用户侧样式参数被 whitelist 丢弃',
-      `opacity=${hacked.json?.result?.opacity} fontSize=${hacked.json?.result?.fontSize}`
+      `opacity=${hacked.json?.result?.opacity}（期望 ${globalOpacity}）fontSize=${hacked.json?.result?.fontSize}（期望 ${globalFontSize}）`
     )
 
     const toOff = await call('PUT', '/v1/system/watermark', { token: adminToken, body: { enabled: false } })

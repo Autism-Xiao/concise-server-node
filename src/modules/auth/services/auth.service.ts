@@ -273,6 +273,11 @@ export class AuthService {
     if (!isPasswordFailure) {
       return
     }
+    await this.countPasswordFailure(failKey, username)
+  }
+
+  /** 累计一次密码错误；达到上限时把锁定截止重设为「现在 + 锁定时长」并告警 */
+  private async countPasswordFailure(failKey: string, username: string): Promise<void> {
     const hit = await this.rateLimitService.increment(failKey, LOGIN_LOCK_SECONDS)
     if (hit.count === LOGIN_MAX_FAILS) {
       // 锁定从「第 N 次失败」起算：把窗口截止重设为现在 + 锁定时长。
@@ -280,6 +285,24 @@ export class AuthService {
       await this.rateLimitService.expire(failKey, LOGIN_LOCK_SECONDS)
       this.logger.warn(`账号 ${username} 连续 ${hit.count} 次密码错误，已锁定 ${formatLockDuration(LOGIN_LOCK_SECONDS)}`)
     }
+  }
+
+  /**
+   * 校验当前登录用户的密码（锁屏解锁等场景）
+   * 安全设计：失败与登录共用同一份失败计数（loginFailKeyOf），连错同样触发锁定——
+   * 否则拿到已解锁设备的人可以绕过登录锁定无限试密码
+   */
+  async verifyPassword(username: string, password: string): Promise<{ verified: true }> {
+    const failKey = this.loginFailKey(username)
+    await this.assertNotLocked(failKey)
+    const user = await this.userService.findByUsername(username)
+    if (!user || !(await this.userService.verifyPassword(user, password))) {
+      await this.countPasswordFailure(failKey, username)
+      // 注意用 400 而不是 401：前端 getApiResult 把 401 统一按「登录过期」处理会强制登出
+      throw new BizException(BizErrorCode.LOGIN_FAILED, '密码不正确', HttpStatus.BAD_REQUEST)
+    }
+    await this.rateLimitService.reset(failKey)
+    return { verified: true }
   }
 
   /** 令牌剩余有效期（秒），取令牌自身 exp；解析失败用兜底值 */
