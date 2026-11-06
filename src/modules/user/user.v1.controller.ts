@@ -13,7 +13,10 @@ import { setDownloadHeaders } from '../../utils/download.util'
 import { buildImportTemplateXlsx } from '../../utils/xlsx.util'
 import { CreateUserDto } from './dto/create-user.dto'
 import { QueryUserDto } from './dto/query-user.dto'
+import { ResetUserPasswordDto } from './dto/reset-user-password.dto'
+import { RestoreUserDto } from './dto/restore-user.dto'
 import { UpdateUserDto } from './dto/update-user.dto'
+import { UpdateUserStatusDto } from './dto/update-user-status.dto'
 import { UserEntity } from './entities/user.entity'
 import { USER_IMPORT_DEFAULT_PASSWORD, USER_IMPORT_MAX_SIZE, UserService } from './user.service'
 
@@ -160,6 +163,13 @@ export class UserV1Controller {
     return this.userService.importUsers(table.rows, table.headerRow, req.user?.username)
   }
 
+  @ApiOperation({ summary: '回收站：已软删用户分页列表（v1）', description: 'keyword 模糊搜账号/姓名/电话；恢复见 PUT :id/restore；需 system:user:list' })
+  @Perms('system:user:list')
+  @Get('recycled')
+  listRecycled(@Query() query: QueryUserDto) {
+    return this.userService.listRecycled(query)
+  }
+
   @ApiOperation({ summary: '查询用户详情（v1，含角色与部门）', description: '需 system:user:list' })
   @ApiOkResponse({ description: '用户信息', type: UserEntity })
   @Perms('system:user:list')
@@ -220,5 +230,52 @@ export class UserV1Controller {
   async assignDepts(@Param('id') id: string, @Body() dto: { deptIds: string[] }) {
     await this.userService.assignDepts(id, dto.deptIds ?? [])
     return this.userService.findOneDetail(id)
+  }
+
+  @ApiOperation({
+    summary: '重置密码（v1）',
+    description:
+      'password 留空则服务端生成 12 位易读随机口令；明文仅在本次响应返回一次，不落库不进日志；重置后该用户全部在线会话立即失效；需 system:user:reset-password'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:reset-password')
+  @Put(':id/password')
+  resetPassword(@Param('id') id: string, @Body() dto: ResetUserPasswordDto) {
+    return this.userService.resetPassword(id, dto.password)
+  }
+
+  @ApiOperation({ summary: '冻结/解冻（v1）', description: 'status：1 正常 / 2 冻结；冻结自动踢掉全部在线会话；内置 admin 不允许冻结；需 system:user:update' })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
+  @Put(':id/status')
+  setStatus(@Param('id') id: string, @Body() dto: UpdateUserStatusDto) {
+    return this.userService.setStatus(id, dto.status)
+  }
+
+  @ApiOperation({ summary: '强制下线（v1，按用户）', description: '踢掉该用户全部在线会话（用户级拉黑 + 删会话），返回踢掉的会话数；需 system:online:kick' })
+  @OperLog('用户管理')
+  @Perms('system:online:kick')
+  @Post(':id/force-offline')
+  forceOffline(@Param('id') id: string) {
+    return this.userService.forceOffline(id)
+  }
+
+  @ApiOperation({ summary: '解锁账号（v1）', description: '清零登录失败计数（密码连错 5 次临时锁定后使用）；幂等；需 system:user:update' })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
+  @Delete(':id/lock')
+  unlock(@Param('id') id: string) {
+    return this.userService.unlock(id)
+  }
+
+  @ApiOperation({
+    summary: '恢复软删用户（v1）',
+    description: '账号恢复为空壳（角色/部门已随软删清空），可传 roleIds/deptIds 顺带重绑；用户名被占用时拒绝；需 system:user:restore'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:restore')
+  @Put(':id/restore')
+  restore(@Param('id') id: string, @Body() dto: RestoreUserDto) {
+    return this.userService.restore(id, dto.roleIds, dto.deptIds)
   }
 }

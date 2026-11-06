@@ -1,8 +1,9 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Request } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
+import { ChangePasswordDto } from '../dto/change-password.dto'
 import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
@@ -46,7 +47,7 @@ export class AuthV1Controller {
   @Public()
   // 登录限流 60 次/分钟/IP：主要防脚本洪水；撞库由「同账号 5 次失败锁 15 分钟」+ 滑块验证码兜住，
   // 阈值不宜设太小，否则 NAT 后的整个办公室会互相误伤
-  @RateLimit({ limit: 60, window: 60, message: '登录请求过于频繁，请稍后再试' })
+  @RateLimit({ limit: 120, window: 60, message: '登录请求过于频繁，请稍后再试' })
   @HttpCode(HttpStatus.OK)
   @Post('login')
   login(@Body() dto: LoginDto, @Request() req: { ip: string; headers: Record<string, string | string[] | undefined> }) {
@@ -77,6 +78,25 @@ export class AuthV1Controller {
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refreshToken(dto.refreshToken)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
+    summary: '修改当前用户密码（v1）',
+    description: '校验原密码后写入新密码；其他端全部下线，当前会话保留。新密码不能与原密码相同'
+  })
+  // 限流守卫在认证之前执行，req.user 还不存在，by:'account' 拿不到账号会退化成按 IP；
+  // 这里只做防滥用兜底（20 次/5 分钟/IP），真正的安全闸门是「原密码校验」
+  @RateLimit({ limit: 20, window: 300, message: '修改密码过于频繁，请稍后再试' })
+  @Put('password')
+  async changePassword(
+    @Request() req: { user: { id: string; username: string }; headers: Record<string, string | string[] | undefined> },
+    @Body() dto: ChangePasswordDto
+  ) {
+    const header = req.headers.authorization
+    const raw = Array.isArray(header) ? header[0] : header
+    const token = raw?.split(' ')[1] ?? ''
+    return this.authService.changePassword(req.user.id, dto, token)
   }
 
   @ApiBearerAuth('jwt')

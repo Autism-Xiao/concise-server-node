@@ -7,6 +7,10 @@ import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
+import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
+import { loginFailKeyOf } from '../../shared/rate-limit/login-fail.util'
+import { OnlineService } from '../ops/online/online.service'
+import { randomToken } from '../../utils/random-token.util'
 import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
 import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
@@ -154,7 +158,9 @@ export class UserService extends BaseService<UserEntity> {
     @InjectRepository(UserWatermarkEntity)
     private readonly userWatermarkRepository: Repository<UserWatermarkEntity>,
     @InjectRepository(WatermarkSettingEntity)
-    private readonly watermarkSettingRepository: Repository<WatermarkSettingEntity>
+    private readonly watermarkSettingRepository: Repository<WatermarkSettingEntity>,
+    private readonly rateLimitService: RateLimitService,
+    private readonly onlineService: OnlineService
   ) {
     super(repository, '用户')
   }
@@ -487,6 +493,102 @@ export class UserService extends BaseService<UserEntity> {
       },
       ids
     )
+  }
+
+  /* ---------- 管理操作：重置密码 / 冻结 / 强制下线 / 解锁 / 回收站 ---------- */
+
+  /**
+   * 重置密码：管理端指定新密码，或留空生成 12 位易读随机口令
+   * 明文只出现在本次返回值里（随响应一次性下发），库中只存 argon2id 哈希；
+   * 重置后该用户全部在线会话立即失效（旧密码可能已泄露的假设下不能让旧登录态续命）
+   */
+  async resetPassword(id: string, plainPassword?: string): Promise<{ password: string }> {
+    await this.findOne(id)
+    const password = plainPassword?.trim() || randomToken(12)
+    await this.updatePasswordOnly(id, password)
+    await this.onlineService.kickUser(id)
+    return { password }
+  }
+
+  /** 只改密码哈希（自助改密与重置密码共用）：argon2id 自带盐，顺手清历史 jeecg 盐 */
+  async updatePasswordOnly(id: string, plainPassword: string): Promise<void> {
+    await this.repository.update(id, { password: await hashPassword(plainPassword), salt: null, updateTime: new Date() })
+  }
+
+  /**
+   * 冻结/解冻：1 正常 / 2 冻结
+   * - 内置 admin 不允许冻结（没有其他管理员时会把整个系统锁死）
+   * - 冻结时用户级拉黑 + 删除全部在线会话：JWT 每次请求会查库看到 status，但已签发的
+     refreshToken 轮换不查库，必须靠黑名单立即掐断
+   */
+  async setStatus(id: string, status: number): Promise<{ status: number; kicked: number }> {
+    const user = await this.findOne(id)
+    if (user.username === 'admin' && status !== USER_STATUS.NORMAL) {
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, '内置管理员账号不允许冻结')
+    }
+    if (status !== USER_STATUS.NORMAL && status !== USER_STATUS.FROZEN) {
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, '状态只允许 1（正常）或 2（冻结）')
+    }
+    await this.repository.update(id, { status, updateTime: new Date() })
+    const kicked = status === USER_STATUS.FROZEN ? await this.onlineService.kickUser(id) : 0
+    return { status, kicked }
+  }
+
+  /** 管理员强制下线：踢掉该用户全部在线会话（自助改密走 AuthService，带 keepToken，不在这里） */
+  async forceOffline(id: string): Promise<{ kicked: number }> {
+    const user = await this.findOne(id)
+    const kicked = await this.onlineService.kickUser(user.id)
+    return { kicked }
+  }
+
+  /** 管理员解锁：清零登录失败计数（幂等） */
+  async unlock(id: string): Promise<{ unlocked: true }> {
+    const user = await this.findOne(id)
+    await this.rateLimitService.reset(loginFailKeyOf(user.username))
+    return { unlocked: true }
+  }
+
+  /** 回收站列表：del_flag=1 的软删用户，keyword 模糊搜账号/姓名/电话 */
+  async listRecycled(query: QueryUserDto): Promise<Pagination<UserEntity>> {
+    const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 1').orderBy('user.update_time', 'DESC')
+    if (query.keyword) {
+      qb.andWhere('(user.username LIKE :keyword OR user.realname LIKE :keyword OR user.phone LIKE :keyword)', {
+        keyword: `%${query.keyword}%`
+      })
+    }
+    return paginate(qb, { page: query.page, pageSize: query.pageSize })
+  }
+
+  /**
+   * 恢复软删用户：
+   * - 软删时 sys_user_role / sys_user_depart / sys_user_watermark 已清空，账号恢复为「空壳」，
+   *   可在本次请求里顺带重绑角色与部门（全量覆盖语义与 assignRoles/assignDepts 一致）
+   * - 用户名若已被在用账号占用则拒绝（避免恢复出两个同名账号）
+   */
+  async restore(id: string, roleIds?: string[], deptIds?: string[]): Promise<UserEntity> {
+    const recycled = await this.repository.findOne({ where: { id, delFlag: 1 } })
+    if (!recycled) {
+      throw new NotFoundException('回收站中没有该用户（可能已被恢复）')
+    }
+    const liveSameName = await this.repository.findOne({ where: { username: recycled.username, delFlag: 0 } })
+    if (liveSameName && liveSameName.id !== id) {
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, `用户名 ${recycled.username} 已被其他在用账号占用，无法恢复`)
+    }
+    await this.runInTransaction(async manager => {
+      await this.repoOf(manager).update(id, { delFlag: 0, status: USER_STATUS.NORMAL, updateTime: new Date() })
+      if (roleIds) {
+        await this.assignRoles(id, roleIds, manager)
+      }
+      if (deptIds) {
+        await this.assignDepts(id, deptIds, manager)
+      }
+    })
+    // 回收站里的行是裸查出来的（无关联），重查一次补齐角色/部门
+    await this.attachRoles([recycled])
+    await this.attachDepts([recycled])
+    recycled.delFlag = 0
+    recycled.status = USER_STATUS.NORMAL
+    return recycled
   }
 
   /**

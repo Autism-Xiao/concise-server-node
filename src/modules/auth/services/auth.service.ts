@@ -8,6 +8,7 @@ import { isArgon2Hash } from '../../../utils/password.util'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { RateLimitService } from '../../../shared/rate-limit/rate-limit.service'
+import { loginFailKeyOf } from '../../../shared/rate-limit/login-fail.util'
 import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
 import { MenuService, buildMenuTree, type MenuTreeItem } from '../../menu/menu.service'
@@ -199,11 +200,45 @@ export class AuthService {
     return result
   }
 
-  /** 失败计数 key：账号维度（大小写不敏感），与 IP 限流互补 */
+  /** 失败计数 key：账号维度（大小写不敏感），与 IP 限流互补（实现在 shared/rate-limit/login-fail.util） */
   private loginFailKey(username: string): string {
-    return `auth:login:fail:${String(username ?? '')
-      .trim()
-      .toLowerCase()}`
+    return loginFailKeyOf(username)
+  }
+
+  /**
+   * 管理员解锁账号：清零登录失败计数
+   * 幂等：未锁定的账号解锁也返回成功（前端不必先查状态）
+   */
+  async unlockAccount(username: string): Promise<{ unlocked: true }> {
+    await this.rateLimitService.reset(loginFailKeyOf(username))
+    return { unlocked: true }
+  }
+
+  /** 查询账号锁定状态：供前端在解锁前展示（是否锁定 + 剩余秒数） */
+  async getLockState(username: string): Promise<{ locked: boolean; remainingSeconds: number }> {
+    const hit = await this.rateLimitService.get(loginFailKeyOf(username))
+    const remainingSeconds = hit.count >= LOGIN_MAX_FAILS ? Math.max(Math.ceil((hit.resetAt - Date.now()) / 1000), 0) : 0
+    return { locked: remainingSeconds > 0, remainingSeconds }
+  }
+
+  /**
+   * 自助修改密码：验旧密码 → 写新密码 → 其他端全部下线（保留当前会话）
+   * 为什么踢下线：密码改了意味着「旧凭证可能已泄露」，别的登录态不能续命
+   */
+  async changePassword(userId: string, dto: { oldPassword: string; newPassword: string }, currentToken: string): Promise<{ changed: true }> {
+    const user = await this.userService.findOneWithPassword(userId)
+    if (!user || user.delFlag === 1) {
+      throw new BizException(BizErrorCode.UNAUTHORIZED, '账号不存在', HttpStatus.UNAUTHORIZED)
+    }
+    if (!(await this.userService.verifyPassword(user, dto.oldPassword))) {
+      throw new BizException(BizErrorCode.LOGIN_FAILED, '原密码不正确', HttpStatus.BAD_REQUEST)
+    }
+    if (dto.oldPassword === dto.newPassword) {
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, '新密码不能与原密码相同', HttpStatus.BAD_REQUEST)
+    }
+    await this.userService.updatePasswordOnly(userId, dto.newPassword)
+    await this.onlineService.kickUser(userId, { keepToken: currentToken })
+    return { changed: true }
   }
 
   /** 命中锁定则直接拒绝，并告知还要等多久 */

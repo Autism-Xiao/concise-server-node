@@ -21,6 +21,8 @@ interface RequestLike {
   originalUrl?: string
   url?: string
   body?: Record<string, unknown>
+  /** JwtAuthGuard 在本守卫之后注册，大多数请求到这里还没鉴权；改密等已登录接口会带 user */
+  user?: { id?: string; username?: string }
 }
 
 /**
@@ -55,8 +57,11 @@ export class RateLimitGuard implements CanActivate {
     const ip = (request.ip ?? 'unknown').replace(/^::ffff:/, '')
     // 路由模板（/v1/users/:id）而非原始 URL，避免 id 不同就被算成不同桶
     const route = `${request.method ?? 'GET'} ${request.route?.path ?? request.originalUrl ?? request.url ?? ''}`
-    const rawAccount = request.body?.username
-    const account = options?.by === 'account' && typeof rawAccount === 'string' ? rawAccount.trim().toLowerCase() : ''
+    // account 维度：已登录请求用 req.user（改密等接口 body 里没有 username），
+    // 未登录的登录接口回退到 body.username
+    const bodyAccount = typeof request.body?.username === 'string' ? request.body.username : ''
+    const rawAccount = request.user?.username ?? request.user?.id ?? bodyAccount
+    const account = options?.by === 'account' && typeof rawAccount === 'string' && rawAccount ? rawAccount.trim().toLowerCase() : ''
     const key = `${KEY_PREFIX}${route}:${ip}${account ? `:${account}` : ''}`
 
     const hit = await this.rateLimitService.increment(key, windowSeconds)

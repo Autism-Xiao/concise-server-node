@@ -161,14 +161,16 @@ export class OnlineService {
   }
 
   /**
-   * 按用户维度强制下线：之后签发时间早于此刻的令牌全部失效
+   * 按用户维度强制下线：之后签发时间早于该时间的令牌一律失效
    * 用于「refreshToken 被重复使用」这类确定被盗用的场景，一次踢掉该账号所有会话
+   * 注意：JWT 的 iat 是秒级，这里的时间戳必须对齐到整秒——否则同一秒内
+   * 「先踢人、后登录」签发的新令牌会被误判为下线前签发，用户立刻 401
    */
   async revokeUser(userId: string, ttlSeconds: number): Promise<void> {
     const client = this.client()
     if (!client || !userId) return
     try {
-      await client.setex(USER_REVOKED_PREFIX + userId, Math.max(Math.floor(ttlSeconds), 60), String(Date.now()))
+      await client.setex(USER_REVOKED_PREFIX + userId, Math.max(Math.floor(ttlSeconds), 60), String(Math.floor(Date.now() / 1000) * 1000))
     } catch (error) {
       this.warnOnce(`用户级下线失败：${(error as Error).message}`)
     }
@@ -271,6 +273,52 @@ export class OnlineService {
       }
     }
     return result
+  }
+
+  /** 用户级拉黑的兜底 TTL：盖过最长的 refreshToken（7 天）再加 1 小时余量 */
+  private static readonly USER_REVOKE_TTL = 7 * 24 * 3600 + 3600
+
+  /**
+   * 按用户强制下线：踢掉该用户全部在线会话，返回踢掉的会话数
+   * - keepToken：保留的原始 accessToken（自助改密场景保留当前浏览器，其他端全部下线）
+   * - 未保留场景额外写用户级拉黑标记：签发时间早于此刻的所有令牌（含从未登记过会话的）一并失效
+   */
+  async kickUser(userId: string, opts?: { keepToken?: string }): Promise<number> {
+    const client = this.client()
+    if (!client || !userId) return 0
+    const keepHash = opts?.keepToken ? this.hashToken(opts.keepToken) : null
+    let kicked = 0
+    try {
+      const keys: string[] = []
+      let cursor = '0'
+      do {
+        const [next, batch] = await client.scan(cursor, 'MATCH', `${SESSION_PREFIX}*`, 'COUNT', 200)
+        cursor = next
+        keys.push(...batch)
+      } while (cursor !== '0')
+
+      if (keys.length) {
+        const values = await client.mget(...keys)
+        for (let i = 0; i < keys.length; i += 1) {
+          const session = values[i] ? this.parse<OnlineSession>(values[i]!) : null
+          if (!session || session.userId !== userId) continue
+          const sessionId = keys[i]!.slice(SESSION_PREFIX.length)
+          if (keepHash && sessionId === keepHash) continue
+          const ttl = Math.max(Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000), 60)
+          await client.setex(REVOKED_PREFIX + sessionId, ttl, String(Date.now()))
+          await client.del(keys[i]!)
+          kicked += 1
+        }
+      }
+      // 全量下线时补用户级标记：覆盖「已签发但还没发过请求、没登记会话」的令牌
+      if (!keepHash) {
+        await this.revokeUser(userId, OnlineService.USER_REVOKE_TTL)
+      }
+      return kicked
+    } catch (error) {
+      this.warnOnce(`用户级强制下线失败：${(error as Error).message}`)
+      return kicked
+    }
   }
 
   /** 在线人数（登录页/首页展示可用） */

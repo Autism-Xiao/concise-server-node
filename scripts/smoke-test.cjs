@@ -763,6 +763,78 @@ async function main() {
     }
   }
 
+  /* ---------- 17. 用户管理操作：重置密码/冻结/强制下线/解锁/自助改密/回收站 ---------- */
+  section('17. 用户管理操作')
+  {
+    const username = `smoke_um_${STAMP}`
+    const password = 'UmSmoke2026'
+    const created = await call('POST', '/v1/users', { token: adminToken, body: { username, realname: '管理操作冒烟', password } })
+    const targetId = created.json?.result?.id
+    if (!isOk(created) || !targetId) {
+      record(false, '管理操作用例准备', `建号失败 msg=${created.json?.message ?? ''}`)
+    } else {
+      // 重置密码：自动生成 12 位、旧会话失效、新密码可登录
+      const reset = await call('PUT', `/v1/users/${targetId}/password`, { token: adminToken, body: {} })
+      const newPwd = reset.json?.result?.password
+      record(isOk(reset) && typeof newPwd === 'string' && newPwd.length === 12, '重置密码自动生成 12 位口令', `password=${newPwd}`)
+      const relogin = await call('POST', '/v1/auth/login', { body: { username, password: newPwd } })
+      record(isOk(relogin), '重置后的新密码可登录', `code=${relogin.json?.code}`)
+
+      // 冻结：登录 403；admin 不可冻结；解冻恢复
+      const frozen = await call('PUT', `/v1/users/${targetId}/status`, { token: adminToken, body: { status: 2 } })
+      record(isOk(frozen) && frozen.json?.result?.status === 2, '冻结成功', `kicked=${frozen.json?.result?.kicked}`)
+      const frozenLogin = await call('POST', '/v1/auth/login', { body: { username, password: newPwd } })
+      record(frozenLogin.status === 403 || frozenLogin.json?.code === 1008, '冻结后登录被拒', `status=${frozenLogin.status}`)
+      const adminFreeze = await call('PUT', `/v1/users/${ADMIN_ID}/status`, { token: adminToken, body: { status: 2 } })
+      record(!isOk(adminFreeze), '内置 admin 冻结被拒', adminFreeze.json?.message)
+      const unfrozen = await call('PUT', `/v1/users/${targetId}/status`, { token: adminToken, body: { status: 1 } })
+      record(isOk(unfrozen) && unfrozen.json?.result?.status === 1, '解冻成功')
+
+      // 强制下线：踢完原会话 401（登录与踢人之间跨过用户级拉黑的整秒边界）
+      const before = await call('POST', '/v1/auth/login', { body: { username, password: newPwd } })
+      await new Promise(r => setTimeout(r, 1200))
+      const kick = await call('POST', `/v1/users/${targetId}/force-offline`, { token: adminToken })
+      record(isOk(kick) && typeof kick.json?.result?.kicked === 'number', '强制下线返回踢掉会话数', `kicked=${kick.json?.result?.kicked}`)
+      if (isOk(before)) {
+        const after = await call('GET', '/v1/auth/profile', { token: before.json.result.accessToken })
+        record(after.status === 401 || after.json?.success === false, '被踢后原会话 401', `status=${after.status}`)
+      }
+      const relogin2 = await call('POST', '/v1/auth/login', { body: { username, password: newPwd } })
+      record(isOk(relogin2), '踢完可立刻重新登录（同秒拉黑不误杀）')
+
+      // 解锁：连错 5 次锁定 → 解锁 → 可登录
+      for (let i = 0; i < 5; i += 1) await call('POST', '/v1/auth/login', { body: { username, password: 'WrongPwd9' } })
+      const locked = await call('POST', '/v1/auth/login', { body: { username, password: newPwd } })
+      record(locked.status === 429 || locked.json?.code === 1009, '连错 5 次锁定', `status=${locked.status} code=${locked.json?.code}`)
+      const unlock = await call('DELETE', `/v1/users/${targetId}/lock`, { token: adminToken })
+      record(isOk(unlock), '管理员解锁')
+      const afterUnlock = await call('POST', '/v1/auth/login', { body: { username, password: newPwd } })
+      record(isOk(afterUnlock), '解锁后可登录')
+
+      // 自助改密：旧密码错被拒 → 成功 → 当前会话保留 → 旧密码失效
+      const cur = afterUnlock.json?.result?.accessToken
+      const badChange = await call('PUT', '/v1/auth/password', { token: cur, body: { oldPassword: 'WrongPwd9', newPassword: 'UmSmoke7268' } })
+      record(!isOk(badChange), '旧密码错误时改密被拒', badChange.json?.message)
+      const goodChange = await call('PUT', '/v1/auth/password', { token: cur, body: { oldPassword: newPwd, newPassword: 'UmSmoke7268' } })
+      record(isOk(goodChange), '自助改密成功')
+      const keepSession = await call('GET', '/v1/auth/profile', { token: cur })
+      record(keepSession.json?.success === true, '改密后当前会话保留', `status=${keepSession.status}`)
+      const oldLogin = await call('POST', '/v1/auth/login', { body: { username, password: newPwd } })
+      record(oldLogin.status === 401 || !isOk(oldLogin), '旧密码已失效', `status=${oldLogin.status}`)
+
+      // 回收站：软删 → 可见 → 恢复 → 原密码可登录
+      await call('DELETE', `/v1/users/${targetId}`, { token: adminToken })
+      const recycled = await call('GET', `/v1/users/recycled?keyword=${username}`, { token: adminToken })
+      record((recycled.json?.result?.records ?? []).some(u => u.id === targetId), '软删后出现在回收站')
+      const restored = await call('PUT', `/v1/users/${targetId}/restore`, { token: adminToken, body: {} })
+      record(isOk(restored) && restored.json?.result?.delFlag === 0 && restored.json?.result?.status === 1, '恢复成功')
+      const restoredLogin = await call('POST', '/v1/auth/login', { body: { username, password: 'UmSmoke7268' } })
+      record(isOk(restoredLogin), '恢复后原密码可登录')
+
+      await call('DELETE', `/v1/users/${targetId}`, { token: adminToken })
+    }
+  }
+
   /* ---------- 汇总 ---------- */
   console.log(`\n${'='.repeat(60)}`)
   console.log(`冒烟结果：PASS ${passCount} / FAIL ${failCount} / 共 ${results.length}`)
