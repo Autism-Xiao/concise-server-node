@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
+import { assertImportRows, createImportResult, failImportRow, type ImportResult, pickCell, resolveImportLayout } from '../../../helper/import/excel-import'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { randomId32 } from '../../../utils/password.util'
 import { parseRequestInfo } from '../../../utils/request-info.util'
@@ -201,4 +202,178 @@ export class LogService {
     const result = await this.logRepository.delete({ id: In(ids), logType: 1 })
     return { deleted: result.affected ?? 0 }
   }
+
+  /**
+   * 导入登录日志（log_type=0）
+   *
+   * 列映射与模板表头一致：用户名 / 结果 / 说明 / IP / 浏览器 / 操作系统 / 登录时间。
+   * 单行失败不影响其他行，返回结构与用户导入完全相同，前端结果面板可直接复用。
+   */
+  async importLoginLogs(rows: string[][], headerRowNumber = 1, operator?: string): Promise<ImportResult> {
+    return this.importLogRows(rows, headerRowNumber, operator, 0, LOGIN_IMPORT_ALIASES, (get, statusOf) => {
+      const createTime = parseLogTime(get('time'))
+      if (get('time') && !createTime) {
+        return `登录时间「${get('time')}」格式不对，请用 2026-11-06 19:00:00`
+      }
+      return {
+        username: get('username'),
+        status: statusOf(get('status')) ?? 0,
+        content: get('content') || '导入的登录记录',
+        ip: get('ip') || '0.0.0.0',
+        browser: get('browser') || undefined,
+        os: get('os') || undefined,
+        createTime: createTime ?? new Date()
+      }
+    })
+  }
+
+  /**
+   * 导入操作日志（log_type=1）
+   *
+   * 列映射：操作人 / 模块 / 操作 / 结果 / 耗时(ms) / IP / 操作时间。
+   * log_content 按 JeecgBoot 约定拼成「模块 - 操作」。
+   */
+  async importOperLogs(rows: string[][], headerRowNumber = 1, operator?: string): Promise<ImportResult> {
+    return this.importLogRows(rows, headerRowNumber, operator, 1, OPER_IMPORT_ALIASES, (get, statusOf) => {
+      const createTime = parseLogTime(get('time'))
+      if (get('time') && !createTime) {
+        return `操作时间「${get('time')}」格式不对，请用 2026-11-06 19:00:00`
+      }
+      const costText = get('cost')
+      if (costText && !/^\d+$/.test(costText)) {
+        return `耗时「${costText}」必须是正整数（毫秒）`
+      }
+      const module = get('module')
+      const action = get('action')
+      return {
+        username: get('username'),
+        status: statusOf(get('status')) ?? 0,
+        content: action ? `${module} - ${action}` : module,
+        ip: get('ip') || '0.0.0.0',
+        cost: costText ? Number(costText) : undefined,
+        createTime: createTime ?? new Date()
+      }
+    })
+  }
+
+  /**
+   * 导入公共流程：定位列 → 逐行解析 → 批量落库
+   *
+   * 两种日志只差列别名与行解析规则，其余（表头缺失报错、行数上限、错误收集、分批写入）完全一致。
+   */
+  private async importLogRows(
+    rows: string[][],
+    headerRowNumber: number,
+    operator: string | undefined,
+    logType: 0 | 1,
+    aliases: Partial<Record<LogImportField, string[]>>,
+    parseRow: (get: (field: LogImportField) => string, statusOf: (text: string) => number | undefined) => ImportedLogRow | string
+  ): Promise<ImportResult> {
+    const { columns, dataRows } = resolveImportLayout(rows, headerRowNumber, aliases as Record<LogImportField, string[]>)
+    if (columns.username === undefined) {
+      throw new BadRequestException('未找到「用户名」列，请使用导入模板的表头')
+    }
+    assertImportRows(dataRows)
+
+    const result = createImportResult(dataRows.length)
+    const entities: SysLogEntity[] = []
+
+    for (const { rowNumber, cells } of dataRows) {
+      const username = pickCell(columns, cells, 'username')
+      if (!username) {
+        failImportRow(result, rowNumber, '用户名为空')
+        continue
+      }
+      const parsed = parseRow(field => pickCell(columns, cells, field), parseLogStatus)
+      if (typeof parsed === 'string') {
+        failImportRow(result, rowNumber, parsed, username)
+        continue
+      }
+      entities.push(
+        this.logRepository.create({
+          id: randomId32(),
+          logType,
+          operateUserName: parsed.username,
+          logContent: String(parsed.content ?? '').slice(0, 1000),
+          ip: parsed.ip.replace(/^::ffff:/, ''),
+          status: parsed.status ?? 0,
+          browser: parsed.browser,
+          os: parsed.os,
+          costTime: parsed.cost,
+          createBy: operator ?? parsed.username,
+          createTime: parsed.createTime
+        })
+      )
+    }
+
+    // 分批写入：2000 行一条 SQL 参数太多容易超包大小，500 一批稳妥
+    for (let start = 0; start < entities.length; start += 500) {
+      await this.logRepository.save(entities.slice(start, start + 500))
+    }
+    result.created = entities.length
+    return result
+  }
+}
+
+/** 日志导入可识别的列 */
+type LogImportField = 'username' | 'status' | 'content' | 'ip' | 'browser' | 'os' | 'module' | 'action' | 'cost' | 'time'
+
+/** 导入过程中解析出的一行（尚未落库） */
+interface ImportedLogRow {
+  username: string
+  status?: number
+  content?: string
+  ip: string
+  browser?: string
+  os?: string
+  cost?: number
+  createTime: Date
+}
+
+/** 登录日志导入列别名：同一列允许几种叫法，兼容手改表头 */
+const LOGIN_IMPORT_ALIASES: Record<'username' | 'status' | 'content' | 'ip' | 'browser' | 'os' | 'time', string[]> = {
+  username: ['用户名', '登录账号', '账号', 'operateusername', 'username'],
+  status: ['结果', '状态', 'status'],
+  content: ['说明', '日志内容', '描述', 'logcontent'],
+  ip: ['ip', 'ip地址'],
+  browser: ['浏览器', 'browser'],
+  os: ['操作系统', '系统', 'os'],
+  time: ['登录时间', '时间', 'createtime']
+}
+
+/** 操作日志导入列别名 */
+const OPER_IMPORT_ALIASES: Record<'username' | 'status' | 'module' | 'action' | 'cost' | 'ip' | 'time', string[]> = {
+  username: ['操作人', '用户名', '登录账号', 'operateusername'],
+  status: ['结果', '状态', 'status'],
+  module: ['模块', '模块名', 'module'],
+  action: ['操作', '动作', 'action'],
+  cost: ['耗时', '耗时(ms)', 'costtime'],
+  ip: ['ip', 'ip地址'],
+  time: ['操作时间', '时间', 'createtime']
+}
+
+/** 结果文本归一：成功/正常/0 → 0，失败/异常/1 → 1；其他返回 undefined（交给调用方报错） */
+function parseLogStatus(text: string): number | undefined {
+  const value = text.trim().toLowerCase()
+  if (!value) {
+    return undefined
+  }
+  if (['0', '成功', '正常', 'ok', 'success'].includes(value)) {
+    return 0
+  }
+  if (['1', '失败', '异常', 'fail', 'failed'].includes(value)) {
+    return 1
+  }
+  return undefined
+}
+
+/** 时间解析：支持 2026-11-06 19:00:00、2026/11/06 19:00、ISO 8601；解析不出返回 undefined */
+function parseLogTime(text: string): Date | undefined {
+  const value = text.trim()
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.replace(/\//g, '-')
+  const date = new Date(normalized.includes('T') ? normalized : normalized.replace(' ', 'T'))
+  return Number.isNaN(date.getTime()) ? undefined : date
 }

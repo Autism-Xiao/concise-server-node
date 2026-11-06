@@ -56,7 +56,8 @@ export class JobScheduler implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     for (const job of this.running.values()) {
-      job.stop()
+      // stop() 返回 Promise，这里处于同步销毁钩子中，标记忽略即可（进程正在退出）
+      void job.stop()
     }
     this.running.clear()
   }
@@ -103,7 +104,8 @@ export class JobScheduler implements OnModuleInit, OnModuleDestroy {
   unschedule(id: string): void {
     const cronJob = this.running.get(id)
     if (cronJob) {
-      cronJob.stop()
+      // stop() 返回 Promise，调用方是同步的 CRUD 流程，标记忽略即可
+      void cronJob.stop()
       this.running.delete(id)
     }
   }

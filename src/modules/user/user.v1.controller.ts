@@ -1,19 +1,4 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  Put,
-  Query,
-  Request,
-  Res,
-  StreamableFile,
-  UploadedFile,
-  UseInterceptors
-} from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Request, Res, StreamableFile, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 import { FileInterceptor } from '@nestjs/platform-express'
 import type { Response } from 'express'
@@ -21,9 +6,11 @@ import type { Response } from 'express'
 import { BatchDeleteDto } from '../../common/dto/batch-delete.dto'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
-import { formatDateTime, parseCsv } from '../../utils/csv.util'
+import { sendXlsx } from '../../helper/export/excel-export'
+import { readImportFile } from '../../helper/import/import-file'
+import { formatDateTime } from '../../utils/csv.util'
 import { setDownloadHeaders } from '../../utils/download.util'
-import { buildImportTemplateXlsx, buildXlsx, readXlsxTable } from '../../utils/xlsx.util'
+import { buildImportTemplateXlsx } from '../../utils/xlsx.util'
 import { CreateUserDto } from './dto/create-user.dto'
 import { QueryUserDto } from './dto/query-user.dto'
 import { UpdateUserDto } from './dto/update-user.dto'
@@ -72,11 +59,12 @@ export class UserV1Controller {
       query.keyword ? `关键字=${query.keyword}` : '',
       query.status ? `状态=${Number(query.status) === 1 ? '正常' : '冻结'}` : '',
       query.deptId || query.deptIds ? '按部门筛选' : ''
-    ].filter(Boolean)
+    ]
 
-    const buffer = await buildXlsx(
-      '用户列表',
-      [
+    return sendXlsx({
+      res,
+      sheetName: '用户列表',
+      columns: [
         { header: '登录账号', width: 20 },
         { header: '真实姓名', width: 14 },
         { header: '手机号', width: 16 },
@@ -88,7 +76,7 @@ export class UserV1Controller {
         { header: '工号', width: 14 },
         { header: '创建时间', width: 20, align: 'center' }
       ],
-      users.map(user => [
+      rows: users.map(user => [
         user.username,
         user.realname ?? '',
         user.phone ?? '',
@@ -100,23 +88,17 @@ export class UserV1Controller {
         user.workNo ?? '',
         formatDateTime(user.createTime)
       ]),
-      {
-        title: '用户列表',
-        subtitle: `导出时间：${formatDateTime(new Date())} · 操作人：${req.user?.username ?? '未知'} · 共 ${users.length} 条记录${filters.length ? ` · 筛选：${filters.join('，')}` : ''}`,
-        notes: [
-          '说明：密码与密码盐不导出；角色、部门有多个时用「/」分隔，部门顺序即主次。',
-          '本文件由 concise 管理系统导出，如非本人操作请及时联系系统管理员。'
-        ],
-        cellStyle: (rowIndex, columnIndex, value) => {
-          if (columnIndex === 5 && typeof value === 'string') {
-            return value === '冻结' ? STATUS_STYLE[2] : STATUS_STYLE[1]
-          }
-          return undefined
+      notes: ['说明：密码与密码盐不导出；角色、部门有多个时用「/」分隔，部门顺序即主次。', '本文件由 concise 管理系统导出，如非本人操作请及时联系系统管理员。'],
+      cellStyle: (rowIndex, columnIndex, value) => {
+        if (columnIndex === 5 && typeof value === 'string') {
+          return value === '冻结' ? STATUS_STYLE[2] : STATUS_STYLE[1]
         }
-      }
-    )
-    setDownloadHeaders(res, `users-${Date.now()}.xlsx`, `用户列表-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
-    return new StreamableFile(buffer)
+        return undefined
+      },
+      meta: { operator: req.user?.username, count: users.length, filters },
+      filePrefix: 'users',
+      displayName: '用户列表'
+    })
   }
 
   @ApiOperation({
@@ -173,24 +155,9 @@ export class UserV1Controller {
   @Post('import')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: USER_IMPORT_MAX_SIZE } }))
   async import(@UploadedFile() file: Express.Multer.File | undefined, @Request() req: { user: { username: string } }) {
-    if (!file) {
-      throw new BadRequestException('未接收到文件，请选择 Excel 后重试')
-    }
-    const filename = file.originalname ?? ''
-    const operator = req.user?.username
-    if (/\.xlsx$/i.test(filename)) {
-      // 模板头部有大标题与说明，按表头关键字定位，避免把标题当列名
-      const table = await readXlsxTable(file.buffer, { headerKeys: ['登录账号', '账号', '用户名', 'username'] })
-      return this.userService.importUsers(table.rows, table.headerRow, operator)
-    }
-    if (/\.csv$/i.test(filename)) {
-      const text = file.buffer.toString('utf8')
-      if (text.includes('\uFFFD')) {
-        throw new BadRequestException('CSV 文件编码不是 UTF-8，请改用 .xlsx 导入，或另存为「CSV UTF-8（逗号分隔）」')
-      }
-      return this.userService.importUsers(parseCsv(text), 1, operator)
-    }
-    throw new BadRequestException('仅支持 .xlsx（推荐）或 .csv 文件')
+    // 模板头部有大标题与说明，按表头关键字定位，避免把标题当列名
+    const table = await readImportFile(file, { headerKeys: ['登录账号', '账号', '用户名', 'username'] })
+    return this.userService.importUsers(table.rows, table.headerRow, req.user?.username)
   }
 
   @ApiOperation({ summary: '查询用户详情（v1，含角色与部门）', description: '需 system:user:list' })
