@@ -651,7 +651,7 @@ async function main() {
     const latest = rows.find(row => (row.operateUserName ?? row.username ?? '').includes(username))
     record(Boolean(latest) && latest.ip !== '1.2.3.4', '登录日志记录真实来源 IP（拒绝伪造）', `ip=${latest?.ip ?? '无日志'}`)
 
-    // 10.5 账号锁定：同账号连续 5 次密码错误后，第 6 次直接拒绝（429 + code 1009），15 分钟内不再验密码
+    // 10.5 账号锁定：同账号连续 5 次密码错误后，第 6 次直接拒绝（429 + code 1009），锁定时长内不再验密码
     let last = null
     for (let i = 0; i < 6; i++) {
       last = await call('POST', '/v1/auth/login', { body: { username, password: 'wrong-password' } })

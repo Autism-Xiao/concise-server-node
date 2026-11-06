@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt'
 import { randomUUID } from 'node:crypto'
 
 import { captchaConfig, jwtConfig, type CaptchaConfig, type JwtConfig } from '../../../config'
+import { envNumber } from '../../../global/env'
 import { hasSuperRole } from '../../../utils/super-role.util'
 import { isArgon2Hash } from '../../../utils/password.util'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
@@ -17,10 +18,16 @@ import type { MenuEntity } from '../../menu/entities/menu.entity'
 import { CaptchaService } from './captcha.service'
 import { LoginDto } from '../dto/login.dto'
 
-/** 同一账号连续密码错误次数上限（达到后锁定） */
-export const LOGIN_MAX_FAILS = 5
-/** 锁定时长（秒），同时也是失败计数的滑动窗口 */
-export const LOGIN_LOCK_SECONDS = 15 * 60
+/**
+ * 同一账号连续密码错误次数上限（达到后锁定），可用环境变量 LOGIN_MAX_FAILS 覆盖。
+ * 默认 5 次；注意冒烟脚本依赖「连错 5 次触发锁定」的行为，调大后请同步调整脚本预期。
+ */
+export const LOGIN_MAX_FAILS = Math.max(envNumber('LOGIN_MAX_FAILS', 5), 1)
+/**
+ * 锁定时长（秒），可用环境变量 LOGIN_LOCK_HOURS 覆盖，默认 24 小时（锁一天）。
+ * 语义：第 LOGIN_MAX_FAILS 次密码错误时起算锁定，到期自动解锁（或管理员提前解锁）。
+ */
+export const LOGIN_LOCK_SECONDS = Math.max(envNumber('LOGIN_LOCK_HOURS', 24) * 3600, 60)
 /** refreshToken 并发刷新宽限期：超过这个间隔还在用「已换掉的」令牌，判定为泄露后被重放 */
 const REFRESH_REUSE_GRACE_MS = 10 * 1000
 
@@ -48,6 +55,15 @@ export interface PermissionResult {
 
 /** 拥有全部权限的超级角色 code（统一由 utils/super-role.util 判定，勿在各处另写） */
 
+/** 锁定剩余时长的人性化展示：>1 天按天、>1 小时按小时、其余按分钟（向上取整，避免提示「0 分钟」） */
+export function formatLockDuration(seconds: number): string {
+  const minutes = Math.max(Math.ceil(seconds / 60), 1)
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.ceil(minutes / 60)
+  if (hours < 24) return `${hours} 小时`
+  return `${Math.ceil(hours / 24)} 天`
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name)
@@ -68,7 +84,7 @@ export class AuthService {
    * 登录：验证码校验（可开关）→ 失败锁定检查 → 账号密码校验 → 签发双令牌；成败都记入登录日志
    *
    * 为什么还要自己做失败锁定：滑块验证码是开关式的，CAPTCHA_ENABLED=false 或 Redis 故障时等于裸奔，
-   * 这里按账号累计密码错误次数（Redis 共享，多实例一致），5 次锁 15 分钟，避免无限撞库。
+   * 这里按账号累计密码错误次数（Redis 共享，多实例一致），默认连错 5 次锁 24 小时，避免无限撞库。
    */
   async login(dto: LoginDto, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
     const failKey = this.loginFailKey(dto.username)
@@ -241,14 +257,14 @@ export class AuthService {
     return { changed: true }
   }
 
-  /** 命中锁定则直接拒绝，并告知还要等多久 */
+  /** 命中锁定则直接拒绝，并告知还要等多久（时长人性化展示：1 天 / 3 小时 / 15 分钟） */
   private async assertNotLocked(failKey: string): Promise<void> {
     const hit = await this.rateLimitService.get(failKey)
     if (hit.count < LOGIN_MAX_FAILS || hit.resetAt <= Date.now()) {
       return
     }
-    const minutes = Math.max(Math.ceil((hit.resetAt - Date.now()) / 60000), 1)
-    throw new BizException(BizErrorCode.ACCOUNT_LOCKED, `密码错误次数过多，账号已临时锁定，请 ${minutes} 分钟后再试`, HttpStatus.TOO_MANY_REQUESTS)
+    const remaining = Math.max(Math.ceil((hit.resetAt - Date.now()) / 1000), 1)
+    throw new BizException(BizErrorCode.ACCOUNT_LOCKED, `密码错误次数过多，账号已锁定，请 ${formatLockDuration(remaining)}后再试`, HttpStatus.TOO_MANY_REQUESTS)
   }
 
   /** 只有「账号密码错误」才计数：验证码错误、账号冻结、已锁定都不算密码尝试 */
@@ -259,7 +275,10 @@ export class AuthService {
     }
     const hit = await this.rateLimitService.increment(failKey, LOGIN_LOCK_SECONDS)
     if (hit.count === LOGIN_MAX_FAILS) {
-      this.logger.warn(`账号 ${username} 连续 ${hit.count} 次密码错误，已锁定 ${Math.round(LOGIN_LOCK_SECONDS / 60)} 分钟`)
+      // 锁定从「第 N 次失败」起算：把窗口截止重设为现在 + 锁定时长。
+      // 不重设的话截止时间停留在第一次失败那刻，锁定越靠后剩余时间越短，一天锁定会形同虚设。
+      await this.rateLimitService.expire(failKey, LOGIN_LOCK_SECONDS)
+      this.logger.warn(`账号 ${username} 连续 ${hit.count} 次密码错误，已锁定 ${formatLockDuration(LOGIN_LOCK_SECONDS)}`)
     }
   }
 

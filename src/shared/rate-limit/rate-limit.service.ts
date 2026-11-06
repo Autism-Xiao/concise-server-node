@@ -95,6 +95,27 @@ export class RateLimitService {
     }
   }
 
+  /**
+   * 重设窗口截止为「现在 + seconds」，保留已有计数
+   * 登录锁定用：达到失败上限时把锁定截止从「首次失败时刻」推到「达标时刻」，
+   * 否则锁得越晚剩余时间越短，长锁定（如 24 小时）会形同虚设
+   */
+  async expire(key: string, seconds: number): Promise<void> {
+    const ttl = Math.max(Math.floor(seconds), 1)
+    // 只更新进程内已有条目的过期时间；Redis 主导时不落内存，避免降级判定被脏数据干扰
+    const entry = this.memory.get(key)
+    if (entry) {
+      entry.expiresAt = Date.now() + ttl * 1000
+    }
+    const client = this.client()
+    if (!client) return
+    try {
+      await client.expire(key, ttl)
+    } catch (error) {
+      this.warnOnce(`计数重设过期失败：${(error as Error).message}`)
+    }
+  }
+
   /** 进程内自增（含惰性过期清理） */
   private incrementMemory(key: string, ttl: number): RateLimitHit {
     const now = Date.now()

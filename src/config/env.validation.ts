@@ -120,6 +120,16 @@ class EnvironmentVariables {
   @IsOptional()
   @IsNumberString({}, { message: 'RATE_LIMIT_WINDOW 必须是数字' })
   RATE_LIMIT_WINDOW?: string
+
+  /** 登录失败锁定阈值：同账号连续密码错误多少次后锁定（默认 5） */
+  @IsOptional()
+  @IsNumberString({}, { message: 'LOGIN_MAX_FAILS 必须是数字' })
+  LOGIN_MAX_FAILS?: string
+
+  /** 登录失败锁定时长（小时，默认 24 即锁一天） */
+  @IsOptional()
+  @IsNumberString({}, { message: 'LOGIN_LOCK_HOURS 必须是数字' })
+  LOGIN_LOCK_HOURS?: string
 }
 
 /**

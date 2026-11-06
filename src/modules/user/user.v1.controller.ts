@@ -260,7 +260,7 @@ export class UserV1Controller {
     return this.userService.forceOffline(id)
   }
 
-  @ApiOperation({ summary: '解锁账号（v1）', description: '清零登录失败计数（密码连错 5 次临时锁定后使用）；幂等；需 system:user:update' })
+  @ApiOperation({ summary: '解锁账号（v1）', description: '清零登录失败计数（密码连错 5 次锁定 24 小时后使用，阈值/时长可配）；幂等；需 system:user:update' })
   @OperLog('用户管理')
   @Perms('system:user:update')
   @Delete(':id/lock')

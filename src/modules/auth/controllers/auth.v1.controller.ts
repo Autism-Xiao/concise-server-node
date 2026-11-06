@@ -45,7 +45,7 @@ export class AuthV1Controller {
   @ApiOperation({ summary: '登录（v1）', description: '校验验证码与账号密码，返回 accessToken / refreshToken 双令牌' })
   @ApiOkResponse({ description: '令牌对与用户信息', type: LoginResultDto })
   @Public()
-  // 登录限流 60 次/分钟/IP：主要防脚本洪水；撞库由「同账号 5 次失败锁 15 分钟」+ 滑块验证码兜住，
+  // 登录限流 120 次/分钟/IP：主要防脚本洪水；撞库由「同账号连错 5 次锁 24 小时（可配）」+ 滑块验证码兜住，
   // 阈值不宜设太小，否则 NAT 后的整个办公室会互相误伤
   @RateLimit({ limit: 120, window: 60, message: '登录请求过于频繁，请稍后再试' })
   @HttpCode(HttpStatus.OK)
