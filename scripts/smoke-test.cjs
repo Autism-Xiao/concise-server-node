@@ -760,6 +760,94 @@ async function main() {
     }
   }
 
+  /* ---------- 10.8 行政区划 ---------- */
+  section('10.8 行政区划（sys_region）')
+  {
+    // 0) 预置数据：children/0 应为 34 个省级区划（迁移预置）
+    const children0 = await call('GET', '/v1/regions/children/0', { token: adminToken })
+    const provinceRows = records(children0)
+    record(isOk(children0) && provinceRows.length === 34, '10.8 省级预置数据 34 条', `actual=${provinceRows.length}`)
+
+    // 1) 关键字搜索：pinyin=guang 应命中 广东/广西
+    const kw = await call('GET', '/v1/regions?keyword=guang', { token: adminToken })
+    record(isOk(kw) && kw.json?.result?.total === 2, '10.8 列表按拼音关键字搜索', `total=${kw.json?.result?.total}`)
+
+    // 2) 创建：挂在广东省下的测试街道（areaCode 随机避免撞库）
+    const gdCode = '440000000000'
+    const testCode = `440099${STAMP}`.replace(/[^0-9]/g, '').slice(0, 15).padEnd(15, '7')
+    const created = await call('POST', '/v1/regions', {
+      token: adminToken,
+      body: { name: `冒烟街道_${STAMP}`, areaCode: testCode, parentCode: gdCode, level: 3, shortName: '冒烟', pinyin: 'MaoYan' }
+    })
+    const regionId = created.json?.result?.id
+    record(isOk(created) && !!regionId, '10.8 创建区划（levelText 自动推导）', `id=${regionId} levelText=${created.json?.result?.levelText}`)
+    record(created.json?.result?.levelText === '街道', '10.8 levelText 由 level 推导为街道', `levelText=${created.json?.result?.levelText}`)
+
+    if (regionId) {
+      // 3) 重复 areaCode 被拒（400）
+      await expectFail('POST', '/v1/regions', { token: adminToken, body: { name: '重复', areaCode: testCode, parentCode: gdCode, level: 3 } }, '10.8 重复区划代码被拒', 400)
+
+      // 4) 更新：改名 + 换上级到自己 → 防环 400
+      const renamed = await call('PUT', `/v1/regions/${regionId}`, { token: adminToken, body: { name: `冒烟街道改_${STAMP}` } })
+      record(isOk(renamed) && renamed.json?.result?.name === `冒烟街道改_${STAMP}`, '10.8 更新区划名称', `${renamed.status}`)
+      await expectFail('PUT', `/v1/regions/${regionId}`, { token: adminToken, body: { parentCode: testCode } }, '10.8 上级指向自身被拒', 400)
+
+      // 5) 上级不存在被拒
+      await expectFail('POST', '/v1/regions', { token: adminToken, body: { name: '孤儿', areaCode: `990000${STAMP}`.replace(/[^0-9]/g, '').slice(0, 15), parentCode: '999999999999', level: 2 } }, '10.8 上级区划不存在被拒', 404)
+
+      // 6) 有下级不可删：临时造一个子级再删父级
+      const child = await call('POST', '/v1/regions', {
+        token: adminToken,
+        body: { name: '冒烟子级', areaCode: `${testCode}1`.slice(0, 19), parentCode: testCode, level: 3 }
+      })
+      if (isOk(child)) {
+        await expectFail('DELETE', `/v1/regions/${regionId}`, { token: adminToken }, '10.8 有下级时删除被拒', 400)
+        await expectOk('DELETE', `/v1/regions/${child.json.result.id}`, { token: adminToken }, '10.8 删除无下级的子级')
+      } else {
+        record(false, '10.8 有下级时删除被拒', `造子级失败 status=${child.status}`)
+      }
+
+      // 7) 删除主测试区划
+      await expectOk('DELETE', `/v1/regions/${regionId}`, { token: adminToken }, '10.8 删除区划')
+      const gone = await call('GET', `/v1/regions/${regionId}`, { token: adminToken })
+      record(gone.status === 404, '10.8 删除后查详情 404', `status=${gone.status}`)
+    }
+
+    // 8) 批量导入：同批去重 + 已存在更新 + 缺字段跳过；随后清理
+    const importCodeA = `55010${STAMP}`.replace(/[^0-9]/g, '').slice(0, 14).padEnd(14, '8')
+    const importCodeB = `${importCodeA}9`
+    const imported = await call('POST', '/v1/regions/import', {
+      token: adminToken,
+      body: {
+        regions: [
+          { name: '冒烟导入市', areaCode: importCodeA, parentCode: '500000000000', level: 1 },
+          { name: '冒烟导入市（重复）', areaCode: importCodeA, parentCode: '500000000000', level: 1 },
+          { name: '冒烟导入区', areaCode: importCodeB, parentCode: importCodeA, level: 2, pinyin: 'MaoYanQu' },
+          { name: '坏数据', areaCode: '990099999999', level: 2, parentCode: '888888888888' }
+        ]
+      }
+    })
+    const importResult = imported.json?.result
+    record(
+      isOk(imported) && importResult?.inserted === 2 && importResult?.updated === 0 && importResult?.skipped === 1 && importResult?.failed?.length === 1,
+      '10.8 批量导入统计（插入/去重/坏数据）',
+      JSON.stringify(importResult)
+    )
+    // 再次导入：同 areaCode 走更新
+    const importAgain = await call('POST', '/v1/regions/import', {
+      token: adminToken,
+      body: { regions: [{ name: '冒烟导入市改', areaCode: importCodeA, parentCode: '500000000000', level: 1 }] }
+    })
+    record(isOk(importAgain) && importAgain.json?.result?.updated === 1, '10.8 再次导入走更新（upsert）', JSON.stringify(importAgain.json?.result))
+    // 清理：按 id 删除（先查出来）
+    const cleanupList = await call('GET', `/v1/regions?keyword=${importCodeA.slice(0, 8)}`, { token: adminToken })
+    for (const row of records(cleanupList)) {
+      if (String(row.areaCode).startsWith(importCodeA.slice(0, 8))) {
+        await call('DELETE', `/v1/regions/${row.id}`, { token: adminToken })
+      }
+    }
+  }
+
   /* ---------- 11. refreshToken 轮换 ---------- */
   section('11. refreshToken 轮换与重放检测')
   {
