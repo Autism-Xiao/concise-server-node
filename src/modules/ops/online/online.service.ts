@@ -8,8 +8,12 @@ import type { QueryOnlineDto } from './dto/query-online.dto'
 
 /** 在线会话 key 前缀（Redis 3.x 兼容：只用一个前缀做 SCAN match） */
 const SESSION_PREFIX = 'online:session:'
-/** 强制下线的令牌黑名单前缀（TTL 到 token 自然过期即可） */
+/** 强制下线的令牌黑名单前缀（TTL 到 token 自然过期即可，值记录拉黑时间戳用于重放判定） */
 const REVOKED_PREFIX = 'online:revoked:'
+/** 按用户维度的强制下线前缀：值记录时间戳，签发早于该时间的令牌一律失效 */
+const USER_REVOKED_PREFIX = 'online:user-revoked:'
+/** 会话活跃时间最小写入间隔（秒）：每个请求都写 Redis 太浪费，1 分钟粒度足够展示 */
+const TOUCH_INTERVAL_SECONDS = 60
 
 export interface OnlineSession {
   sessionId: string
@@ -71,7 +75,12 @@ export class OnlineService {
       const sessionId = this.hashToken(token)
       const key = SESSION_PREFIX + sessionId
       const existing = await client.get(key)
-      const loginTime = existing ? (this.parse<OnlineSession>(existing)?.loginTime ?? new Date().toISOString()) : new Date().toISOString()
+      const previous = existing ? this.parse<OnlineSession>(existing) : null
+      // 降频：60 秒内已写过就跳过，避免每个请求 1 次 SETEX（QPS 上来后 Redis 写放大）
+      if (previous && Date.now() - new Date(previous.lastActive).getTime() < TOUCH_INTERVAL_SECONDS * 1000) {
+        return
+      }
+      const loginTime = previous?.loginTime ?? new Date().toISOString()
       const ip = (request.ip ?? '').replace(/^::ffff:/, '')
       const userAgent = Array.isArray(request.headers['user-agent']) ? request.headers['user-agent'][0] : request.headers['user-agent']
       const info = parseRequestInfo(ip, userAgent)
@@ -107,23 +116,78 @@ export class OnlineService {
     if (!client) return
     try {
       const ttl = Math.max(Math.floor(ttlSeconds), 60)
-      await client.setex(REVOKED_PREFIX + this.hashToken(token), ttl, '1')
+      await this.markRevoked(token, ttl)
       await client.del(SESSION_PREFIX + this.hashToken(token))
       if (refreshToken) {
-        await client.setex(REVOKED_PREFIX + this.hashToken(refreshToken), Math.max(Math.floor(refreshTtlSeconds ?? ttl), 60), '1')
+        await this.markRevoked(refreshToken, Math.max(Math.floor(refreshTtlSeconds ?? ttl), 60))
       }
     } catch (error) {
       this.warnOnce(`退出登录处理失败：${(error as Error).message}`)
     }
   }
 
+  /**
+   * 拉黑一个令牌（access / refresh 共用同一黑名单空间，哈希不同不冲突）
+   * 值存拉黑时间戳，refreshToken 轮换时靠它判断「是并发刷新还是真被盗用」
+   */
+  async markRevoked(token: string, ttlSeconds: number): Promise<void> {
+    const client = this.client()
+    if (!client) return
+    try {
+      await client.setex(REVOKED_PREFIX + this.hashToken(token), Math.max(Math.floor(ttlSeconds), 60), String(Date.now()))
+    } catch (error) {
+      this.warnOnce(`令牌拉黑失败：${(error as Error).message}`)
+    }
+  }
+
+  /** 令牌是否已失效，以及（若失效）失效时间：用于 refreshToken 重放检测 */
+  async getRevocation(token: string): Promise<{ revoked: boolean; at: number }> {
+    const client = this.client()
+    if (!client) return { revoked: false, at: 0 }
+    try {
+      const value = await client.get(REVOKED_PREFIX + this.hashToken(token))
+      if (value === null) return { revoked: false, at: 0 }
+      const at = Number(value)
+      return { revoked: true, at: Number.isFinite(at) ? at : 0 }
+    } catch (error) {
+      this.warnOnce(`下线状态查询失败：${(error as Error).message}`)
+      return { revoked: false, at: 0 }
+    }
+  }
+
   /** 是否已被强制下线 */
   async isRevoked(token: string): Promise<boolean> {
+    return (await this.getRevocation(token)).revoked
+  }
+
+  /**
+   * 按用户维度强制下线：之后签发时间早于此刻的令牌全部失效
+   * 用于「refreshToken 被重复使用」这类确定被盗用的场景，一次踢掉该账号所有会话
+   */
+  async revokeUser(userId: string, ttlSeconds: number): Promise<void> {
+    const client = this.client()
+    if (!client || !userId) return
+    try {
+      await client.setex(USER_REVOKED_PREFIX + userId, Math.max(Math.floor(ttlSeconds), 60), String(Date.now()))
+    } catch (error) {
+      this.warnOnce(`用户级下线失败：${(error as Error).message}`)
+    }
+  }
+
+  /** 该令牌是否已失效（令牌黑名单 + 用户级下线两个维度，合并成一次往返） */
+  async isSessionInvalid(token: string, userId: string, issuedAtSeconds?: number): Promise<boolean> {
     const client = this.client()
     if (!client) return false
     try {
-      const value = await client.get(REVOKED_PREFIX + this.hashToken(token))
-      return value !== null
+      const [tokenValue, userValue] = await client.mget(REVOKED_PREFIX + this.hashToken(token), USER_REVOKED_PREFIX + userId)
+      if (tokenValue !== null) {
+        return true
+      }
+      if (userValue !== null && issuedAtSeconds) {
+        const at = Number(userValue)
+        return Number.isFinite(at) && issuedAtSeconds * 1000 < at
+      }
+      return false
     } catch (error) {
       this.warnOnce(`下线状态查询失败：${(error as Error).message}`)
       return false
@@ -183,7 +247,8 @@ export class OnlineService {
       throw new NotFoundException('在线会话不存在或已过期')
     }
     const ttl = Math.max(Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000), 60)
-    await client.setex(REVOKED_PREFIX + sessionId, ttl, '1')
+    // sessionId 本身就是 token 哈希，这里直接拼 key（不能再走 markRevoked，那会二次哈希）
+    await client.setex(REVOKED_PREFIX + sessionId, ttl, String(Date.now()))
     await client.del(key)
   }
 

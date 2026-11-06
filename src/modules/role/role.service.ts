@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository } from 'typeorm'
+import { In, Repository, type EntityManager } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { isSuperRole } from '../../utils/super-role.util'
+import { randomId32 } from '../../utils/password.util'
 import { RoleEntity } from './entities/role.entity'
 import { MenuEntity } from '../menu/entities/menu.entity'
 import type { CreateRoleDto } from './dto/create-role.dto'
@@ -64,16 +65,25 @@ export class RoleService extends BaseService<RoleEntity> {
       throw new BadRequestException(`「${dto.roleCode}」是内置超级管理员角色编码，不允许创建`)
     }
     await this.assertCodeAvailable(dto.roleCode)
-    const role = await this.create({
-      roleName: dto.roleName,
-      roleCode: dto.roleCode,
-      description: dto.description,
-      createTime: new Date()
+    // 角色本体与授权关系同一个事务：避免「角色建好了但菜单一条没绑」的半成品
+    const roleId = await this.roleRepository.manager.transaction(async manager => {
+      const repo = manager.getRepository(RoleEntity)
+      const role = await repo.save(
+        repo.create({
+          // 主键是 varchar(32) 且无数据库默认值，必须显式生成（与 BaseService.create 行为一致）
+          id: randomId32(),
+          roleName: dto.roleName,
+          roleCode: dto.roleCode,
+          description: dto.description,
+          createTime: new Date()
+        })
+      )
+      if (dto.menuIds?.length) {
+        await this.assignMenus(role.id, dto.menuIds, manager)
+      }
+      return role.id
     })
-    if (dto.menuIds?.length) {
-      await this.assignMenus(role.id, dto.menuIds)
-    }
-    return this.findOneWithMenus(role.id)
+    return this.findOneWithMenus(roleId)
   }
 
   /** 更新角色基础信息，可同时传 menuIds 覆盖授权；内置超管角色的编码不允许修改 */
@@ -88,46 +98,69 @@ export class RoleService extends BaseService<RoleEntity> {
       }
       await this.assertCodeAvailable(dto.roleCode)
     }
-    await this.roleRepository.update(id, { roleName: dto.roleName, roleCode: dto.roleCode, description: dto.description, updateTime: new Date() })
-    if (dto.menuIds) {
-      await this.assignMenus(id, dto.menuIds)
-    }
+    await this.roleRepository.manager.transaction(async manager => {
+      await manager.getRepository(RoleEntity).update(id, {
+        roleName: dto.roleName,
+        roleCode: dto.roleCode,
+        description: dto.description,
+        updateTime: new Date()
+      })
+      if (dto.menuIds) {
+        await this.assignMenus(id, dto.menuIds, manager)
+      }
+    })
     return this.findOneWithMenus(id)
   }
 
   /**
    * 删除角色（硬删）
-   * 保护规则：内置 admin 角色不可删；角色下仍有用户时拒绝，需先解绑；
+   * 保护规则：内置 admin 角色不可删；角色下仍有**未删除**用户时拒绝，需先解绑；
    * 删除前清理 sys_role_permission 关联行，避免外键约束残留
+   *
+   * 注意「仍有用户」的口径：只统计 del_flag = 0 的用户。
+   * 之前用关联表条数判断，软删用户会一直占着 sys_user_role，导致角色永久删不掉而界面上又找不到那个用户。
    */
   async deleteRole(id: string): Promise<void> {
     const role = await this.findOne(id)
     if (isSuperRole(role.roleCode)) {
       throw new BadRequestException('内置管理员角色不允许删除')
     }
-    const users = await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'users').of(id).loadMany<{ id: string }>()
-    if (users.length) {
-      throw new BadRequestException(`该角色下还有 ${users.length} 个用户，请先解绑后再删除`)
+    const rows = (await this.roleRepository.query(
+      'SELECT COUNT(*) AS total FROM sys_user_role ur INNER JOIN sys_user u ON u.id = ur.user_id WHERE ur.role_id = ? AND u.del_flag = 0',
+      [id]
+    )) as Array<{ total: number | string }>
+    const activeUsers = Number(rows?.[0]?.total ?? 0)
+    if (activeUsers > 0) {
+      throw new BadRequestException(`该角色下还有 ${activeUsers} 个用户，请先解绑后再删除`)
     }
-    const menus = await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).loadMany<MenuEntity>()
-    if (menus.length) {
-      await this.roleRepository
-        .createQueryBuilder()
-        .relation(RoleEntity, 'permissions')
-        .of(id)
-        .remove(menus.map(menu => menu.id))
-    }
-    await this.roleRepository.delete(id)
+    await this.roleRepository.manager.transaction(async manager => {
+      const repo = manager.getRepository(RoleEntity)
+      // 历史软删用户可能仍残留关联行，一并清掉，避免外键拦路
+      await manager.query('DELETE FROM sys_user_role WHERE role_id = ?', [id])
+      const menus = await repo.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).loadMany<MenuEntity>()
+      if (menus.length) {
+        await repo
+          .createQueryBuilder()
+          .relation(RoleEntity, 'permissions')
+          .of(id)
+          .remove(menus.map(menu => menu.id))
+      }
+      await repo.delete(id)
+    })
   }
 
   /** 批量删除角色：逐条走 deleteRole，保留「内置角色 / 有用户不可删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.roleRepository.findBy({ id: In(normalizeBatchIds(ids)) })
-    return runBatchDelete(targets, {
-      getId: role => role.id,
-      getName: role => role.roleName,
-      remove: role => this.deleteRole(role.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: role => role.id,
+        getName: role => role.roleName,
+        remove: role => this.deleteRole(role.id)
+      },
+      ids
+    )
   }
 
   /**
@@ -135,22 +168,27 @@ export class RoleService extends BaseService<RoleEntity> {
    *
    * 超管角色直接拒绝：其权限来自内置规则（不读关联表），写入既不生效又会产生误导数据。
    */
-  async assignMenus(id: string, menuIds: string[]): Promise<void> {
-    const role = await this.findOne(id)
+  async assignMenus(id: string, menuIds: string[], manager?: EntityManager): Promise<void> {
+    // 有事务时必须用事务内的仓库：刚插入的角色在别的连接上还看不到，用默认连接校验会误判「角色不存在」
+    const roleRepo = manager ? manager.getRepository(RoleEntity) : this.roleRepository
+    const role = await roleRepo.findOne({ where: { id } })
+    if (!role) {
+      throw new NotFoundException('角色不存在')
+    }
     if (isSuperRole(role.roleCode)) {
       throw new BadRequestException('内置超级管理员拥有全部权限，无需也不允许分配，修改不会生效')
     }
-    const menus = await this.roleRepository.manager.getRepository(MenuEntity).find({ where: { id: In(menuIds) } })
+    const menus = await (manager ?? this.roleRepository.manager).getRepository(MenuEntity).find({ where: { id: In(menuIds) } })
     if (menus.length !== menuIds.length) {
       throw new NotFoundException('存在无效的菜单 ID')
     }
     const nextIds = new Set(menuIds)
-    const current = await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).loadMany<MenuEntity>()
+    const current = await roleRepo.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).loadMany<MenuEntity>()
     const currentIds = new Set(current.map(menu => menu.id))
     // 只新增差集、删除差集，避免重复插入关联行
     const toAdd = menus.filter(menu => !currentIds.has(menu.id))
     const toRemove = current.filter(menu => !nextIds.has(menu.id))
-    await this.roleRepository.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).addAndRemove(toAdd, toRemove)
+    await roleRepo.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).addAndRemove(toAdd, toRemove)
   }
 
   /** 查角色详情（含菜单权限） */

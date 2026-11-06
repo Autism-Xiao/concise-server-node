@@ -99,11 +99,15 @@ export class DeptService extends BaseService<DeptEntity> {
   /** 批量删除部门：逐条走 delete，保留「有子部门 / 有用户不可删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: '0' } })
-    return runBatchDelete(targets, {
-      getId: dept => dept.id,
-      getName: dept => dept.departName,
-      remove: dept => this.delete(dept.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: dept => dept.id,
+        getName: dept => dept.departName,
+        remove: dept => this.delete(dept.id)
+      },
+      ids
+    )
   }
 
   /**

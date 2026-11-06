@@ -153,10 +153,14 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
   /** 批量删除字典项：逐条硬删，单条失败返回原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.itemRepository.findBy({ id: In(normalizeBatchIds(ids)) })
-    return runBatchDelete(targets, {
-      getId: item => item.id,
-      getName: item => item.itemText,
-      remove: item => this.deleteItem(item.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: item => item.id,
+        getName: item => item.itemText,
+        remove: item => this.deleteItem(item.id)
+      },
+      ids
+    )
   }
 }

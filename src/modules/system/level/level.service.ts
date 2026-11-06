@@ -167,10 +167,14 @@ export class LevelService extends BaseService<LevelEntity> {
   /** 批量删除：逐条硬删，单条失败返回原因（职级暂无关联数据，失败通常是 id 已不存在） */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.levelRepository.findBy({ id: In(normalizeBatchIds(ids)) })
-    return runBatchDelete(targets, {
-      getId: level => level.id,
-      getName: level => level.levelName,
-      remove: level => this.delete(level.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: level => level.id,
+        getName: level => level.levelName,
+        remove: level => this.delete(level.id)
+      },
+      ids
+    )
   }
 }

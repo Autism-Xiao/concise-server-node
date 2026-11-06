@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Request, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiExcludeController, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
+import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { JwtAuthGuard } from '../guards/jwt-auth.guard'
 import { AuthService } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
@@ -20,6 +21,7 @@ export class AuthController {
 
   @ApiOperation({ summary: '获取滑块验证码', description: '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId' })
   @Public()
+  @RateLimit({ limit: 30, window: 60, message: '验证码获取过于频繁，请稍后再试' })
   @Get('captcha')
   captcha() {
     return this.captchaService.create()
@@ -35,15 +37,19 @@ export class AuthController {
   @ApiOperation({ summary: '登录', description: '校验账号密码，返回 accessToken / refreshToken 双令牌' })
   @ApiOkResponse({ description: '令牌对与用户信息', type: LoginResultDto })
   @Public()
+  // 登录限流 60 次/分钟/IP（与 v1 保持一致）；撞库由账号级失败锁定兜住
+  @RateLimit({ limit: 60, window: 60, message: '登录请求过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
   @Post('login')
   login(@Body() dto: LoginDto, @Request() req: { ip: string; headers: Record<string, string | string[] | undefined> }) {
     const userAgent = req.headers['user-agent']
     return this.authService.login(dto, { ip: req.ip ?? '', userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent })
   }
 
-  @ApiOperation({ summary: '刷新令牌', description: '用 refreshToken 换取新的令牌对' })
+  @ApiOperation({ summary: '刷新令牌', description: '用 refreshToken 换取新的令牌对（轮换：旧 refreshToken 立即失效）' })
   @ApiOkResponse({ description: '新的令牌对与用户信息', type: LoginResultDto })
   @Public()
+  @RateLimit({ limit: 20, window: 60, message: '刷新过于频繁，请稍后再试' })
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refreshToken(dto.refreshToken)

@@ -16,7 +16,8 @@ const HTTP_STATUS_TO_BIZ_CODE: Record<number, BizErrorCode> = {
   [HttpStatus.BAD_REQUEST]: BizErrorCode.PARAM_INVALID,
   [HttpStatus.UNAUTHORIZED]: BizErrorCode.UNAUTHORIZED,
   [HttpStatus.FORBIDDEN]: BizErrorCode.FORBIDDEN,
-  [HttpStatus.NOT_FOUND]: BizErrorCode.NOT_FOUND
+  [HttpStatus.NOT_FOUND]: BizErrorCode.NOT_FOUND,
+  [HttpStatus.TOO_MANY_REQUESTS]: BizErrorCode.RATE_LIMITED
 }
 
 /** Nest 内置异常默认的英文提示，出现时替换成中文 */
@@ -30,7 +31,8 @@ const DEFAULT_EN_MESSAGES: Record<number, string> = {
 const DEFAULT_CN_MESSAGES: Record<number, string> = {
   [HttpStatus.UNAUTHORIZED]: '未授权，请先登录',
   [HttpStatus.FORBIDDEN]: '禁止访问',
-  [HttpStatus.NOT_FOUND]: '资源不存在'
+  [HttpStatus.NOT_FOUND]: '资源不存在',
+  [HttpStatus.TOO_MANY_REQUESTS]: '请求过于频繁，请稍后再试'
 }
 
 /** 组装失败响应（result 恒为 null，success 恒为 false） */

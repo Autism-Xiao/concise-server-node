@@ -253,11 +253,15 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
   /** 批量删除公告：逐条走 delete，保留「已发布不可直接删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.announcementRepository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: '0' } })
-    return runBatchDelete(targets, {
-      getId: notice => notice.id,
-      getName: notice => notice.title,
-      remove: notice => this.delete(notice.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: notice => notice.id,
+        getName: notice => notice.title,
+        remove: notice => this.delete(notice.id)
+      },
+      ids
+    )
   }
 
   /**

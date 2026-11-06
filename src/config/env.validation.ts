@@ -90,6 +90,31 @@ class EnvironmentVariables {
   @IsOptional()
   @IsNumberString({}, { message: 'REDIS_DB 必须是数字' })
   REDIS_DB?: string
+
+  /** 反向代理信任范围：false / true / 跳数 / 受信网段串（默认只信 loopback） */
+  @IsOptional()
+  @IsString()
+  TRUST_PROXY?: string
+
+  /** 是否开启 Swagger 文档（默认非生产开启） */
+  @IsOptional()
+  @IsIn(BOOLEAN_STRINGS, { message: 'SWAGGER_ENABLED 只能是 true/false/1/0/on/off/yes/no' })
+  SWAGGER_ENABLED?: string
+
+  /** 是否开启全局限流 */
+  @IsOptional()
+  @IsIn(BOOLEAN_STRINGS, { message: 'RATE_LIMIT_ENABLED 只能是 true/false/1/0/on/off/yes/no' })
+  RATE_LIMIT_ENABLED?: string
+
+  /** 全局默认限流阈值：窗口内允许的请求数 */
+  @IsOptional()
+  @IsNumberString({}, { message: 'RATE_LIMIT_LIMIT 必须是数字' })
+  RATE_LIMIT_LIMIT?: string
+
+  /** 全局默认限流窗口（秒） */
+  @IsOptional()
+  @IsNumberString({}, { message: 'RATE_LIMIT_WINDOW 必须是数字' })
+  RATE_LIMIT_WINDOW?: string
 }
 
 /**

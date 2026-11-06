@@ -150,8 +150,9 @@ async function main() {
   }
 
   // 负向登录：错误密码 / 不存在用户 / 缺字段（都不会污染数据，只会记一条失败登录日志）
-  await expectFail('POST', '/v1/auth/login', { body: { username: 'admin', password: 'definitely-wrong-pwd' } }, 'POST login 错误密码被拒', 401)
-  await expectFail('POST', '/v1/auth/login', { body: { username: 'no_such_user_xyz', password: 'wrong-password-123' } }, 'POST login 不存在用户被拒', 401)
+  // 用一次性账号而不是 admin：失败次数会计入「账号锁定」计数，反复跑脚本会把真实管理员锁掉
+  await expectFail('POST', '/v1/auth/login', { body: { username: `smoke_wrongpwd_${STAMP}`, password: 'definitely-wrong-pwd' } }, 'POST login 错误密码被拒', 401)
+  await expectFail('POST', '/v1/auth/login', { body: { username: `smoke_nouser_${STAMP}`, password: 'wrong-password-123' } }, 'POST login 不存在用户被拒', 401)
   await expectFail('POST', '/v1/auth/login', { body: {} }, 'POST login 缺参数被拒', 400)
 
   // 鉴权：无令牌 / 伪造令牌
@@ -532,17 +533,24 @@ async function main() {
     record(Boolean(h.get('x-frame-options') || h.get('content-security-policy')), '存在点击劫持防护头', h.get('x-frame-options') ?? '缺失')
   }
 
-  // 9.5 分页结构一致性（同一套约定：要么返回 {records,total}，要么返回数组）
+  // 9.5 列表结构符合文档约定：
+  //   {records,total,current,size,pages} —— users / notices / jobs / logs / online（数据量大、需要服务端分页）
+  //   纯数组 —— roles / depts / levels / posts / dicts / menus（字典量级；depts / menus 本质是树，不做分页）
+  // 约定写在 Swagger 描述里（main.ts），这里按契约逐项核对，而不是要求全站只剩一种形态。
   {
-    const shapes = []
-    for (const p of ['/v1/users', '/v1/roles', '/v1/depts', '/v1/levels', '/v1/posts', '/v1/dicts', '/v1/menus', '/v1/notices', '/v1/jobs']) {
+    const pagedPaths = ['/v1/users', '/v1/notices', '/v1/jobs']
+    const arrayPaths = ['/v1/roles', '/v1/depts', '/v1/levels', '/v1/posts', '/v1/dicts', '/v1/menus']
+    const wrong = []
+    for (const p of pagedPaths) {
       const r = await call('GET', `${p}?page=1&pageSize=2`, { token: adminToken })
       const result = r.json?.result
-      shapes.push({ p, shape: Array.isArray(result) ? 'array' : result?.records ? 'paged' : '?', total: result?.total })
+      if (!Array.isArray(result?.records) || typeof result?.total !== 'number') wrong.push(p)
     }
-    const paged = shapes.filter(s => s.shape === 'paged')
-    const array = shapes.filter(s => s.shape === 'array')
-    record(paged.length === 0 || array.length === 0, '列表分页返回结构统一', `paged=${paged.map(s => s.p).join(',')} / array=${array.map(s => s.p).join(',')}`)
+    for (const p of arrayPaths) {
+      const r = await call('GET', p, { token: adminToken })
+      if (!Array.isArray(r.json?.result)) wrong.push(p)
+    }
+    record(wrong.length === 0, '列表结构符合文档约定（3 个分页 / 6 个数组）', wrong.length ? `不符合：${wrong.join(',')}` : '9 个模块全部符合')
   }
 
   /* ---------- 8. 清理 ---------- */
@@ -573,6 +581,103 @@ async function main() {
   if (userPassword) {
     const relogin = await call('POST', '/v1/auth/login', { body: { username: `smoke_user_${STAMP}`, password: userPassword } })
     record(relogin.status === 401 || relogin.json?.success === false, '已删除用户无法再用旧密码登录', `status=${relogin.status} code=${relogin.json?.code}`)
+  }
+
+  /* ---------- 10. 上传安全与限流（本轮修复项回归） ---------- */
+  section('10. 上传安全 / 限流 / 审计 IP')
+
+  // 10.1 上传：伪装成图片的 HTML 必须被拒（文件头校验）
+  {
+    const fake = new FormData()
+    fake.append('file', new Blob(['<script>alert(document.domain)</script>'], { type: 'image/png' }), 'smoke_xss.png')
+    const r = await call('POST', '/upload', { token: adminToken, form: fake })
+    record(!isOk(r), '伪装成 PNG 的 HTML 被拒（文件头 magic bytes）', `status=${r.status} msg=${r.json?.message ?? ''}`)
+  }
+
+  // 10.2 上传：声明 text/html 直接拒（multer fileFilter）
+  {
+    const html = new FormData()
+    html.append('file', new Blob(['<b>hi</b>'], { type: 'text/html' }), 'smoke.html')
+    const r = await call('POST', '/upload', { token: adminToken, form: html })
+    record(!isOk(r), 'text/html 上传被拒（MIME 白名单）', `status=${r.status} msg=${r.json?.message ?? ''}`)
+  }
+
+  // 10.3 上传：真实 PNG 通过，且静态响应带 nosniff，不能在内联执行任何东西
+  {
+    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const form = new FormData()
+    form.append('file', new Blob([Buffer.from(pngBase64, 'base64')], { type: 'image/png' }), 'smoke_pixel.png')
+    const r = await call('POST', '/upload', { token: adminToken, form })
+    const uploadedPath = r.json?.result?.path
+    record(isOk(r) && Boolean(uploadedPath), '真实 PNG 上传成功', `path=${uploadedPath ?? ''}`)
+
+    if (uploadedPath) {
+      const origin = BASE.replace(/\/api$/, '')
+      const staticRes = await fetch(`${origin}${uploadedPath}`)
+      record(staticRes.status === 200 && staticRes.headers.get('x-content-type-options') === 'nosniff', '上传文件静态响应带 nosniff', `status=${staticRes.status}`)
+      // 清理：找到存储记录并按 id 删除（同时删本地文件）
+      const list = await call('GET', '/storage/list?page=1&pageSize=200', { token: adminToken })
+      const target = (list.json?.result?.records ?? []).find(item => item.path === uploadedPath)
+      if (target) {
+        await call('DELETE', '/storage', { token: adminToken, body: { ids: [target.id] } })
+      }
+    }
+  }
+
+  // 10.4 审计 IP：直连部署时 X-Forwarded-For 不应被信任（trust proxy 默认只信 loopback）
+  //      用一次失败登录产生日志，再回查日志里的 ip 是否被伪造成 1.2.3.4
+  {
+    const username = `smoke_nobody_${STAMP}`
+    const spoofed = await fetch(`${BASE}/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '1.2.3.4' },
+      body: JSON.stringify({ username, password: 'wrong-password' })
+    })
+    record(spoofed.status === 401 || spoofed.status === 429, '伪造 X-Forwarded-For 的登录请求有明确响应', `status=${spoofed.status}`)
+
+    const logs = await call('GET', `/v1/logs/login?page=1&pageSize=10&username=${encodeURIComponent(username)}`, { token: adminToken })
+    const rows = logs.json?.result?.records ?? []
+    const latest = rows.find(row => (row.operateUserName ?? row.username ?? '').includes(username))
+    record(Boolean(latest) && latest.ip !== '1.2.3.4', '登录日志记录真实来源 IP（拒绝伪造）', `ip=${latest?.ip ?? '无日志'}`)
+
+    // 10.5 账号锁定：同账号连续 5 次密码错误后，第 6 次直接拒绝（429 + code 1009），15 分钟内不再验密码
+    let last = null
+    for (let i = 0; i < 6; i++) {
+      last = await call('POST', '/v1/auth/login', { body: { username, password: 'wrong-password' } })
+    }
+    record(last.status === 429 && last.json?.code === 1009, '同账号连续失败 5 次后被锁定（429 / 1009）', `status=${last.status} code=${last.json?.code}`)
+  }
+
+  /* ---------- 11. refreshToken 轮换 ---------- */
+  section('11. refreshToken 轮换与重放检测')
+  {
+    const options = await call('GET', '/v1/roles/options', { token: adminToken })
+    const roleId = options.json?.result?.[0]?.id
+    const username = `smoke_rotate_${STAMP}`
+    const password = crypto.randomBytes(8).toString('hex')
+    const created = await call('POST', '/v1/users', {
+      token: adminToken,
+      body: { username, realname: '轮换测试', password, roleIds: roleId ? [roleId] : [] }
+    })
+
+    if (!isOk(created)) {
+      record(false, 'refreshToken 轮换用例准备', `建号失败 status=${created.status} msg=${created.json?.message ?? ''}`)
+    } else {
+      const login = await call('POST', '/v1/auth/login', { body: { username, password } })
+      const oldRefresh = login.json?.result?.refreshToken
+      const first = await call('POST', '/auth/refresh', { body: { refreshToken: oldRefresh } })
+      record(isOk(first) && first.json.result.refreshToken !== oldRefresh, 'refresh 换发新令牌（轮换生效）', `status=${first.status}`)
+
+      // 同一个旧 refreshToken 再用一次：必须 401（10 秒宽限期内只拒绝，不误伤并发刷新）
+      const replay = await call('POST', '/auth/refresh', { body: { refreshToken: oldRefresh } })
+      record(replay.status === 401, '旧 refreshToken 重复使用被拒（401）', `status=${replay.status} code=${replay.json?.code}`)
+
+      const access = first.json?.result?.accessToken
+      const who = await call('GET', '/v1/auth/permissions', { token: access })
+      record(isOk(who), '轮换后新的 accessToken 可用', `status=${who.status}`)
+
+      await call('DELETE', `/v1/users/${created.json?.result?.id}`, { token: adminToken })
+    }
   }
 
   /* ---------- 汇总 ---------- */

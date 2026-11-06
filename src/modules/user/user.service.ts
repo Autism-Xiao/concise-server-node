@@ -1,12 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository, SelectQueryBuilder } from 'typeorm'
+import { In, Not, Repository, SelectQueryBuilder, type EntityManager, type FindOptionsWhere } from 'typeorm'
 
 import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
+import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
 import { encryptPassword, randomId32, randomSalt } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
 import { UserEntity } from './entities/user.entity'
@@ -131,14 +132,11 @@ function uniqueKey(value?: string | null): string {
  * - 其余异常保留原文，便于排查
  */
 function describeWriteError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : ''
-  const duplicated = /Duplicate entry '([^']*)' for key '([^']+)'/i.exec(raw)
+  const duplicated = describeDuplicateEntry(error)
   if (duplicated) {
-    const [, value, key] = duplicated
-    const label = /phone/i.test(key) ? '手机号' : /email/i.test(key) ? '邮箱' : /work_?no/i.test(key) ? '工号' : /username/i.test(key) ? '登录账号' : ''
-    return label ? `${label}「${value}」已被其他账号占用，请修改后再导入` : '数据与已有记录冲突（唯一约束），请检查手机号、邮箱、工号是否重复'
+    return duplicated
   }
-  return raw || '写入失败'
+  return (error instanceof Error ? error.message : '') || '写入失败'
 }
 
 @Injectable()
@@ -159,6 +157,8 @@ export class UserService extends BaseService<UserEntity> {
     const { roleIds, deptIds, deptId, ...rest } = dto
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
+    // 唯一性预检：数据库唯一索引不区分软删除，必须提前给出可读提示（否则并发/软删占用会以 500 暴露）
+    await this.assertUniqueFields(data)
     data.id = data.id || randomId32()
     data.salt = randomSalt()
     if (data.password) {
@@ -173,15 +173,21 @@ export class UserService extends BaseService<UserEntity> {
     if (!data.createTime) {
       data.createTime = new Date()
     }
-    const user = await super.create(data)
-    if (roleIds?.length) {
-      await this.assignRoles(user.id, roleIds)
-    }
     const nextDeptIds = normalizeDeptIds(deptIds, deptId)
-    if (nextDeptIds.length) {
-      await this.assignDepts(user.id, nextDeptIds)
-    }
-    return this.findOneDetail(user.id) as Promise<UserEntity>
+
+    // 主表 + 角色关联 + 部门关联必须同生共死：任一步失败整体回滚，不留「建好了但没权限」的半成品
+    const id = await this.runInTransaction(async manager => {
+      const repo = this.repoOf(manager)
+      const user = await repo.save(repo.create(data))
+      if (roleIds?.length) {
+        await this.assignRoles(user.id, roleIds, manager)
+      }
+      if (nextDeptIds.length) {
+        await this.assignDepts(user.id, nextDeptIds, manager)
+      }
+      return user.id
+    })
+    return this.findOneDetail(id) as Promise<UserEntity>
   }
 
   /** 更新：若携带密码则生成新盐重新加密；携带 roleIds / deptIds 则重绑关联 */
@@ -190,6 +196,8 @@ export class UserService extends BaseService<UserEntity> {
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
     delete data.username // 账号不允许修改（密码算法绑定 username）
+    await this.findOne(id)
+    await this.assertUniqueFields(data, id)
     if (data.password) {
       data.salt = randomSalt()
       const user = await this.findOneWithPassword(id)
@@ -199,28 +207,37 @@ export class UserService extends BaseService<UserEntity> {
       data.updateBy = operator
     }
     data.updateTime = new Date()
-    await super.update(id, data)
-    if (roleIds) {
-      await this.assignRoles(id, roleIds)
-    }
     // 传了 deptIds（含空数组）或旧字段 deptId 才重绑部门；都不传则保持原样
-    if (deptIds !== undefined || deptId !== undefined) {
-      await this.assignDepts(id, normalizeDeptIds(deptIds, deptId))
-    }
+    const hasDeptChange = deptIds !== undefined || deptId !== undefined
+    const nextDeptIds = normalizeDeptIds(deptIds, deptId)
+
+    await this.runInTransaction(async manager => {
+      await this.repoOf(manager).update(id, data)
+      if (roleIds) {
+        await this.assignRoles(id, roleIds, manager)
+      }
+      if (hasDeptChange) {
+        await this.assignDepts(id, nextDeptIds, manager)
+      }
+    })
     return this.findOneDetail(id) as Promise<UserEntity>
   }
 
   /** 绑定角色（全量覆盖：多退少补） */
-  async assignRoles(id: string, roleIds: string[]): Promise<void> {
-    await this.findOne(id)
+  async assignRoles(id: string, roleIds: string[], manager?: EntityManager): Promise<void> {
+    // 独立接口直接调用时校验用户存在；事务内调用时由调用方（create/update）负责校验
+    if (!manager) {
+      await this.findOne(id)
+    }
+    const repo = this.repoOf(manager)
     const roles = await this.roleRepository.findBy({ id: In(roleIds) })
     const nextIds = new Set(roleIds)
-    const current = await this.repository.createQueryBuilder().relation(UserEntity, 'roles').of(id).loadMany<RoleEntity>()
+    const current = await repo.createQueryBuilder().relation(UserEntity, 'roles').of(id).loadMany<RoleEntity>()
     const currentIds = new Set(current.map(role => role.id))
     // 只新增差集、删除差集，避免重复插入关联行
     const toAdd = roles.filter(role => !currentIds.has(role.id))
     const toRemove = current.filter(role => !nextIds.has(role.id))
-    await this.repository.createQueryBuilder().relation(UserEntity, 'roles').of(id).addAndRemove(toAdd, toRemove)
+    await repo.createQueryBuilder().relation(UserEntity, 'roles').of(id).addAndRemove(toAdd, toRemove)
   }
 
   /**
@@ -228,8 +245,11 @@ export class UserService extends BaseService<UserEntity> {
    * - 入参顺序即主次顺序，第一个为主部门
    * - 同步冗余：sys_user.depart_ids（逗号串）、sys_user.org_code（主部门机构编码）
    */
-  async assignDepts(id: string, deptIds: string[]): Promise<void> {
-    await this.findOne(id)
+  async assignDepts(id: string, deptIds: string[], manager?: EntityManager): Promise<void> {
+    if (!manager) {
+      await this.findOne(id)
+    }
+    const repo = this.repoOf(manager)
     const ids = [...new Set(deptIds.filter(Boolean))]
     const depts = ids.length ? await this.deptRepository.find({ where: { id: In(ids), delFlag: '0' } }) : []
     if (depts.length !== ids.length) {
@@ -239,19 +259,80 @@ export class UserService extends BaseService<UserEntity> {
     const deptMap = new Map(depts.map(dept => [dept.id, dept]))
     const ordered = ids.map(depId => deptMap.get(depId) as DeptEntity)
 
-    const current = await this.repository.createQueryBuilder().relation(UserEntity, 'depts').of(id).loadMany<DeptEntity>()
+    const current = await repo.createQueryBuilder().relation(UserEntity, 'depts').of(id).loadMany<DeptEntity>()
     const currentIds = new Set(current.map(dept => dept.id))
     const toAdd = ordered.filter(dept => !currentIds.has(dept.id))
     const toRemove = current.filter(dept => !ids.includes(dept.id))
     if (toAdd.length || toRemove.length) {
-      await this.repository.createQueryBuilder().relation(UserEntity, 'depts').of(id).addAndRemove(toAdd, toRemove)
+      await repo.createQueryBuilder().relation(UserEntity, 'depts').of(id).addAndRemove(toAdd, toRemove)
     }
 
-    await this.repository.update(id, {
+    await repo.update(id, {
       departIds: ids.length ? ids.join(',') : null,
       orgCode: ordered[0]?.orgCode ?? null,
       updateTime: new Date()
     })
+  }
+
+  /** 事务内使用的用户仓库（不传 manager 时走默认连接） */
+  private repoOf(manager?: EntityManager): Repository<UserEntity> {
+    return manager ? manager.getRepository(UserEntity) : this.repository
+  }
+
+  /**
+   * 多步写在同一个事务里执行，并把唯一键冲突翻译成业务提示
+   *
+   * 为什么必须翻译：并发创建同名账号时前置查重必然漏网，MySQL 会抛 Duplicate entry，
+   * 不处理就变成 500「服务器内部错误」，用户完全不知道该改什么。
+   */
+  private async runInTransaction<T>(work: (manager: EntityManager) => Promise<T>): Promise<T> {
+    try {
+      return await this.repository.manager.transaction(work)
+    } catch (error) {
+      if (isDuplicateEntryError(error)) {
+        // 与角色/字典模块保持一致：唯一键冲突属于「参数问题」，用 400 而非 500
+        throw new BadRequestException(describeDuplicateEntry(error) ?? '数据重复，请检查后重试')
+      }
+      throw error
+    }
+  }
+
+  /**
+   * 唯一性预检（对齐数据库唯一索引 sys_user.username / phone / email / work_no）
+   * - 软删除记录**仍然占用**唯一索引，所以不加 del_flag 过滤，并在提示里说明怎么处理
+   * - excludeId：更新时排除自己，否则「只改姓名」也会被判成冲突
+   */
+  private async assertUniqueFields(data: Partial<UserEntity>, excludeId?: string): Promise<void> {
+    const rules: Array<{ field: 'username' | 'phone' | 'email' | 'workNo'; label: string }> = [
+      { field: 'username', label: '登录账号' },
+      { field: 'phone', label: '手机号' },
+      { field: 'email', label: '邮箱' },
+      { field: 'workNo', label: '工号' }
+    ]
+    for (const rule of rules) {
+      // 账号创建后不可修改，更新时不需要校验
+      if (rule.field === 'username' && excludeId) {
+        continue
+      }
+      const raw = data[rule.field]
+      const value = typeof raw === 'string' ? raw.trim() : ''
+      if (!value) {
+        continue
+      }
+      const where = { [rule.field]: value, ...(excludeId ? { id: Not(excludeId) } : {}) } as FindOptionsWhere<UserEntity>
+      const existing = await this.repository.findOne({ where })
+      if (!existing) {
+        continue
+      }
+      if (rule.field === 'username') {
+        throw new BadRequestException(
+          existing.delFlag === 1
+            ? `登录账号「${value}」已被一个已删除的账号占用（唯一索引不随软删除释放），请换一个账号或先恢复原账号`
+            : `登录账号「${value}」已存在，请换一个`
+        )
+      }
+      throw new BadRequestException(`${rule.label}「${value}」已被账号「${existing.username}」占用，请修改后再提交`)
+    }
   }
 
   /** 分页列表：支持 keyword 模糊搜索账号/真实姓名/电话、status 精确过滤、部门过滤；过滤已软删 */
@@ -373,17 +454,28 @@ export class UserService extends BaseService<UserEntity> {
     if (user.username === 'admin') {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '内置管理员账号不允许删除')
     }
-    await this.repository.update(id, { delFlag: 1 })
+    await this.runInTransaction(async manager => {
+      // 关联表必须跟着清：sys_user_role / sys_user_depart 不会随软删失效，
+      // 不清会出现两个后果：① 角色删除保护把已删用户算成「还有 N 个用户」，角色永久删不掉；
+      // ② 将来恢复账号时旧角色/旧部门「自动复活」，权限状态不可控。
+      await manager.query('DELETE FROM sys_user_role WHERE user_id = ?', [id])
+      await manager.query('DELETE FROM sys_user_depart WHERE user_id = ?', [id])
+      await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null })
+    })
   }
 
   /** 批量删除用户：逐条走 delete，保留「内置管理员不可删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: 0 } })
-    return runBatchDelete(targets, {
-      getId: user => user.id,
-      getName: user => user.realname || user.username,
-      remove: user => this.delete(user.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: user => user.id,
+        getName: user => user.realname || user.username,
+        remove: user => this.delete(user.id)
+      },
+      ids
+    )
   }
 
   /** 校验登录密码：JeecgBoot 算法 PBEWithMD5AndDES(username, password, salt) */

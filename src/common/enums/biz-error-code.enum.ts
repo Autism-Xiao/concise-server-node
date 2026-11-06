@@ -38,6 +38,11 @@ export enum BizErrorCode {
   LOGIN_FAILED = 1007,
   /** 账号已停用/冻结 —— 本项目扩展 */
   ACCOUNT_DISABLED = 1008,
+  /** 密码错误次数过多，账号临时锁定 —— 本项目扩展 */
+  ACCOUNT_LOCKED = 1009,
+
+  /** 请求过于频繁（限流），沿用 HTTP 429 保持语义直观 */
+  RATE_LIMITED = 429,
 
   /** 依赖服务不可用（如 Redis 未启用导致验证码不可用），沿用原 503 保持兼容 */
   SERVICE_UNAVAILABLE = 503

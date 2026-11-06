@@ -46,6 +46,9 @@ export function normalizeBatchIds(ids: string[]): string[] {
  *
  * - 单条失败不中断，继续处理后面的（用户勾了 50 条，不该因为第 1 条不可删就全放弃）
  * - 异常信息优先取 Error.message，NestJS 的 BadRequestException 也走这条，能拿到中文提示
+ * - requestedIds：前端提交的完整 id 列表。传了它，库里查不到的 id（已被别人删掉 / 传错）会
+ *   以「记录不存在或已被删除」进 failed，而不是被静默忽略 —— 否则前端只会看到
+ *   「选了 3 条，deleted=2」却没有任何解释。
  */
 export async function runBatchDelete<T>(
   targets: T[],
@@ -53,17 +56,27 @@ export async function runBatchDelete<T>(
     getId: (item: T) => string
     getName?: (item: T) => string | undefined
     remove: (item: T) => Promise<unknown>
-  }
+  },
+  requestedIds?: string[]
 ): Promise<BatchDeleteResult> {
   const result: BatchDeleteResult = { deleted: 0, failed: [] }
+  const handled = new Set<string>()
   for (const target of targets) {
     const id = handlers.getId(target)
+    handled.add(id)
     try {
       await handlers.remove(target)
       result.deleted += 1
     } catch (error) {
       const reason = error instanceof Error && error.message ? error.message : '删除失败'
       result.failed.push({ id, name: handlers.getName?.(target), reason })
+    }
+  }
+  if (requestedIds) {
+    for (const id of new Set(requestedIds.map(raw => String(raw ?? '').trim()).filter(Boolean))) {
+      if (!handled.has(id)) {
+        result.failed.push({ id, reason: '记录不存在或已被删除' })
+      }
     }
   }
   return result

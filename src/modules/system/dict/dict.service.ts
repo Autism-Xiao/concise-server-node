@@ -359,10 +359,14 @@ export class DictService extends BaseService<SysDictEntity> {
   /** 批量删除字典：逐条走 deleteDict，保留「有字典项不可删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.dictRepository.findBy({ id: In(normalizeBatchIds(ids)) })
-    return runBatchDelete(targets, {
-      getId: dict => dict.id,
-      getName: dict => dict.dictName,
-      remove: dict => this.deleteDict(dict.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: dict => dict.id,
+        getName: dict => dict.dictName,
+        remove: dict => this.deleteDict(dict.id)
+      },
+      ids
+    )
   }
 }

@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Post, Request } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
+import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { LoginDto, LoginResultDto, VerifyCaptchaDto } from '../dto/login.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
@@ -24,6 +25,7 @@ export class AuthV1Controller {
 
   @ApiOperation({ summary: '获取滑块验证码（v1）', description: '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId；答案存 Redis，5 分钟有效' })
   @Public()
+  @RateLimit({ limit: 30, window: 60, message: '验证码获取过于频繁，请稍后再试' })
   @Get('captcha')
   captcha() {
     return this.captchaService.create()
@@ -42,6 +44,10 @@ export class AuthV1Controller {
   @ApiOperation({ summary: '登录（v1）', description: '校验验证码与账号密码，返回 accessToken / refreshToken 双令牌' })
   @ApiOkResponse({ description: '令牌对与用户信息', type: LoginResultDto })
   @Public()
+  // 登录限流 60 次/分钟/IP：主要防脚本洪水；撞库由「同账号 5 次失败锁 15 分钟」+ 滑块验证码兜住，
+  // 阈值不宜设太小，否则 NAT 后的整个办公室会互相误伤
+  @RateLimit({ limit: 60, window: 60, message: '登录请求过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
   @Post('login')
   login(@Body() dto: LoginDto, @Request() req: { ip: string; headers: Record<string, string | string[] | undefined> }) {
     const userAgent = req.headers['user-agent']

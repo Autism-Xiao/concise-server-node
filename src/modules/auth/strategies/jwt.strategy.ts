@@ -48,8 +48,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   /** 校验通过后触发：确认用户仍存在且未冻结（带角色，供 RolesGuard 使用），返回值挂到 req.user */
   async validate(request: RequestWithToken, payload: JwtPayload) {
     const token = extractToken(request)
+    const issuedAt = (payload as { iat?: number }).iat
 
-    if (token && (await this.onlineService.isRevoked(token))) {
+    // 令牌黑名单（强制下线/登出）+ 用户级下线（refreshToken 重放时踢全量会话）
+    if (token && (await this.onlineService.isSessionInvalid(token, String(payload.id), issuedAt))) {
       throw new UnauthorizedException('登录状态已失效，请重新登录')
     }
 

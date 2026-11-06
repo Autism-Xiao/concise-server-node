@@ -10,10 +10,12 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { OperLogInterceptor } from './common/interceptors/oper-log.interceptor'
 import { RolesGuard } from './common/guards/roles.guard'
 import { PermsGuard } from './common/guards/perms.guard'
+import { RateLimitGuard } from './common/guards/rate-limit.guard'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { LoggerService } from './shared/logger/logger.service'
 import { DatabaseModule } from './shared/database/database.module'
+import { RateLimitModule } from './shared/rate-limit/rate-limit.module'
 import { UserModule } from './modules/user/user.module'
 import { AuthModule } from './modules/auth/auth.module'
 import { RoleModule } from './modules/role/role.module'
@@ -45,6 +47,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     }),
     // 数据库连接（TypeORM + MySQL）
     DatabaseModule,
+    // 计数基础设施（限流 / 登录失败锁定），全局模块
+    RateLimitModule,
     // 业务模块
     UserModule,
     AuthModule,
@@ -80,7 +84,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
     { provide: APP_INTERCEPTOR, useClass: OperLogInterceptor },
-    // 全局守卫：先 JWT 认证（@Public() 放行），再角色鉴权（@Roles()），最后按钮级权限（@Perms()）
+    // 全局守卫：先限流（最便宜的拒绝），再 JWT 认证（@Public() 放行），再角色鉴权（@Roles()），最后按钮级权限（@Perms()）
+    { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: PermsGuard }

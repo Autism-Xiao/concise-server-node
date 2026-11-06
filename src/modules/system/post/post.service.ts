@@ -201,10 +201,14 @@ export class PostService extends BaseService<PostEntity> {
   /** 批量删除：逐条硬删，单条失败返回原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const targets = await this.postRepository.findBy({ id: In(normalizeBatchIds(ids)) })
-    return runBatchDelete(targets, {
-      getId: post => post.id,
-      getName: post => post.postName,
-      remove: post => this.delete(post.id)
-    })
+    return runBatchDelete(
+      targets,
+      {
+        getId: post => post.id,
+        getName: post => post.postName,
+        remove: post => this.delete(post.id)
+      },
+      ids
+    )
   }
 }

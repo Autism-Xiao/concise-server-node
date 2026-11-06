@@ -58,9 +58,20 @@ export class JobService {
     return jobs.map(job => ({ ...job, ...this.scheduler.recordOf(job.id) }))
   }
 
-  /** 可选执行器清单（前端下拉） */
-  listHandlers() {
-    return this.registry.list()
+  /**
+   * 可选执行器清单（前端下拉）
+   *
+   * 带上 occupied 标记：jobClassName 是唯一键，同一个执行器只能建一条任务。
+   * 前端若把已占用的执行器也摆在下拉里，用户选完提交必然失败，所以这里直接把占用情况给出去。
+   */
+  async listHandlers(): Promise<Array<{ className: string; description?: string; occupied: boolean; jobId?: string }>> {
+    const handlers = this.registry.list()
+    const jobs = await this.jobRepository.find({ where: { delFlag: 0 }, select: { id: true, jobClassName: true } })
+    const occupiedBy = new Map(jobs.map(job => [job.jobClassName, job.id]))
+    return handlers.map(handler => {
+      const jobId = occupiedBy.get(handler.className)
+      return { ...handler, occupied: Boolean(jobId), jobId }
+    })
   }
 
   /** 详情（排除已删除） */

@@ -1,10 +1,12 @@
-import { Injectable, Inject, HttpException, HttpStatus } from '@nestjs/common'
+import { Injectable, Inject, HttpException, HttpStatus, Logger } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
+import { randomUUID } from 'node:crypto'
 
 import { captchaConfig, jwtConfig, type CaptchaConfig, type JwtConfig } from '../../../config'
 import { hasSuperRole } from '../../../utils/super-role.util'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
+import { RateLimitService } from '../../../shared/rate-limit/rate-limit.service'
 import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
 import { MenuService, buildMenuTree, type MenuTreeItem } from '../../menu/menu.service'
@@ -12,6 +14,13 @@ import { OnlineService } from '../../ops/online/online.service'
 import type { MenuEntity } from '../../menu/entities/menu.entity'
 import { CaptchaService } from './captcha.service'
 import { LoginDto } from '../dto/login.dto'
+
+/** 同一账号连续密码错误次数上限（达到后锁定） */
+export const LOGIN_MAX_FAILS = 5
+/** 锁定时长（秒），同时也是失败计数的滑动窗口 */
+export const LOGIN_LOCK_SECONDS = 15 * 60
+/** refreshToken 并发刷新宽限期：超过这个间隔还在用「已换掉的」令牌，判定为泄露后被重放 */
+const REFRESH_REUSE_GRACE_MS = 10 * 1000
 
 export interface JwtPayload {
   id: string
@@ -39,6 +48,8 @@ export interface PermissionResult {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name)
+
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
@@ -47,16 +58,25 @@ export class AuthService {
     private readonly logService: LogService,
     private readonly captchaService: CaptchaService,
     private readonly menuService: MenuService,
-    private readonly onlineService: OnlineService
+    private readonly onlineService: OnlineService,
+    private readonly rateLimitService: RateLimitService
   ) {}
 
-  /** 登录：验证码校验（可开关）→ 账号密码校验 → 签发双令牌；成败都记入登录日志 */
+  /**
+   * 登录：验证码校验（可开关）→ 失败锁定检查 → 账号密码校验 → 签发双令牌；成败都记入登录日志
+   *
+   * 为什么还要自己做失败锁定：滑块验证码是开关式的，CAPTCHA_ENABLED=false 或 Redis 故障时等于裸奔，
+   * 这里按账号累计密码错误次数（Redis 共享，多实例一致），5 次锁 15 分钟，避免无限撞库。
+   */
   async login(dto: LoginDto, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
+    const failKey = this.loginFailKey(dto.username)
     try {
       // 验证码开关：captcha.enabled=true 时强制校验滑块验证票据（防爆破）
       if (this.captcha.enabled) {
         await this.captchaService.assertTicket(dto.captchaTicket)
       }
+
+      await this.assertNotLocked(failKey)
 
       const user = await this.userService.findByUsername(dto.username)
       if (!user) {
@@ -72,10 +92,14 @@ export class AuthService {
         throw new BizException(BizErrorCode.ACCOUNT_DISABLED, '账号已被冻结，请联系管理员', HttpStatus.FORBIDDEN)
       }
 
+      // 登录成功即清零失败计数，避免「白天输错两次、晚上再错三次」被累计误锁
+      await this.rateLimitService.reset(failKey)
+
       // status 为 jeecg 语义（sys_log）：0 正常（成功）/ 1 异常（失败）
       await this.logService.recordLogin({ username: dto.username, status: 0, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
       return this.issueTokens(user)
     } catch (error) {
+      await this.recordLoginFailure(failKey, dto.username, error)
       const message = error instanceof HttpException ? error.message : '登录异常'
       await this.logService.recordLogin({ username: dto.username, status: 1, message, ip: meta.ip, userAgent: meta.userAgent })
       throw error
@@ -129,7 +153,12 @@ export class AuthService {
     return { roles, permissions, menus }
   }
 
-  /** 用 refreshToken 换新令牌对 */
+  /**
+   * 用 refreshToken 换新令牌对（轮换：一个 refreshToken 只能用一次）
+   *
+   * 重放检测：正常客户端拿到新令牌后就不会再提交旧的。若旧的（已拉黑）在宽限期之后
+   * 又被使用，说明它已被第三方拿到 → 判定为泄露，踢掉该账号全部会话，让真用户重新登录。
+   */
   async refreshToken(refreshToken: string): Promise<LoginResult> {
     let payload: JwtPayload
     try {
@@ -142,11 +171,60 @@ export class AuthService {
 
     // 与登录返回保持同构：带角色与部门（depts / dept / deptId）
     // 登出时 refreshToken 已拉黑，防止退出登录后继续刷新续命
-    if (await this.onlineService.isRevoked(refreshToken)) {
+    const revocation = await this.onlineService.getRevocation(refreshToken)
+    if (revocation.revoked) {
+      if (revocation.at > 0 && Date.now() - revocation.at > REFRESH_REUSE_GRACE_MS) {
+        await this.onlineService.revokeUser(String(payload.id), this.parseExpiresIn(this.jwt.refreshExpiresIn))
+        this.logger.warn(`检测到 refreshToken 重放（用户 ${payload.username}），已强制下线该账号全部会话`)
+      }
       throw new BizException(BizErrorCode.UNAUTHORIZED, '登录状态已失效，请重新登录', HttpStatus.UNAUTHORIZED)
     }
+
     const user = await this.userService.findOneDetail(String(payload.id))
-    return this.issueTokens(user)
+    const result = await this.issueTokens(user)
+    // 轮换：旧 refreshToken 立即作废（TTL 到其自然过期，不占用长期空间）
+    await this.onlineService.markRevoked(refreshToken, this.remainingTtl(refreshToken, this.parseExpiresIn(this.jwt.refreshExpiresIn)))
+    return result
+  }
+
+  /** 失败计数 key：账号维度（大小写不敏感），与 IP 限流互补 */
+  private loginFailKey(username: string): string {
+    return `auth:login:fail:${String(username ?? '')
+      .trim()
+      .toLowerCase()}`
+  }
+
+  /** 命中锁定则直接拒绝，并告知还要等多久 */
+  private async assertNotLocked(failKey: string): Promise<void> {
+    const hit = await this.rateLimitService.get(failKey)
+    if (hit.count < LOGIN_MAX_FAILS || hit.resetAt <= Date.now()) {
+      return
+    }
+    const minutes = Math.max(Math.ceil((hit.resetAt - Date.now()) / 60000), 1)
+    throw new BizException(BizErrorCode.ACCOUNT_LOCKED, `密码错误次数过多，账号已临时锁定，请 ${minutes} 分钟后再试`, HttpStatus.TOO_MANY_REQUESTS)
+  }
+
+  /** 只有「账号密码错误」才计数：验证码错误、账号冻结、已锁定都不算密码尝试 */
+  private async recordLoginFailure(failKey: string, username: string, error: unknown): Promise<void> {
+    const isPasswordFailure = error instanceof BizException && error.getBizCode() === BizErrorCode.LOGIN_FAILED
+    if (!isPasswordFailure) {
+      return
+    }
+    const hit = await this.rateLimitService.increment(failKey, LOGIN_LOCK_SECONDS)
+    if (hit.count === LOGIN_MAX_FAILS) {
+      this.logger.warn(`账号 ${username} 连续 ${hit.count} 次密码错误，已锁定 ${Math.round(LOGIN_LOCK_SECONDS / 60)} 分钟`)
+    }
+  }
+
+  /** 令牌剩余有效期（秒），取令牌自身 exp；解析失败用兜底值 */
+  private remainingTtl(token: string, fallbackSeconds: number): number {
+    try {
+      const exp = (this.jwtService.decode(token) as { exp?: number } | null)?.exp
+      const remaining = (exp ?? 0) - Math.floor(Date.now() / 1000)
+      return remaining > 0 ? remaining : fallbackSeconds
+    } catch {
+      return fallbackSeconds
+    }
   }
 
   /**
@@ -170,12 +248,14 @@ export class AuthService {
 
   /** 签发 accessToken + refreshToken */
   private async issueTokens(user: import('../../user/entities/user.entity').UserEntity): Promise<LoginResult> {
-    const payload: JwtPayload = { id: user.id, username: user.username }
+    const base = { id: user.id, username: user.username }
     const { secret, refreshSecret, expiresIn, refreshExpiresIn } = this.jwt
 
+    // jti 必加：JWT 的 payload 只有 id/username/iat（秒级），同一秒内签发的两个令牌完全相同。
+    // 轮换时「新 refreshToken === 旧 refreshToken」会导致刚签发就被自己拉黑，客户端直接掉线。
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, { secret, expiresIn }),
-      this.jwtService.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExpiresIn })
+      this.jwtService.signAsync({ ...base, jti: randomUUID() }, { secret, expiresIn }),
+      this.jwtService.signAsync({ ...base, jti: randomUUID() }, { secret: refreshSecret, expiresIn: refreshExpiresIn })
     ])
 
     return {
