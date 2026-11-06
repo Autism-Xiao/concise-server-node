@@ -34,3 +34,9 @@
 - 列表查询一律返回 `Pagination`（records/total/current/size/pages），新增列表用 `toPagination()`；数据源类（tree/options/code）才返回数组
 - 密码：新数据 Argon2id（`@node-rs/argon2`，m=19456/t=2/p=1，约 18ms），历史 jeecg 格式在登录成功后就地升级；`UserService.verifyPassword` 是**异步**的，调用要 await
 - 权限集合走 `PermissionCacheService`（按角色缓存）；任何改动 role_permission / sys_permission 的写路径都要调用 invalidateRole / invalidateAll
+
+## 页面水印（2026-11-06 三期）
+
+- 模块 `src/modules/system/watermark/`：全局 `sys_watermark_setting`（单行）+ `sys_user_watermark`（NULL=继承）；生效规则唯一入口 `resolveWatermarkState`（off > enforced=2 > enforced=1 > forced > 用户??全局），别在别处重写判定
+- 用户侧接口只允许 enabled/content/density，样式参数（opacity/rotate/fontSize）只能全局改——防止用户把水印调透明绕过；占位符由服务端渲染成 lines 下发
+- 坑：`PUT /v1/users/me/watermark` 必须声明在 `PUT /v1/users/:id/watermark` 之前；新表建表要显式 `COLLATE=utf8mb4_unicode_ci`（sys_user 是 unicode_ci，默认 0900_ai_ci JOIN 会炸）；删用户事务里要同步删水印行
