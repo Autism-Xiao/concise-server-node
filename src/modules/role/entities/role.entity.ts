@@ -23,6 +23,14 @@ export class RoleEntity {
   @Column({ length: 100, unique: true, comment: '角色编码' })
   roleCode: string
 
+  @ApiPropertyOptional({
+    description: '数据范围：1 全部 / 2 本部门及以下 / 3 本部门 / 4 仅本人（默认 1，超级角色不受限）',
+    example: 1,
+    enum: [1, 2, 3, 4]
+  })
+  @Column({ type: 'tinyint', default: 1, comment: '数据范围(1全部 2本部门及以下 3本部门 4仅本人)' })
+  dataScope?: number
+
   @ApiPropertyOptional({ description: '描述', example: '管理员', nullable: true })
   @Column({ length: 255, nullable: true, comment: '描述' })
   description?: string

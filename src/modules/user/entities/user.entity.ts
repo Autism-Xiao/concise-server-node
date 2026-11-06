@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, JoinTable, ManyToMany, PrimaryColumn } from 'typeorm'
 import { RoleEntity } from '../../role/entities/role.entity'
 import { DeptEntity } from '../../system/dept/entities/dept.entity'
+import { PostEntity } from '../../system/post/entities/post.entity'
 
 /**
  * 用户表（对齐 JeecgBoot sys_user）
@@ -37,8 +38,9 @@ export class UserEntity {
   salt?: string | null
 
   @ApiPropertyOptional({ description: '头像 URL', nullable: true })
-  @Column({ length: 255, nullable: true, comment: '头像' })
-  avatar?: string
+  // 显式 type：属性类型是 string | null 时 TypeORM 反射会推断成 Object 而拒绝建连（同 salt 列的坑）
+  @Column({ type: 'varchar', length: 255, nullable: true, comment: '头像' })
+  avatar?: string | null
 
   @ApiPropertyOptional({ description: '生日', example: '1990-01-01', nullable: true })
   @Column({ type: 'date', nullable: true, comment: '生日' })
@@ -55,6 +57,13 @@ export class UserEntity {
   @ApiPropertyOptional({ description: '电话', nullable: true })
   @Column({ length: 45, nullable: true, comment: '电话' })
   phone?: string
+
+  @ApiPropertyOptional({ description: '密码过期时间（空 = 不限制；过期后登录强制改密）', nullable: true })
+  @Column({ type: 'datetime', nullable: true, comment: '密码过期时间(空=不限制)' })
+  passwordExpireAt?: Date | null
+  @ApiPropertyOptional({ description: '下次登录是否强制改密：1 是 / 0 否', example: 0, enum: [0, 1] })
+  @Column({ type: 'tinyint', default: 0, comment: '下次登录强制改密(1是 0否)' })
+  mustChangePassword?: number
 
   @ApiProperty({ description: '状态：1 正常 / 2 冻结（对齐 sys_user）', example: 1, enum: [1, 2] })
   @Column({ type: 'tinyint', nullable: true, comment: '状态(1-正常,2-冻结)' })
@@ -131,6 +140,15 @@ export class UserEntity {
    */
   @ApiPropertyOptional({ description: '主部门 ID（兼容旧字段，等价于 dept.id），只读', example: 'dept_1', deprecated: true })
   deptId?: string | null
+
+  @ApiPropertyOptional({ description: '岗位列表（sys_user_post 多对多）', type: [PostEntity], required: false })
+  @ManyToMany(() => PostEntity, post => post.users)
+  @JoinTable({
+    name: 'sys_user_post',
+    joinColumns: [{ name: 'user_id', referencedColumnName: 'id' }],
+    inverseJoinColumns: [{ name: 'post_id', referencedColumnName: 'id' }]
+  })
+  posts?: PostEntity[]
 
   /**
    * 水印开关原始值（非数据库列，列表/详情由 UserService 批量组装）

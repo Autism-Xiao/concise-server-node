@@ -684,6 +684,82 @@ async function main() {
     record(locked.status === 429 && locked.json?.code === 1009, '校验失败与登录共享锁定计数（429 / 1009）', `status=${locked.status} code=${locked.json?.code}`)
   }
 
+  /* ---------- 10.7 用户管理 PRD：批量操作/清缓存/头像/密码策略/登录日志按用户 ---------- */
+  section('10.7 用户管理 PRD：批量操作/清缓存/头像/密码策略')
+  {
+    const options = await call('GET', '/v1/roles/options', { token: adminToken })
+    const roleId = options.json?.result?.[0]?.id
+    const mk = async tag => {
+      const username = `smoke_batch_${tag}_${STAMP}`
+      const password = crypto.randomBytes(8).toString('hex')
+      const created = await call('POST', '/v1/users', {
+        token: adminToken,
+        body: { username, realname: '批量测试', password, roleIds: roleId ? [roleId] : [] }
+      })
+      return { id: created.json?.result?.id, username, password }
+    }
+    const u1 = await mk('a')
+    const u2 = await mk('b')
+
+    if (u1.id && u2.id) {
+      // 1) 批量停用：updated=2，冻结后登录被拒（1008）
+      const frozen = await call('POST', '/v1/users/batch-status', { token: adminToken, body: { ids: [u1.id, u2.id], status: 2, reason: '冒烟测试停用' } })
+      record(isOk(frozen) && frozen.json?.result?.updated === 2, '批量停用 2 个用户成功', `status=${frozen.status} result=${JSON.stringify(frozen.json?.result)}`)
+      const denied = await call('POST', '/v1/auth/login', { body: { username: u1.username, password: u1.password } })
+      record(denied.status === 403 && denied.json?.code === 1008, '停用后登录被拒（403 / 1008）', `status=${denied.status} code=${denied.json?.code}`)
+
+      // 2) 批量启用：登录放行，且响应带 mustChangePassword 布尔
+      const unfrozen = await call('POST', '/v1/users/batch-status', { token: adminToken, body: { ids: [u1.id, u2.id], status: 1 } })
+      record(isOk(unfrozen) && unfrozen.json?.result?.updated === 2, '批量启用成功', `status=${unfrozen.status}`)
+      const relogin = await call('POST', '/v1/auth/login', { body: { username: u1.username, password: u1.password } })
+      record(
+        isOk(relogin) && typeof relogin.json?.result?.mustChangePassword === 'boolean',
+        '登录响应带 mustChangePassword 标记', `mustChange=${relogin.json?.result?.mustChangePassword}`
+      )
+
+      // 3) 批量分配角色：详情里角色生效
+      const roles = await call('POST', '/v1/users/batch-roles', { token: adminToken, body: { ids: [u1.id, u2.id], roleIds: roleId ? [roleId] : [] } })
+      record(isOk(roles) && roles.json?.result?.updated === 2, '批量分配角色成功', `status=${roles.status} result=${JSON.stringify(roles.json?.result)}`)
+      const detail = await call('GET', `/v1/users/${u1.id}`, { token: adminToken })
+      record(
+        isOk(detail) && (detail.json?.result?.roles ?? []).some(role => role.id === roleId) && Array.isArray(detail.json?.result?.posts),
+        '用户详情带角色与岗位列表', `roles=${(detail.json?.result?.roles ?? []).length}`
+      )
+
+      // 4) 清除用户权限缓存：幂等成功
+      const cleared = await call('DELETE', `/v1/users/${u1.id}/permission-cache`, { token: adminToken })
+      record(isOk(cleared) && typeof cleared.json?.result?.cleared === 'number', '清除用户权限缓存成功', `status=${cleared.status} cleared=${cleared.json?.result?.cleared}`)
+
+      // 5) 密码策略：置过期时间后，登录 mustChangePassword=true
+      const expire = await call('PUT', `/v1/users/${u2.id}`, { token: adminToken, body: { passwordExpireAt: '2020-01-01T00:00:00Z' } })
+      record(isOk(expire), '设置密码过期时间成功', `status=${expire.status} msg=${expire.json?.message ?? ''}`)
+      const expiredLogin = await call('POST', '/v1/auth/login', { body: { username: u2.username, password: u2.password } })
+      record(
+        isOk(expiredLogin) && expiredLogin.json?.result?.mustChangePassword === true,
+        '密码过期用户登录被标记强制改密', `mustChange=${expiredLogin.json?.result?.mustChangePassword}`
+      )
+
+      // 6) 头像：设置 → 详情带出 → 管理员重置
+      const avatar = await call('PUT', '/v1/users/me/avatar', { token: adminToken, body: { avatar: '/upload/2026-11-07/image/smoke.png' } })
+      record(isOk(avatar) && avatar.json?.result?.avatar === '/upload/2026-11-07/image/smoke.png', '设置我的头像成功', `status=${avatar.status}`)
+      const reset = await call('DELETE', `/v1/users/${u1.id}/avatar`, { token: adminToken })
+      record(isOk(reset) && reset.json?.result?.avatar === null, '管理员重置头像为空', `avatar=${reset.json?.result?.avatar}`)
+
+      // 7) 登录日志按用户过滤：返回行全部属于该用户
+      const myLogs = await call('GET', `/v1/logs/login?page=1&pageSize=20&userId=${u1.id}`, { token: adminToken })
+      const logRows = myLogs.json?.result?.records ?? []
+      record(
+        isOk(myLogs) && logRows.length > 0 && logRows.every(row => row.operateUserId === u1.id),
+        '登录日志支持按用户 ID 精确过滤', `rows=${logRows.length}`
+      )
+
+      // 清理：批量删除
+      await call('POST', '/v1/users/batch-delete', { token: adminToken, body: { ids: [u1.id, u2.id] } })
+    } else {
+      record(false, '10.7 批量操作用例准备', `建号失败 u1=${u1.id} u2=${u2.id}`)
+    }
+  }
+
   /* ---------- 11. refreshToken 轮换 ---------- */
   section('11. refreshToken 轮换与重放检测')
   {

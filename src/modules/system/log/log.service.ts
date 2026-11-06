@@ -10,6 +10,8 @@ import { SysLogEntity } from './entities/sys-log.entity'
 
 /** 登录日志入参（status 为 jeecg 语义：0 成功 / 1 失败） */
 export interface LoginLogInput {
+  /** 账号校验通过后的用户 ID（用于按人检索登录日志）；账号不存在时为空 */
+  userId?: string
   username: string
   status: number
   message: string
@@ -55,6 +57,7 @@ export class LogService {
           id: randomId32(),
           logContent: input.message,
           logType: 0,
+          operateUserId: input.userId,
           operateUserName: input.username,
           ip,
           status: input.status,
@@ -96,12 +99,16 @@ export class LogService {
   }
 
   /** 登录日志查询条件构造（列表与导出共用，log_type=0） */
-  private buildLoginLogQb(query: { username?: string; status?: number; startTime?: string; endTime?: string }) {
+  private buildLoginLogQb(query: { userId?: string; username?: string; status?: number; startTime?: string; endTime?: string }) {
     const qb = this.logRepository
       .createQueryBuilder('log')
       .where('log.log_type = :logType', { logType: 0 })
       .orderBy('log.create_time', 'DESC')
       .addOrderBy('log.id', 'DESC')
+    // 精确按用户过滤（用户管理页「登录日志」弹窗用）：优先 userId，改名不影响历史归属
+    if (query.userId) {
+      qb.andWhere('log.operate_user_id = :userId', { userId: query.userId })
+    }
     if (query.username) {
       qb.andWhere('log.operate_user_name LIKE :username', { username: `%${query.username}%` })
     }
@@ -143,6 +150,7 @@ export class LogService {
   async listLoginLog(query: {
     page?: number
     pageSize?: number
+    userId?: string
     username?: string
     status?: number
     startTime?: string
@@ -164,7 +172,7 @@ export class LogService {
   }
 
   /** 导出登录日志（与列表同过滤条件，不分页，上限 5 万行防拖库） */
-  async exportLoginLog(query: { username?: string; status?: number; startTime?: string; endTime?: string }): Promise<SysLogEntity[]> {
+  async exportLoginLog(query: { userId?: string; username?: string; status?: number; startTime?: string; endTime?: string }): Promise<SysLogEntity[]> {
     return this.buildLoginLogQb(query).take(50000).getMany()
   }
 

@@ -41,6 +41,8 @@ export interface LoginResult {
   refreshToken: string
   expiresIn: number
   userInfo: Record<string, unknown>
+  /** 密码已过期或被管理员标记：前端须先弹强制改密，改完才放行进入系统 */
+  mustChangePassword?: boolean
 }
 
 /** 登录后权限汇总（对齐 JeecgBoot GetUserPermissionByToken） */
@@ -88,6 +90,8 @@ export class AuthService {
    */
   async login(dto: LoginDto, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
     const failKey = this.loginFailKey(dto.username)
+    // 账号校验通过后回填，成败日志都带上 operateUserId（用户管理页「登录日志」按人过滤依赖它）
+    let knownUserId: string | undefined
     try {
       // 验证码开关：captcha.enabled=true 时强制校验滑块验证票据（防爆破）
       if (this.captcha.enabled) {
@@ -100,6 +104,7 @@ export class AuthService {
       if (!user) {
         throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
       }
+      knownUserId = user.id
 
       // 密码校验：新数据走 argon2id，历史数据走 JeecgBoot PBEWithMD5AndDES（见 UserService.verifyPassword）
       if (!(await this.userService.verifyPassword(user, dto.password))) {
@@ -120,12 +125,15 @@ export class AuthService {
       await this.rateLimitService.reset(failKey)
 
       // status 为 jeecg 语义（sys_log）：0 正常（成功）/ 1 异常（失败）
-      await this.logService.recordLogin({ username: dto.username, status: 0, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
-      return this.issueTokens(user)
+      await this.logService.recordLogin({ userId: knownUserId, username: dto.username, status: 0, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
+      const result = await this.issueTokens(user)
+      // 密码过期/管理员标记：登录照常放行，但前端必须先引导改密（PRD：强制定期改密）
+      result.mustChangePassword = await this.userService.needsPasswordChange(user)
+      return result
     } catch (error) {
       await this.recordLoginFailure(failKey, dto.username, error)
       const message = error instanceof HttpException ? error.message : '登录异常'
-      await this.logService.recordLogin({ username: dto.username, status: 1, message, ip: meta.ip, userAgent: meta.userAgent })
+      await this.logService.recordLogin({ userId: knownUserId, username: dto.username, status: 1, message, ip: meta.ip, userAgent: meta.userAgent })
       throw error
     }
   }
@@ -253,6 +261,8 @@ export class AuthService {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '新密码不能与原密码相同', HttpStatus.BAD_REQUEST)
     }
     await this.userService.updatePasswordOnly(userId, dto.newPassword)
+    // 自助改密成功：解除「下次登录强制改密」与密码过期标记（新有效期由管理员另行设置）
+    await this.userService.clearPasswordFlags(userId)
     await this.onlineService.kickUser(userId, { keepToken: currentToken })
     return { changed: true }
   }

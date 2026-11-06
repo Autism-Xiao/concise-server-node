@@ -84,4 +84,28 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   deptId?: string
+
+  @ApiPropertyOptional({
+    description: '密码过期时间（ISO 8601 或 YYYY-MM-DD；空 = 不限制；过期后登录强制改密）',
+    example: '2026-12-31'
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'passwordExpireAt 须为合法日期' })
+  passwordExpireAt?: string | null
+
+  @ApiPropertyOptional({ description: '下次登录是否强制改密：1 是 / 0 否', example: 0, enum: [0, 1] })
+  @IsOptional()
+  @IsIn([0, 1])
+  @Type(() => Number)
+  mustChangePassword?: number
+
+  @ApiPropertyOptional({
+    description: '岗位 ID 列表（sys_position.id，写入 sys_user_post），传空数组表示清空',
+    example: ['post_1'],
+    type: [String]
+  })
+  @IsOptional()
+  @IsArray({ message: 'postIds 必须是数组' })
+  @IsString({ each: true, message: 'postIds 元素必须是字符串' })
+  postIds?: string[]
 }

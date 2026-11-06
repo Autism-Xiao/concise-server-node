@@ -5,6 +5,7 @@ import { RoleModule } from '../role/role.module'
 import { OnlineModule } from '../ops/online/online.module'
 import { LEGACY_ROUTES_ENABLED } from '../../config/legacy-routes.config'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
+import { PostEntity } from '../system/post/entities/post.entity'
 import { UserWatermarkEntity } from '../system/watermark/entities/user-watermark.entity'
 import { WatermarkSettingEntity } from '../system/watermark/entities/watermark-setting.entity'
 import { UserEntity } from './entities/user.entity'
@@ -16,7 +17,7 @@ import { UserService } from './user.service'
   // DeptEntity 需在本模块 forFeature 注册，才能在此注入 Repository（跨模块注入不生效）；
   // 水印两张表同理：列表要一并返回"是否带水印"，直接读仓库比跨模块调服务更省一次绕行；
   // OnlineModule 提供 kickUser（冻结/重置密码联动踢下线）
-  imports: [TypeOrmModule.forFeature([UserEntity, DeptEntity, UserWatermarkEntity, WatermarkSettingEntity]), RoleModule, OnlineModule],
+  imports: [TypeOrmModule.forFeature([UserEntity, DeptEntity, PostEntity, UserWatermarkEntity, WatermarkSettingEntity]), RoleModule, OnlineModule],
   controllers: [UserV1Controller, ...(LEGACY_ROUTES_ENABLED ? [UserController] : [])],
   providers: [UserService],
   exports: [UserService]

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Column, Entity, ManyToOne, PrimaryColumn, JoinColumn } from 'typeorm'
+import { Column, Entity, ManyToMany, ManyToOne, PrimaryColumn, JoinColumn } from 'typeorm'
 import { DeptEntity } from '../../dept/entities/dept.entity'
+import { UserEntity } from '../../../user/entities/user.entity'
 
 /**
  * 岗位表（对齐 JeecgBoot sys_position）
@@ -61,4 +62,8 @@ export class PostEntity {
   @ManyToOne(() => DeptEntity, { nullable: true, createForeignKeyConstraints: false })
   @JoinColumn({ name: 'dept_id' })
   dept?: DeptEntity | null
+
+  @ApiPropertyOptional({ description: '持有该岗位的用户（sys_user_post 反向关联）', required: false })
+  @ManyToMany(() => UserEntity, user => user.posts)
+  users?: UserEntity[]
 }

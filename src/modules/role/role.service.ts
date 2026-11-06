@@ -77,6 +77,7 @@ export class RoleService extends BaseService<RoleEntity> {
           roleName: dto.roleName,
           roleCode: dto.roleCode,
           description: dto.description,
+          dataScope: dto.dataScope ?? 1,
           createTime: new Date()
         })
       )
@@ -105,6 +106,8 @@ export class RoleService extends BaseService<RoleEntity> {
         roleName: dto.roleName,
         roleCode: dto.roleCode,
         description: dto.description,
+        // 数据范围只接受显式传入；undefined 表示本次不改（前端没传别把已有配置冲掉）
+        ...(dto.dataScope !== undefined ? { dataScope: dto.dataScope } : {}),
         updateTime: new Date()
       })
       if (dto.menuIds) {

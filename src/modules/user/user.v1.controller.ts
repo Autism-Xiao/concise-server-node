@@ -11,6 +11,7 @@ import { readImportFile } from '../../helper/import/import-file'
 import { formatDateTime } from '../../utils/csv.util'
 import { setDownloadHeaders } from '../../utils/download.util'
 import { buildImportTemplateXlsx } from '../../utils/xlsx.util'
+import { BatchAssignRolesDto, BatchUserStatusDto, UpdateAvatarDto } from './dto/batch-user.dto'
 import { CreateUserDto } from './dto/create-user.dto'
 import { QueryUserDto } from './dto/query-user.dto'
 import { ResetUserPasswordDto } from './dto/reset-user-password.dto'
@@ -42,8 +43,8 @@ export class UserV1Controller {
   @ApiOkResponse({ description: '分页结果', type: [UserEntity] })
   @Perms('system:user:list')
   @Get()
-  list(@Query() query: QueryUserDto) {
-    return this.userService.listByQuery(query)
+  list(@Query() query: QueryUserDto, @Request() req: { user: UserEntity }) {
+    return this.userService.listByQuery(query, req.user)
   }
 
   @ApiOperation({
@@ -52,12 +53,8 @@ export class UserV1Controller {
   })
   @Perms('system:user:export')
   @Get('export')
-  async export(
-    @Query() query: QueryUserDto,
-    @Request() req: { user: { username: string } },
-    @Res({ passthrough: true }) res: Response
-  ): Promise<StreamableFile> {
-    const users = await this.userService.exportUsers(query)
+  async export(@Query() query: QueryUserDto, @Request() req: { user: UserEntity }, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+    const users = await this.userService.exportUsers(query, req.user)
     const filters = [
       query.keyword ? `关键字=${query.keyword}` : '',
       query.status ? `状态=${Number(query.status) === 1 ? '正常' : '冻结'}` : '',
@@ -75,6 +72,7 @@ export class UserV1Controller {
         { header: '性别', width: 8, align: 'center' },
         { header: '状态', width: 10, align: 'center' },
         { header: '角色', width: 24 },
+        { header: '岗位', width: 20 },
         { header: '所属部门', width: 26 },
         { header: '工号', width: 14 },
         { header: '创建时间', width: 20, align: 'center' }
@@ -87,6 +85,7 @@ export class UserV1Controller {
         user.sex === 1 ? '男' : user.sex === 2 ? '女' : '未知',
         user.status === 2 ? '冻结' : '正常',
         (user.roles ?? []).map(role => role.roleName ?? role.roleCode).join(' / '),
+        (user.posts ?? []).map(post => post.postName ?? post.postCode).join(' / '),
         (user.depts ?? []).map(dept => dept.departName).join(' / '),
         user.workNo ?? '',
         formatDateTime(user.createTime)
@@ -203,6 +202,28 @@ export class UserV1Controller {
     return this.userService.batchDelete(dto.ids)
   }
 
+  @ApiOperation({
+    summary: '批量启用/停用（v1）',
+    description: '与单条同规则：内置 admin 不可停用、停用自动踢全部会话；单条失败不阻断其他条，逐条返回原因；需 system:user:update'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
+  @Post('batch-status')
+  batchUpdateStatus(@Body() dto: BatchUserStatusDto) {
+    return this.userService.batchUpdateStatus(dto.ids, dto.status, dto.reason)
+  }
+
+  @ApiOperation({
+    summary: '批量分配角色（v1）',
+    description: '对列表内每个用户全量覆盖绑定同一组角色（与单个用户绑定角色同语义）；任一角色不存在则整体拒绝；需 system:user:update'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
+  @Post('batch-roles')
+  batchAssignRoles(@Body() dto: BatchAssignRolesDto) {
+    return this.userService.batchAssignRoles(dto.ids, dto.roleIds)
+  }
+
   @ApiOperation({ summary: '删除用户（v1，软删除）' })
   @OperLog('用户管理')
   @Perms('system:user:delete')
@@ -277,5 +298,31 @@ export class UserV1Controller {
   @Put(':id/restore')
   restore(@Param('id') id: string, @Body() dto: RestoreUserDto) {
     return this.userService.restore(id, dto.roleIds, dto.deptIds)
+  }
+
+  @ApiOperation({
+    summary: '清除用户权限缓存（v1）',
+    description: '按用户当前挂的角色逐个失效权限缓存（缓存按角色分片）；改角色/改权限后未生效时使用；幂等；需 system:user:update'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
+  @Delete(':id/permission-cache')
+  clearPermissionCache(@Param('id') id: string) {
+    return this.userService.clearPermissionCache(id)
+  }
+
+  @ApiOperation({ summary: '重置用户头像（v1）', description: '清除该用户的自定义头像，恢复为系统默认；需 system:user:update' })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
+  @Delete(':id/avatar')
+  resetAvatar(@Param('id') id: string) {
+    return this.userService.setAvatar(id, null)
+  }
+
+  @ApiOperation({ summary: '设置我的头像（v1）', description: 'body.avatar 传 POST /v1/upload 返回的相对路径；空串/null 清除；登录用户即可操作自己的头像' })
+  @OperLog('用户管理')
+  @Put('me/avatar')
+  setMyAvatar(@Body() dto: UpdateAvatarDto, @Request() req: { user: UserEntity }) {
+    return this.userService.setAvatar(req.user.id, dto.avatar)
   }
 }

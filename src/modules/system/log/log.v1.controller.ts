@@ -21,6 +21,12 @@ import { SysLogEntity } from './entities/sys-log.entity'
 const STATUS_STYLE = { 0: { fontColor: 'FF0F766E', fillColor: 'FFE7F7F0' }, 1: { fontColor: 'FFB42318', fillColor: 'FFFDECEC' } }
 
 class QueryLoginLogDto extends PagerDto {
+  @ApiPropertyOptional({ description: '用户 ID 精确过滤（sys_user.id，用户管理页登录日志弹窗用）', example: 'e9ca23d68d884d4ebb19d07889727dae' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  userId?: string
+
   @ApiPropertyOptional({ description: '用户名模糊过滤', example: 'admin' })
   @IsOptional()
   @IsString()

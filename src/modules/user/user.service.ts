@@ -7,13 +7,16 @@ import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
+import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../shared/rate-limit/login-fail.util'
 import { OnlineService } from '../ops/online/online.service'
 import { randomToken } from '../../utils/random-token.util'
+import { hasSuperRole } from '../../utils/super-role.util'
 import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
 import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
+import { PostEntity } from '../system/post/entities/post.entity'
 import { UserWatermarkEntity } from '../system/watermark/entities/user-watermark.entity'
 import { WatermarkSettingEntity } from '../system/watermark/entities/watermark-setting.entity'
 import { FALLBACK_WATERMARK_SETTING, resolveWatermarkState } from '../system/watermark/watermark.util'
@@ -23,6 +26,9 @@ import type { QueryUserDto } from './dto/query-user.dto'
 
 /** 用户状态（对齐 sys_user）：1 正常 / 2 冻结 */
 export const USER_STATUS = { NORMAL: 1, FROZEN: 2 } as const
+
+/** 数据范围（sys_role.data_scope）：数值越小可见范围越大，取用户多角色里最小值 */
+export const DATA_SCOPE = { ALL: 1, DEPT_AND_CHILDREN: 2, DEPT_ONLY: 3, SELF_ONLY: 4 } as const
 
 /** 导出上限：单文件 5000 行，避免一次把几十万用户塞进内存 */
 export const USER_EXPORT_MAX_ROWS = 5000
@@ -112,7 +118,22 @@ function normalizeDateText(raw: string): string | null {
  * - 实体字段之外，附带角色、部门 id 列表（关联关系不落在主表，需单独写关联表）
  * - deptId 为旧字段，等价 deptIds: [deptId]
  */
-type UserWriteInput = Partial<UserEntity> & { roleIds?: string[]; deptIds?: string[]; deptId?: string }
+type UserWriteInput = Omit<Partial<UserEntity>, 'passwordExpireAt'> & {
+  passwordExpireAt?: string | Date | null
+  roleIds?: string[]
+  deptIds?: string[]
+  deptId?: string
+  postIds?: string[]
+}
+
+/** 归一化密码过期时间：DTO 里是 ISO/日期字符串，入库前转 Date；空值统一为 null（不限制） */
+function normalizePasswordExpireAt(raw?: string | Date | null): Date | null {
+  if (raw === null || raw === undefined || raw === '') {
+    return null
+  }
+  const date = raw instanceof Date ? raw : new Date(raw)
+  return Number.isNaN(date.getTime()) ? null : date
+}
 
 /** 归一化部门 id：deptIds 优先，其次兼容单个 deptId；去重去空并保持入参顺序（首个为主部门） */
 function normalizeDeptIds(deptIds?: string[], deptId?: string): string[] {
@@ -146,6 +167,13 @@ function describeWriteError(error: unknown): string {
   return (error instanceof Error ? error.message : '') || '写入失败'
 }
 
+/** 数据范围判定入参：req.user（含 roles 与 departIds）即可，无需额外查询 */
+interface DataScopeActor {
+  id: string
+  roles?: RoleEntity[] | null
+  departIds?: string | null
+}
+
 @Injectable()
 export class UserService extends BaseService<UserEntity> {
   constructor(
@@ -159,17 +187,21 @@ export class UserService extends BaseService<UserEntity> {
     private readonly userWatermarkRepository: Repository<UserWatermarkEntity>,
     @InjectRepository(WatermarkSettingEntity)
     private readonly watermarkSettingRepository: Repository<WatermarkSettingEntity>,
+    @InjectRepository(PostEntity)
+    private readonly postRepository: Repository<PostEntity>,
     private readonly rateLimitService: RateLimitService,
-    private readonly onlineService: OnlineService
+    private readonly onlineService: OnlineService,
+    private readonly permissionCacheService: PermissionCacheService
   ) {
     super(repository, '用户')
   }
 
   /** 创建：生成 32 位主键；密码统一用 argon2id 哈希（自带盐，不再写 sys_user.salt） */
   async create(dto: UserWriteInput, operator?: string): Promise<UserEntity> {
-    const { roleIds, deptIds, deptId, ...rest } = dto
+    const { roleIds, deptIds, deptId, postIds, passwordExpireAt, ...rest } = dto
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
+    data.passwordExpireAt = normalizePasswordExpireAt(passwordExpireAt)
     // 唯一性预检：数据库唯一索引不区分软删除，必须提前给出可读提示（否则并发/软删占用会以 500 暴露）
     await this.assertUniqueFields(data)
     data.id = data.id || randomId32()
@@ -198,17 +230,21 @@ export class UserService extends BaseService<UserEntity> {
       if (nextDeptIds.length) {
         await this.assignDepts(user.id, nextDeptIds, manager)
       }
+      if (postIds?.length) {
+        await this.assignPosts(user.id, postIds, manager)
+      }
       return user.id
     })
     return this.findOneDetail(id) as Promise<UserEntity>
   }
 
-  /** 更新：携带密码则用 argon2id 重新哈希；携带 roleIds / deptIds 则重绑关联 */
+  /** 更新：携带密码则用 argon2id 重新哈希；携带 roleIds / deptIds / postIds 则重绑关联 */
   async update(id: string, dto: UserWriteInput, operator?: string): Promise<UserEntity> {
-    const { roleIds, deptIds, deptId, ...rest } = dto
+    const { roleIds, deptIds, deptId, postIds, passwordExpireAt, ...rest } = dto
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
     delete data.username // 账号不允许修改（改账号会让审计与历史密码哈希对不上）
+    data.passwordExpireAt = normalizePasswordExpireAt(passwordExpireAt)
     await this.findOne(id)
     await this.assertUniqueFields(data, id)
     if (data.password) {
@@ -231,6 +267,9 @@ export class UserService extends BaseService<UserEntity> {
       }
       if (hasDeptChange) {
         await this.assignDepts(id, nextDeptIds, manager)
+      }
+      if (postIds) {
+        await this.assignPosts(id, postIds, manager)
       }
     })
     return this.findOneDetail(id) as Promise<UserEntity>
@@ -285,6 +324,27 @@ export class UserService extends BaseService<UserEntity> {
       orgCode: ordered[0]?.orgCode ?? null,
       updateTime: new Date()
     })
+  }
+
+  /** 绑定岗位（全量覆盖，对齐 JeecgBoot sys_user_post）；岗位不存在时整体拒绝 */
+  async assignPosts(id: string, postIds: string[], manager?: EntityManager): Promise<void> {
+    if (!manager) {
+      await this.findOne(id)
+    }
+    const repo = this.repoOf(manager)
+    const ids = [...new Set(postIds.filter(Boolean))]
+    const posts = ids.length ? await this.postRepository.find({ where: { id: In(ids) } }) : []
+    if (posts.length !== ids.length) {
+      const found = new Set(posts.map(post => post.id))
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, `岗位不存在：${ids.filter(postId => !found.has(postId)).join(',')}`)
+    }
+    const current = await repo.createQueryBuilder().relation(UserEntity, 'posts').of(id).loadMany<PostEntity>()
+    const currentIds = new Set(current.map(post => post.id))
+    const toAdd = posts.filter(post => !currentIds.has(post.id))
+    const toRemove = current.filter(post => !ids.includes(post.id))
+    if (toAdd.length || toRemove.length) {
+      await repo.createQueryBuilder().relation(UserEntity, 'posts').of(id).addAndRemove(toAdd, toRemove)
+    }
   }
 
   /** 事务内使用的用户仓库（不传 manager 时走默认连接） */
@@ -348,27 +408,30 @@ export class UserService extends BaseService<UserEntity> {
     }
   }
 
-  /** 分页列表：支持 keyword 模糊搜索账号/真实姓名/电话、status 精确过滤、部门过滤；过滤已软删 */
-  async listByQuery(query: QueryUserDto): Promise<Pagination<UserEntity>> {
+  /** 分页列表：支持 keyword 模糊搜索账号/真实姓名/电话、status 精确过滤、部门过滤；过滤已软删；按数据范围收窄 */
+  async listByQuery(query: QueryUserDto, actor?: DataScopeActor): Promise<Pagination<UserEntity>> {
     const options: PaginateOptions = { page: query.page, pageSize: query.pageSize }
-    const result = await paginate(this.buildListQuery(query), options)
+    const result = await paginate(await this.buildListQuery(query, actor), options)
     await this.attachDepts(result.records)
     await this.attachRoles(result.records)
+    await this.attachPosts(result.records)
     await this.attachWatermark(result.records)
     return result
   }
 
   /** 导出用户：与列表同过滤条件、不分页（上限 USER_EXPORT_MAX_ROWS），带部门与角色 */
-  async exportUsers(query: QueryUserDto): Promise<UserEntity[]> {
-    const users = await this.buildListQuery(query).take(USER_EXPORT_MAX_ROWS).getMany()
+  async exportUsers(query: QueryUserDto, actor?: DataScopeActor): Promise<UserEntity[]> {
+    const users = await (await this.buildListQuery(query, actor)).take(USER_EXPORT_MAX_ROWS).getMany()
     await this.attachDepts(users)
     await this.attachRoles(users)
+    await this.attachPosts(users)
     await this.attachWatermark(users)
     return users
   }
 
+  /** 数据范围判定入参：req.user（含 roles 与 departIds）即可，无需额外查询 */
   /** 列表/导出共用的查询构造：过滤条件集中一处，避免导出和列表口径跑偏 */
-  private buildListQuery(query: QueryUserDto): SelectQueryBuilder<UserEntity> {
+  private async buildListQuery(query: QueryUserDto, actor?: DataScopeActor): Promise<SelectQueryBuilder<UserEntity>> {
     const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 0').orderBy('user.create_time', 'DESC')
 
     if (query.keyword) {
@@ -394,7 +457,63 @@ export class UserService extends BaseService<UserEntity> {
         deptFilters
       })
     }
+    await this.applyDataScope(qb, actor)
     return qb
+  }
+
+  /**
+   * 数据范围过滤（sys_role.data_scope）：
+   *  - 超管角色不受限；多角色取「可见范围最大」的档（数值最小）
+   *  - 仅本人 → user.id = 自己；本部门 → 命中自己任一部门；本部门及以下 → 部门树递归展开
+   *  - 用户没有任何部门时，「本部门」档看不到任何人（1=0），避免误放成全量
+   */
+  private async applyDataScope(qb: SelectQueryBuilder<UserEntity>, actor?: DataScopeActor): Promise<void> {
+    const roles = actor?.roles ?? []
+    if (!actor || hasSuperRole(roles)) {
+      return
+    }
+    const scopes = roles.map(role => role.dataScope ?? DATA_SCOPE.ALL)
+    if (!scopes.length) {
+      return
+    }
+    const scope = Math.min(...scopes)
+    if (scope >= DATA_SCOPE.SELF_ONLY) {
+      qb.andWhere('user.id = :scopeSelfId', { scopeSelfId: actor.id })
+      return
+    }
+    const ownDeptIds = (actor.departIds ?? '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean)
+    if (!ownDeptIds.length) {
+      qb.andWhere('1 = 0')
+      return
+    }
+    let deptIds = ownDeptIds
+    if (scope === DATA_SCOPE.DEPT_AND_CHILDREN) {
+      // 部门表量级小（组织架构），一次性载入内存做父子展开，避免递归 SQL
+      const all = await this.deptRepository.find({ where: { delFlag: '0' as never }, select: { id: true, parentId: true } })
+      const childrenOf = new Map<string, string[]>()
+      for (const dept of all) {
+        if (!dept.parentId) continue
+        childrenOf.set(dept.parentId, [...(childrenOf.get(dept.parentId) ?? []), dept.id])
+      }
+      const queue = [...ownDeptIds]
+      const seen = new Set(ownDeptIds)
+      while (queue.length) {
+        const parent = queue.pop() as string
+        for (const child of childrenOf.get(parent) ?? []) {
+          if (!seen.has(child)) {
+            seen.add(child)
+            queue.push(child)
+          }
+        }
+      }
+      deptIds = [...seen]
+    }
+    qb.andWhere('EXISTS (SELECT 1 FROM `sys_user_depart` ud2 WHERE ud2.`user_id` = user.id AND ud2.`dep_id` IN (:...scopeDeptIds))', {
+      scopeDeptIds: deptIds
+    })
   }
 
   /** 单查覆盖：过滤已软删用户 */
@@ -408,7 +527,7 @@ export class UserService extends BaseService<UserEntity> {
 
   /** 按 id 查找并带出角色（过滤已软删） */
   async findOneWithRoles(id: string): Promise<UserEntity | null> {
-    const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true } })
+    const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true, posts: true } })
     if (user) {
       this.applyDepts(user)
     }
@@ -427,9 +546,9 @@ export class UserService extends BaseService<UserEntity> {
     return user
   }
 
-  /** 详情：带出角色 + 部门（过滤已软删，不存在抛 404） */
+  /** 详情：带出角色 + 部门 + 岗位（过滤已软删，不存在抛 404） */
   async findOneDetail(id: string): Promise<UserEntity> {
-    const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true } })
+    const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true, posts: true } })
     if (!user) {
       throw new NotFoundException('用户不存在')
     }
@@ -475,6 +594,7 @@ export class UserService extends BaseService<UserEntity> {
       // ② 将来恢复账号时旧角色/旧部门「自动复活」，权限状态不可控。
       await manager.query('DELETE FROM sys_user_role WHERE user_id = ?', [id])
       await manager.query('DELETE FROM sys_user_depart WHERE user_id = ?', [id])
+      await manager.query('DELETE FROM sys_user_post WHERE user_id = ?', [id])
       // 水印个性化配置同样按 user_id 主键，不清会在表里越积越多
       await manager.query('DELETE FROM sys_user_watermark WHERE user_id = ?', [id])
       await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null })
@@ -506,6 +626,8 @@ export class UserService extends BaseService<UserEntity> {
     await this.findOne(id)
     const password = plainPassword?.trim() || randomToken(12)
     await this.updatePasswordOnly(id, password)
+    // 管理员重置的密码视为临时口令：强制用户下次登录自行改密（安全基线）
+    await this.repository.update(id, { mustChangePassword: 1 })
     await this.onlineService.kickUser(id)
     return { password }
   }
@@ -513,6 +635,19 @@ export class UserService extends BaseService<UserEntity> {
   /** 只改密码哈希（自助改密与重置密码共用）：argon2id 自带盐，顺手清历史 jeecg 盐 */
   async updatePasswordOnly(id: string, plainPassword: string): Promise<void> {
     await this.repository.update(id, { password: await hashPassword(plainPassword), salt: null, updateTime: new Date() })
+  }
+
+  /** 自助改密成功后调用：解除「下次登录强制改密」标记并清空过期时间（下次有效期由管理员再设） */
+  async clearPasswordFlags(id: string): Promise<void> {
+    await this.repository.update(id, { mustChangePassword: 0, passwordExpireAt: null })
+  }
+
+  /** 用户是否命中「强制改密」：管理员显式标记，或密码已过有效期 */
+  async needsPasswordChange(user: Pick<UserEntity, 'mustChangePassword' | 'passwordExpireAt'>): Promise<boolean> {
+    if (user.mustChangePassword === 1) {
+      return true
+    }
+    return !!user.passwordExpireAt && user.passwordExpireAt.getTime() <= Date.now()
   }
 
   /**
@@ -546,6 +681,76 @@ export class UserService extends BaseService<UserEntity> {
     const user = await this.findOne(id)
     await this.rateLimitService.reset(loginFailKeyOf(user.username))
     return { unlocked: true }
+  }
+
+  /**
+   * 批量启用/停用：逐条复用单条 setStatus 的规则（admin 不可停用、冻结踢会话），
+   * 返回逐条结果供前端提示；单条失败不阻断其他条（与批量删除同语义）
+   */
+  async batchUpdateStatus(
+    ids: string[],
+    status: number,
+    reason?: string
+  ): Promise<{ updated: number; kicked: number; skipped: Array<{ id: string; username: string; reason: string }> }> {
+    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: 0 } })
+    const foundIds = new Set(targets.map(user => user.id))
+    const skipped: Array<{ id: string; username: string; reason: string }> = ids
+      .filter(id => !foundIds.has(id))
+      .map(id => ({ id, username: id, reason: '用户不存在' }))
+    let updated = 0
+    let kicked = 0
+    for (const user of targets) {
+      try {
+        const result = await this.setStatus(user.id, status)
+        updated += 1
+        kicked += result.kicked
+      } catch (error) {
+        skipped.push({ id: user.id, username: user.username, reason: error instanceof Error ? error.message : '操作失败' })
+      }
+    }
+    // reason 仅用于操作日志参数（OperLogInterceptor 记录请求体），这里不落库到 sys_user
+    void reason
+    return { updated, kicked, skipped }
+  }
+
+  /** 批量分配角色：所有用户绑定同一组角色（全量覆盖），任一角色不存在则整体拒绝 */
+  async batchAssignRoles(ids: string[], roleIds: string[]): Promise<{ updated: number }> {
+    const uniqueIds = [...new Set(roleIds.filter(Boolean))]
+    const roles = uniqueIds.length ? await this.roleRepository.findBy({ id: In(uniqueIds) }) : []
+    if (roles.length !== uniqueIds.length) {
+      const found = new Set(roles.map(role => role.id))
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, `角色不存在：${uniqueIds.filter(roleId => !found.has(roleId)).join(',')}`)
+    }
+    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: 0 } })
+    await this.runInTransaction(async manager => {
+      for (const user of targets) {
+        await this.assignRoles(user.id, roleIds, manager)
+      }
+    })
+    return { updated: targets.length }
+  }
+
+  /** 清除用户权限缓存：用户挂的每个角色各失效一次（缓存按角色分片），改角色/改权限不生效时使用 */
+  async clearPermissionCache(id: string): Promise<{ cleared: number }> {
+    const user = await this.findOne(id)
+    const rows = await this.repository.find({
+      where: { id: user.id, delFlag: 0 },
+      select: { id: true, roles: { id: true } },
+      relations: { roles: true }
+    })
+    const roleIds = (rows[0]?.roles ?? []).map(role => role.id)
+    for (const roleId of roleIds) {
+      await this.permissionCacheService.invalidateRole(roleId)
+    }
+    return { cleared: roleIds.length }
+  }
+
+  /** 设置/清除头像（管理员重置与本人设置共用）：path 来自上传接口的相对路径 */
+  async setAvatar(id: string, avatar?: string | null): Promise<{ avatar: string | null }> {
+    await this.findOne(id)
+    const value = avatar?.trim() || null
+    await this.repository.update(id, { avatar: value, updateTime: new Date() })
+    return { avatar: value }
   }
 
   /** 回收站列表：del_flag=1 的软删用户，keyword 模糊搜账号/姓名/电话 */
@@ -920,6 +1125,7 @@ export class UserService extends BaseService<UserEntity> {
     delete data.deptId
     delete data.departIds
     delete data.orgCode
+    delete data.posts
   }
 
   /** 按 depart_ids 顺序整理部门，并把 depts[0] 同步到兼容字段 dept / deptId */
@@ -959,6 +1165,22 @@ export class UserService extends BaseService<UserEntity> {
     const rolesByUser = new Map(rows.map(row => [row.id, row.roles ?? []]))
     for (const user of users) {
       user.roles = rolesByUser.get(user.id) ?? []
+    }
+  }
+
+  /** 批量补岗位（列表/导出/详情共用，只取 id/postName/postCode） */
+  private async attachPosts(users: UserEntity[]): Promise<void> {
+    if (!users.length) {
+      return
+    }
+    const rows = await this.repository.find({
+      where: { id: In(users.map(user => user.id)) },
+      select: { id: true, posts: { id: true, postName: true, postCode: true } },
+      relations: { posts: true }
+    })
+    const postsByUser = new Map(rows.map(row => [row.id, row.posts ?? []]))
+    for (const user of users) {
+      user.posts = postsByUser.get(user.id) ?? []
     }
   }
 

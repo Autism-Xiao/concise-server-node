@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { IsArray, IsOptional, IsString, Length } from 'class-validator'
+import { Type } from 'class-transformer'
+import { IsArray, IsIn, IsOptional, IsString, Length } from 'class-validator'
 
 export class CreateRoleDto {
   @ApiProperty({ description: '角色名称（中文展示）', example: '运营' })
@@ -17,6 +18,12 @@ export class CreateRoleDto {
   @IsString()
   @Length(0, 255)
   description?: string
+
+  @ApiPropertyOptional({ description: '数据范围：1 全部 / 2 本部门及以下 / 3 本部门 / 4 仅本人（默认 1）', example: 1, enum: [1, 2, 3, 4] })
+  @IsOptional()
+  @IsIn([1, 2, 3, 4], { message: '数据范围只允许 1/2/3/4' })
+  @Type(() => Number)
+  dataScope?: number
 
   @ApiPropertyOptional({ description: '授权菜单/按钮 ID 列表（sys_permission.id）；空数组表示清空授权', type: [String] })
   @IsOptional()
