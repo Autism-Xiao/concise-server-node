@@ -855,6 +855,81 @@ async function main() {
     record(records(leftover).length === 0, '10.8 冒烟数据清理干净', `leftover=${records(leftover).length}`)
   }
 
+  /* ---------- 10.9 日历管理 ---------- */
+  section('10.9 日历管理（base_calendar / base_schedule_event / reminder_log）')
+  {
+    // 0) 默认日历（幂等）+ 新建测试日历
+    const defCal = await call('POST', '/v1/schedule/calendars/ensure-default', { token: adminToken })
+    record(isOk(defCal) && !!defCal.json?.result?.id, '10.9 确保默认日历', `id=${defCal.json?.result?.id} name=${defCal.json?.result?.name}`)
+    const calBody = { name: `冒烟日历_${STAMP}`, color: '#ff0000' }
+    const calCreated = await call('POST', '/v1/schedule/calendars', { token: adminToken, body: calBody })
+    const calId = calCreated.json?.result?.id
+    record(isOk(calCreated) && !!calId, '10.9 新建日历', `id=${calId}`)
+    const calDup = await call('GET', '/v1/schedule/calendars', { token: adminToken })
+    record(isOk(calDup) && records(calDup).some(c => String(c.name).startsWith('冒烟日历_')), '10.9 日历列表含新日历', `total=${records(calDup).length}`)
+
+    const iso = d => new Date(d).toISOString()
+    const now = Date.now()
+    const dayStart = new Date(now + 86400000)
+    dayStart.setHours(9, 0, 0, 0)
+    const startIso = iso(dayStart)
+    const endIso = iso(new Date(dayStart.getTime() + 3600000))
+
+    // 1) 创建日程：remindAt = 2 秒后（定时器准点触发路径）
+    const evSoon = await call('POST', '/v1/schedule/events', {
+      token: adminToken,
+      body: { calendarId: calId, title: `冒烟会议_${STAMP}`, startTime: startIso, endTime: endIso, category: '会议', remindAt: iso(now + 2000) }
+    })
+    const evSoonId = evSoon.json?.result?.id
+    record(isOk(evSoon) && !!evSoonId, '10.9 创建日程（未来提醒）', `id=${evSoonId}`)
+    await new Promise(r => setTimeout(r, 3500))
+    const unread1 = await call('GET', '/v1/schedule/reminder/unread-count', { token: adminToken })
+    record(isOk(unread1) && Number(unread1.json?.result) >= 1, '10.9 到点触发 → 未读数≥1', `unread=${unread1.json?.result}`)
+    const logList = await call('GET', '/v1/schedule/reminder/list?current=1&size=10', { token: adminToken })
+    const firstLog = records(logList)[0]
+    record(isOk(logList) && !!firstLog && String(firstLog.title).startsWith('冒烟会议_'), '10.9 提醒消息列表有记录', firstLog ? `id=${firstLog.id}` : 'empty')
+
+    // 2) 标记单条已读 → 未读数减少
+    if (firstLog) {
+      await call('PUT', `/v1/schedule/reminder/${firstLog.id}/read`, { token: adminToken })
+      const unread2 = await call('GET', '/v1/schedule/reminder/unread-count', { token: adminToken })
+      record(isOk(unread2) && Number(unread2.json?.result) === Number(unread1.json?.result) - 1, '10.9 单条已读 → 未读数-1', `unread=${unread2.json?.result}`)
+    }
+
+    // 3) 全部已读 → 未读数 0
+    await call('PUT', '/v1/schedule/reminder/read-all', { token: adminToken })
+    const unread3 = await call('GET', '/v1/schedule/reminder/unread-count', { token: adminToken })
+    record(isOk(unread3) && Number(unread3.json?.result) === 0, '10.9 全部已读 → 未读数 0', `unread=${unread3.json?.result}`)
+
+    // 4) 创建 remindAt 已过期的日程 → 立即触发（巡逻/即时路径）
+    const evPast = await call('POST', '/v1/schedule/events', {
+      token: adminToken,
+      body: { calendarId: calId, title: `冒烟过期提醒_${STAMP}`, startTime: startIso, endTime: endIso, remindAt: iso(now - 60000) }
+    })
+    const unread4 = await call('GET', '/v1/schedule/reminder/unread-count', { token: adminToken })
+    record(isOk(evPast) && Number(unread4.json?.result) === 1, '10.9 过期提醒创建即触发', `unread=${unread4.json?.result}`)
+    const evPastId = evPast.json?.result?.id
+
+    // 5) 修改日程取消提醒（remindAt=null）→ isReminded 置 0 但不再触发
+    const evCancel = await call('PUT', `/v1/schedule/events/${evSoonId}`, { token: adminToken, body: { remindAt: null } })
+    record(isOk(evCancel) && evCancel.json?.result?.remindAt === null, '10.9 修改日程取消提醒（remindAt=null）', `remindAt=${evCancel.json?.result?.remindAt}`)
+
+    // 6) 区间查询：应包含两条冒烟日程
+    const evList = await call('GET', `/v1/schedule/events?startDate=${startIso.slice(0, 10)}&endDate=${iso(now + 172800000).slice(0, 10)}`, { token: adminToken })
+    const hitCount = records(evList).filter(e => String(e.title).startsWith('冒烟')).length
+    record(isOk(evList) && hitCount >= 2, '10.9 日程区间查询', `hit=${hitCount}`)
+
+    // 7) 删除日程 + 删除日历（级联）
+    await call('DELETE', `/v1/schedule/events/${evPastId}`, { token: adminToken })
+    const gone = await call('GET', `/v1/schedule/events/${evPastId}`, { token: adminToken })
+    record(gone.status === 404, '10.9 删除日程后查详情 404', `status=${gone.status}`)
+    await call('DELETE', `/v1/schedule/calendars/${calId}`, { token: adminToken })
+    const calGone = await call('GET', `/v1/schedule/events?startDate=${startIso.slice(0, 10)}&endDate=${iso(now + 172800000).slice(0, 10)}&calendarId=${calId}`, { token: adminToken })
+    record(isOk(calGone) && records(calGone).length === 0, '10.9 删除日历级联清空日程', `left=${records(calGone).length}`)
+    // 清理提醒消息（避免残留影响其他用例的未读断言）
+    await call('PUT', '/v1/schedule/reminder/read-all', { token: adminToken })
+  }
+
   /* ---------- 11. refreshToken 轮换 ---------- */
   section('11. refreshToken 轮换与重放检测')
   {
