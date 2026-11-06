@@ -768,9 +768,14 @@ async function main() {
     const provinceRows = records(children0)
     record(isOk(children0) && provinceRows.length === 34, '10.8 省级预置数据 34 条', `actual=${provinceRows.length}`)
 
-    // 1) 关键字搜索：pinyin=guang 应命中 广东/广西
-    const kw = await call('GET', '/v1/regions?keyword=guang', { token: adminToken })
-    record(isOk(kw) && kw.json?.result?.total === 2, '10.8 列表按拼音关键字搜索', `total=${kw.json?.result?.total}`)
+    // 1) 关键字搜索：pinyin=dongguan 命中结果应包含东莞市（LIKE 包含匹配会带出东莞的镇街）
+    const kw = await call('GET', '/v1/regions?keyword=dongguan', { token: adminToken })
+    const kwRows = records(kw)
+    record(
+      isOk(kw) && kw.json?.result?.total >= 1 && kwRows.some(r => r.name === '东莞市'),
+      '10.8 列表按拼音关键字搜索（dongguan 命中东莞市）',
+      `total=${kw.json?.result?.total}`
+    )
 
     // 2) 创建：挂在广东省下的测试街道（areaCode 随机避免撞库）
     const gdCode = '440000000000'
@@ -839,13 +844,15 @@ async function main() {
       body: { regions: [{ name: '冒烟导入市改', areaCode: importCodeA, parentCode: '500000000000', level: 1 }] }
     })
     record(isOk(importAgain) && importAgain.json?.result?.updated === 1, '10.8 再次导入走更新（upsert）', JSON.stringify(importAgain.json?.result))
-    // 清理：按 id 删除（先查出来）
-    const cleanupList = await call('GET', `/v1/regions?keyword=${importCodeA.slice(0, 8)}`, { token: adminToken })
-    for (const row of records(cleanupList)) {
-      if (String(row.areaCode).startsWith(importCodeA.slice(0, 8))) {
-        await call('DELETE', `/v1/regions/${row.id}`, { token: adminToken })
-      }
+    // 清理：按名称搜全部「冒烟」测试数据删除，最多 3 轮直到删净（keyword 不匹配 areaCode）
+    for (let round = 0; round < 3; round++) {
+      const cleanupList = await call('GET', '/v1/regions?keyword=' + encodeURIComponent('冒烟'), { token: adminToken })
+      const rows = records(cleanupList).filter(r => String(r.name).startsWith('冒烟'))
+      if (rows.length === 0) break
+      for (const row of rows) await call('DELETE', `/v1/regions/${row.id}`, { token: adminToken })
     }
+    const leftover = await call('GET', '/v1/regions?keyword=' + encodeURIComponent('冒烟'), { token: adminToken })
+    record(records(leftover).length === 0, '10.8 冒烟数据清理干净', `leftover=${records(leftover).length}`)
   }
 
   /* ---------- 11. refreshToken 轮换 ---------- */
