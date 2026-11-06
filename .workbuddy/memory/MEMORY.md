@@ -27,3 +27,10 @@
 - 多步写必须 `manager.transaction`，事务内一律 `manager.getRepository()`（默认连接看不到未提交数据）
 - 唯一键写入前必须前置查重（含软删占用）+ 捕获 ER_DUP_ENTRY 转 400（`utils/db-error.util.ts`）
 - 业务异常优先 `BadRequestException`（HTTP 400）而非 500；限流 429 / 锁定 1009
+
+## 接口契约与密码算法（2026-11-06 二期）
+
+- 新接口只挂 `/api/v1/**`；旧版无前缀路由默认不注册（`LEGACY_ROUTES_ENABLED=true` 才开）。下线前先核 v1 是否覆盖旧路由全部能力
+- 列表查询一律返回 `Pagination`（records/total/current/size/pages），新增列表用 `toPagination()`；数据源类（tree/options/code）才返回数组
+- 密码：新数据 Argon2id（`@node-rs/argon2`，m=19456/t=2/p=1，约 18ms），历史 jeecg 格式在登录成功后就地升级；`UserService.verifyPassword` 是**异步**的，调用要 await
+- 权限集合走 `PermissionCacheService`（按角色缓存）；任何改动 role_permission / sys_permission 的写路径都要调用 invalidateRole / invalidateAll
