@@ -691,6 +691,78 @@ async function main() {
     }
   }
 
+  /* ---------- 12. 页面水印 ---------- */
+  section('12. 页面水印（用户级开关 / 强制管控 / 全局策略）')
+  {
+    const me0 = await call('GET', '/v1/users/me/watermark', { token: adminToken })
+    const wm = me0.json?.result
+    record(
+      isOk(me0) && typeof wm?.enabled === 'boolean' && Array.isArray(wm?.lines) && typeof wm?.editable === 'boolean',
+      'GET /v1/users/me/watermark',
+      wm ? `enabled=${wm.enabled} lines=${JSON.stringify(wm.lines)}` : `code=${me0.json?.code}`
+    )
+    record(
+      Array.isArray(wm?.lines) && wm.lines.length > 0 && wm.lines.every(line => !line.includes('{username}')),
+      '水印占位符已由后端解析（前端只负责画）',
+      JSON.stringify(wm?.lines)
+    )
+
+    const off = await call('PUT', '/v1/users/me/watermark', { token: adminToken, body: { enabled: false } })
+    record(isOk(off) && off.json?.result?.enabled === false, 'PUT me/watermark 自行关闭', `enabled=${off.json?.result?.enabled}`)
+    const restoreMine = await call('PUT', '/v1/users/me/watermark', { token: adminToken, body: { enabled: null } })
+    record(isOk(restoreMine) && restoreMine.json?.result?.enabled === true, 'enabled=null 恢复继承全局', `enabled=${restoreMine.json?.result?.enabled}`)
+
+    // 样式参数只归全局策略：用户侧传了也必须被丢弃（否则 opacity=0 等于关水印）
+    const hacked = await call('PUT', '/v1/users/me/watermark', { token: adminToken, body: { opacity: 0, fontSize: 24, rotate: 0 } })
+    record(
+      isOk(hacked) && hacked.json?.result?.opacity === 8 && hacked.json?.result?.fontSize === 14,
+      '用户侧样式参数被 whitelist 丢弃',
+      `opacity=${hacked.json?.result?.opacity} fontSize=${hacked.json?.result?.fontSize}`
+    )
+
+    const toOff = await call('PUT', '/v1/system/watermark', { token: adminToken, body: { enabled: false } })
+    record(isOk(toOff) && toOff.json?.result?.mode === 'off', '全局 enabled=false 联动 mode=off', JSON.stringify(toOff.json?.result))
+    const meOff = await call('GET', '/v1/users/me/watermark', { token: adminToken })
+    record(meOff.json?.result?.enabled === false && meOff.json?.result?.editable === false, 'off 模式用户不可编辑', `editable=${meOff.json?.result?.editable}`)
+    const backOn = await call('PUT', '/v1/system/watermark', { token: adminToken, body: { enabled: true } })
+    record(isOk(backOn) && backOn.json?.result?.enabled === 1, '恢复全局开启', `mode=${backOn.json?.result?.mode}`)
+    const badOpacity = await call('PUT', '/v1/system/watermark', { token: adminToken, body: { opacity: 0 } })
+    record(!isOk(badOpacity), '全局 opacity=0 被参数校验拒绝', `code=${badOpacity.json?.code}`)
+
+    const options = await call('GET', '/v1/roles/options', { token: adminToken })
+    const roleId = options.json?.result?.[0]?.id
+    const username = `smoke_wm_${STAMP}`
+    const password = crypto.randomBytes(8).toString('hex')
+    const created = await call('POST', '/v1/users', {
+      token: adminToken,
+      body: { username, realname: '水印测试', password, roleIds: roleId ? [roleId] : [] }
+    })
+    if (!isOk(created)) {
+      record(false, '水印强制用例准备', `建号失败 msg=${created.json?.message ?? ''}`)
+    } else {
+      const targetId = created.json?.result?.id
+      const forced = await call('PUT', `/v1/users/${targetId}/watermark`, { token: adminToken, body: { enabled: true, enforced: 1 } })
+      record(isOk(forced), '管理员强制开启用户水印', JSON.stringify(forced.json?.result))
+
+      const targetToken = mintToken(username, targetId)
+      const tme = await call('GET', '/v1/users/me/watermark', { token: targetToken })
+      record(
+        tme.json?.result?.enabled === true && tme.json?.result?.editable === false && tme.json?.result?.enforced === 1,
+        '被强制用户读到不可编辑态',
+        `reason=${tme.json?.result?.reason}`
+      )
+      const denied = await call('PUT', '/v1/users/me/watermark', { token: targetToken, body: { enabled: false } })
+      record(!isOk(denied), '被强制用户关闭被拒', `code=${denied.json?.code} msg=${denied.json?.message}`)
+
+      const list = await call('GET', '/v1/users?pageSize=50', { token: adminToken })
+      const rows = list.json?.result?.records ?? []
+      record(rows.length > 0 && rows.every(u => 'watermarkEffective' in u), '用户列表带水印摘要', `rows=${rows.length}`)
+
+      await call('PUT', `/v1/users/${targetId}/watermark`, { token: adminToken, body: { enforced: 0, enabled: null } })
+      await call('DELETE', `/v1/users/${targetId}`, { token: adminToken })
+    }
+  }
+
   /* ---------- 汇总 ---------- */
   console.log(`\n${'='.repeat(60)}`)
   console.log(`冒烟结果：PASS ${passCount} / FAIL ${failCount} / 共 ${results.length}`)

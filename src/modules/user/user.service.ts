@@ -10,6 +10,9 @@ import { paginate, type PaginateOptions, type Pagination } from '../../helper/pa
 import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
 import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
+import { UserWatermarkEntity } from '../system/watermark/entities/user-watermark.entity'
+import { WatermarkSettingEntity } from '../system/watermark/entities/watermark-setting.entity'
+import { FALLBACK_WATERMARK_SETTING, resolveWatermarkState } from '../system/watermark/watermark.util'
 import { UserEntity } from './entities/user.entity'
 import { RoleEntity } from '../role/entities/role.entity'
 import type { QueryUserDto } from './dto/query-user.dto'
@@ -147,7 +150,11 @@ export class UserService extends BaseService<UserEntity> {
     @InjectRepository(RoleEntity)
     private readonly roleRepository: Repository<RoleEntity>,
     @InjectRepository(DeptEntity)
-    private readonly deptRepository: Repository<DeptEntity>
+    private readonly deptRepository: Repository<DeptEntity>,
+    @InjectRepository(UserWatermarkEntity)
+    private readonly userWatermarkRepository: Repository<UserWatermarkEntity>,
+    @InjectRepository(WatermarkSettingEntity)
+    private readonly watermarkSettingRepository: Repository<WatermarkSettingEntity>
   ) {
     super(repository, '用户')
   }
@@ -341,6 +348,7 @@ export class UserService extends BaseService<UserEntity> {
     const result = await paginate(this.buildListQuery(query), options)
     await this.attachDepts(result.records)
     await this.attachRoles(result.records)
+    await this.attachWatermark(result.records)
     return result
   }
 
@@ -349,6 +357,7 @@ export class UserService extends BaseService<UserEntity> {
     const users = await this.buildListQuery(query).take(USER_EXPORT_MAX_ROWS).getMany()
     await this.attachDepts(users)
     await this.attachRoles(users)
+    await this.attachWatermark(users)
     return users
   }
 
@@ -419,9 +428,9 @@ export class UserService extends BaseService<UserEntity> {
       throw new NotFoundException('用户不存在')
     }
     this.applyDepts(user)
+    await this.attachWatermark([user])
     return user
   }
-
   /** 按 id 查找（含密码与盐，仅供认证场景使用；过滤已软删） */
   async findOneWithPassword(id: string): Promise<UserEntity | null> {
     return this.repository
@@ -460,6 +469,8 @@ export class UserService extends BaseService<UserEntity> {
       // ② 将来恢复账号时旧角色/旧部门「自动复活」，权限状态不可控。
       await manager.query('DELETE FROM sys_user_role WHERE user_id = ?', [id])
       await manager.query('DELETE FROM sys_user_depart WHERE user_id = ?', [id])
+      // 水印个性化配置同样按 user_id 主键，不清会在表里越积越多
+      await manager.query('DELETE FROM sys_user_watermark WHERE user_id = ?', [id])
       await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null })
     })
   }
@@ -846,6 +857,40 @@ export class UserService extends BaseService<UserEntity> {
     const rolesByUser = new Map(rows.map(row => [row.id, row.roles ?? []]))
     for (const user of users) {
       user.roles = rolesByUser.get(user.id) ?? []
+    }
+  }
+
+  /**
+   * 批量补水印状态（列表/导出/详情共用）
+   *
+   * 一次查全局配置 + 一次查用户覆盖，再走 resolveWatermarkState 统一算生效结果；
+   * 刻意不在循环里逐条 findOne —— 200 个用户就是 200 次 SQL。
+   */
+  private async attachWatermark(users: UserEntity[]): Promise<void> {
+    if (!users.length) {
+      return
+    }
+    const [settingRow, rows] = await Promise.all([
+      this.watermarkSettingRepository.findOne({ where: { id: 1 } }),
+      this.userWatermarkRepository.find({ where: { userId: In(users.map(user => user.id)) } })
+    ])
+    const setting = settingRow
+      ? {
+          enabled: Number(settingRow.enabled),
+          mode: settingRow.mode,
+          content: settingRow.content,
+          density: settingRow.density,
+          opacity: Number(settingRow.opacity),
+          rotate: Number(settingRow.rotate),
+          fontSize: Number(settingRow.fontSize)
+        }
+      : FALLBACK_WATERMARK_SETTING
+    const customByUser = new Map(rows.map(row => [row.userId, row]))
+    for (const user of users) {
+      const custom = customByUser.get(user.id)
+      user.watermarkEnabled = custom?.enabled ?? null
+      user.watermarkEnforced = custom?.enforced ?? 0
+      user.watermarkEffective = resolveWatermarkState(setting, custom).enabled
     }
   }
 

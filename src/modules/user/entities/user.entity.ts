@@ -131,4 +131,19 @@ export class UserEntity {
    */
   @ApiPropertyOptional({ description: '主部门 ID（兼容旧字段，等价于 dept.id），只读', example: 'dept_1', deprecated: true })
   deptId?: string | null
+
+  /**
+   * 水印开关原始值（非数据库列，列表/详情由 UserService 批量组装）
+   * null 表示未单独设置、继承全局默认；1 开 / 0 关
+   */
+  @ApiPropertyOptional({ description: '水印开关原始值：1 开 / 0 关 / null 继承全局，只读', nullable: true, enum: [0, 1] })
+  watermarkEnabled?: number | null
+
+  /** 强管控档（非数据库列）：0 不强制 / 1 强制开 / 2 强制关 */
+  @ApiPropertyOptional({ description: '水印强管控：0 不强制 / 1 强制开 / 2 强制关，只读', example: 0, enum: [0, 1, 2] })
+  watermarkEnforced?: number
+
+  /** 最终生效结果（非数据库列）：已合并全局策略与强管控，前端据此显示"实际是否带水印" */
+  @ApiPropertyOptional({ description: '水印最终是否生效，只读', example: true })
+  watermarkEffective?: boolean
 }

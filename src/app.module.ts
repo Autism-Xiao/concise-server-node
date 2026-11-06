@@ -26,6 +26,7 @@ import { DeptModule } from './modules/system/dept/dept.module'
 import { DictModule } from './modules/system/dict/dict.module'
 import { NoticeModule } from './modules/system/notice/notice.module'
 import { TaskModule } from './modules/system/task/task.module'
+import { WatermarkModule } from './modules/system/watermark/watermark.module'
 import { LevelModule } from './modules/system/level/level.module'
 import { PostModule } from './modules/system/post/post.module'
 import { JobModule } from './modules/ops/job/job.module'
@@ -62,6 +63,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     DictModule,
     NoticeModule,
     TaskModule,
+    WatermarkModule,
     LevelModule,
     PostModule,
     // 运维管理：定时任务（sys_quartz_job）/ 在线用户 / 服务与缓存监控
