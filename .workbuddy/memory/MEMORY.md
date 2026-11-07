@@ -66,3 +66,13 @@
 - 前端：顶栏 `TenantSwitcher` 写 localStorage `concise-tenant` → `http.ts` 自动带 `X-Tenant-Id`，切换后整页 reload
 - 坑：`@Column({ length })` 可空会被推断成 `Object`（必须显式 `type:'varchar'`）；新表 `COLLATE=utf8mb4_unicode_ci`；`Pagination` 无链式方法
 - 冒烟：`scripts/smoke-tenant.mjs`（26 项，需 `PORT=3461 CAPTCHA_ENABLED=false` 实例）
+
+## 界面设置上云（2026-11-07，9549938 / 前端 a7da194）
+
+- 表 `sys_user_setting`：`user_id` 主键 + `settings` TEXT，**故意不建 tenant_id**（偏好跟人走，切租户不该变主题色）。接口 `GET|PUT /api/v1/users/me/settings`，登录即可、不挂 @Perms。
+- 服务端白名单唯一入口 `modules/system/user-setting/user-setting.util.ts`：**加新设置项必须同步改这里**，否则静默丢弃。未知键/非法值丢弃不报 400；`themeColor` 只校验格式不锁枚举。
+- `save()` 是合并语义 + 4KB 上限；全非法键时返回旧值不写库；`get()` 读出来也过白名单。
+- 前端 `lib/settings.ts` 只有两层（本地 ⇄ 云端）：**不要用 `getApiResult`**（401 会踢去登录页），设置必须静默降级；`update()` 必须先写 localStorage 再推云端。
+- `SettingsProvider` 在 `__root` 不卸载、登录是 `navigate()`，所以登录后靠 `AUTH_CHANGED_EVENT`（auth.ts login/logout 派发）重新拉云端；登出必须 `clearLocalSettings()`。
+- 坑：vite `settingsApi()` 与 `index.html` 内联脚本同用 `#app-settings-override`，前者的静态默认值会静默盖掉用户设置 —— 已删除该插件与 `settings.json`，别再加回来。
+- 冒烟：`scripts/smoke-user-setting.mjs`（18 项，需 `PORT=3461 CAPTCHA_ENABLED=false` 实例）。
