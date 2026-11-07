@@ -23,9 +23,6 @@
   const MENUS = [
     // ---- 顶级 ----
     { id: 'menu_35', parent: null, name: '仪表盘', url: '/dashboard', type: 0, sort: 1, icon: 'LayoutDashboard' },
-    { id: 'menu_27', parent: null, name: '任务', url: '/tasks', type: 0, sort: 2, icon: 'ListTodo', perms: 'system:task:list' }, // 原「任务管理」上移
-    { id: 'menu_36', parent: null, name: '应用', url: '/apps', type: 0, sort: 3, icon: 'AppWindow' },
-    { id: 'menu_37', parent: null, name: '聊天', url: '/chats', type: 0, sort: 4, icon: 'MessagesSquare' },
     { id: 'menu_1', parent: null, name: '系统管理', url: '/system', type: 0, sort: 6, icon: 'Settings' },
     { id: 'menu_38', parent: null, name: '运维管理', url: '/ops', type: 0, sort: 17, icon: 'Server' },
     // ---- 系统管理子菜单 ----
