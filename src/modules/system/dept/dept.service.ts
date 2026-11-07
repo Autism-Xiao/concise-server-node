@@ -34,6 +34,10 @@ export class DeptService extends BaseService<DeptEntity> {
       await this.findOne(parentId)
     }
     const orgCode = dto.orgCode || (await this.generateOrgCode(parentId))
+    // 手工指定编码时前置查重（org_code 唯一索引，撞了会 500，这里转 400 人话）
+    if (dto.orgCode && (await this.repository.count({ where: { orgCode } })) > 0) {
+      throw new BadRequestException(`部门编码「${orgCode}」已被占用`)
+    }
     return super.create({
       ...dto,
       parentId,
@@ -48,6 +52,10 @@ export class DeptService extends BaseService<DeptEntity> {
   /** 更新：父级不能指向自己或自己的后代（防环）；改父级时同步重算 orgCode */
   async update(id: string, dto: DeepPartial<DeptEntity>): Promise<DeptEntity> {
     const before = await this.findOne(id)
+    // 手工改编码时前置查重（排除自身），避免撞唯一索引变 500
+    if (dto.orgCode && dto.orgCode !== before.orgCode && (await this.repository.count({ where: { orgCode: dto.orgCode } })) > 0) {
+      throw new BadRequestException(`部门编码「${dto.orgCode}」已被占用`)
+    }
     if (dto.parentId !== undefined) {
       const parentId = dto.parentId || null
       if (parentId === id) {
@@ -62,7 +70,8 @@ export class DeptService extends BaseService<DeptEntity> {
         }
       }
       dto.parentId = parentId
-      if (!dto.orgCode) {
+      // 只有父级真的变了才重算编码：同父级内拖拽排序也带 parentId，不能把手编的编码（如 NANSHAN）冲掉
+      if (!dto.orgCode && (dto.parentId || null) !== (before.parentId || null)) {
         dto.orgCode = await this.generateOrgCode(parentId)
       }
     }
