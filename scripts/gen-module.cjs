@@ -348,7 +348,7 @@ writeIfAbsent(
   path.join(serverRoot, `src/migrations/${timestamp}-Gen${ModulePascal}.ts`),
   `import { type MigrationInterface, type QueryRunner } from 'typeorm'
 
-/** 生成器产物：${label}表（${table}） */
+/** 生成器产物：${label}表（${table}）+ 菜单节点 */
 export class Gen${ModulePascal}${timestamp} implements MigrationInterface {
   name = 'Gen${ModulePascal}${timestamp}'
 
@@ -360,9 +360,22 @@ export class Gen${ModulePascal}${timestamp} implements MigrationInterface {
         KEY \\\`idx_${table}_tenant\\\` (\\\`tenant_id\\\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='${label}'
     \`)
+    // 菜单：挂「协同办公」下（demo 惯例）；真实业务模块可改 parent_id，或生成后在菜单管理里挪
+    await queryRunner.query(\`
+      INSERT IGNORE INTO \\\`sys_permission\\\` (\\\`id\\\`, \\\`parent_id\\\`, \\\`name\\\`, \\\`url\\\`, \\\`icon\\\`, \\\`menu_type\\\`, \\\`sort_no\\\`, \\\`status\\\`, \\\`del_flag\\\`, \\\`is_leaf\\\`, \\\`perms\\\`)
+      VALUES
+        ('menu_${moduleSnake}', 'menu_collab', '${label}管理', '/system/${moduleSnake}s', 'Briefcase', 1, 4, '1', 0, 0, '${permsPrefix}:list'),
+        ('menu_${moduleSnake}_add', 'menu_${moduleSnake}', '新增${label}', NULL, NULL, 2, 1, '1', 0, 1, '${permsPrefix}:add'),
+        ('menu_${moduleSnake}_edit', 'menu_${moduleSnake}', '编辑${label}', NULL, NULL, 2, 2, '1', 0, 1, '${permsPrefix}:update'),
+        ('menu_${moduleSnake}_del', 'menu_${moduleSnake}', '删除${label}', NULL, NULL, 2, 3, '1', 0, 1, '${permsPrefix}:delete')
+    \`)
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      "DELETE FROM \\\`sys_role_permission\\\` WHERE \\\`permission_id\\\` IN (SELECT \\\`id\\\` FROM (SELECT \\\`id\\\` FROM \\\`sys_permission\\\` WHERE \\\`id\\\` LIKE 'menu_${moduleSnake}%') t)"
+    )
+    await queryRunner.query("DELETE FROM \\\`sys_permission\\\` WHERE \\\`id\\\` LIKE 'menu_${moduleSnake}%'")
     await queryRunner.query(\`DROP TABLE IF EXISTS \\\`${table}\\\`\`)
   }
 }
@@ -639,9 +652,8 @@ ${feFields
 )
 
 console.log(`
-完成。接下来手动做三件事：
+完成。接下来手动做两件事：
   1. 后端 src/app.module.ts 注册 ${ModulePascal}Module，然后 npm run build && npx typeorm migration:run
+     （迁移已自动带上菜单节点 menu_${moduleSnake}（协同办公下）+ 三个按钮，跑完退出重登即可见）
   2. 前端 src/routes/_authenticated/system/${moduleSnake}.tsx 建 createFileRoute，page-registry 登记 '/system/${moduleSnake}s'，i18n 加 nav 键
-  3. 菜单管理录入：${label} 页面节点（perms=${permsPrefix}:list）+ 新增/修改/删除三个按钮
-     （或直接执行 migration 里补充的 INSERT，参照 1794210000000-CreateSysMessage 的写法）
 `)
