@@ -3,6 +3,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm'
 import { DataSource, Repository } from 'typeorm'
 
 import { paginate, Pagination, type Pagination as PaginationType } from '../../helper/paginate'
+import { RealtimeService, WS_EVENTS, type MessageNewPayload } from '../../shared/realtime/realtime.service'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { SysMessageEntity } from './entities/sys-message.entity'
@@ -36,7 +37,8 @@ export class MessageService {
   constructor(
     @InjectRepository(SysMessageEntity) private readonly messageRepo: Repository<SysMessageEntity>,
     @InjectRepository(SysMessageUserEntity) private readonly messageUserRepo: Repository<SysMessageUserEntity>,
-    @InjectDataSource() private readonly dataSource: DataSource
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly realtime: RealtimeService
   ) {}
 
   /** 发送站内信（管理端）：接收人支持用户 ID 或用户名混填，过滤到真实存在的账号，返回实际送达数 */
@@ -92,6 +94,15 @@ export class MessageService {
           .execute()
       }
       this.logger.log(`站内信已发送：title=${dto.title} 送达 ${validIds.length} 人`)
+      // 实时推送：在线的接收人立刻收到红点，不在线的靠前端轮询兜底
+      const payload: MessageNewPayload = {
+        id: message.id,
+        title: message.title,
+        content: message.content,
+        msgType: message.msgType,
+        createdAt: message.createdAt.toISOString?.() ?? String(message.createdAt)
+      }
+      this.realtime.pushToUsers(validIds, WS_EVENTS.messageNew, payload)
       return { id: message.id, delivered: validIds.length }
     })
   }

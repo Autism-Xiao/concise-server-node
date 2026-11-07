@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { createHash } from 'node:crypto'
 
 import { Pagination } from '../../../helper/paginate'
+import { RealtimeService, WS_EVENTS } from '../../../shared/realtime/realtime.service'
 import { RedisService } from '../../../shared/redis/redis.service'
 import { parseRequestInfo } from '../../../utils/request-info.util'
 import type { QueryOnlineDto } from './dto/query-online.dto'
@@ -55,7 +56,10 @@ export class OnlineService {
   private readonly logger = new Logger(OnlineService.name)
   private warned = false
 
-  constructor(private readonly redis: RedisService) {}
+  constructor(
+    private readonly redis: RedisService,
+    private readonly realtime: RealtimeService
+  ) {}
 
   /** token 哈希作为会话编号（不落原始 token，泄露也拿不到凭证） */
   hashToken(token: string): string {
@@ -252,6 +256,10 @@ export class OnlineService {
     // sessionId 本身就是 token 哈希，这里直接拼 key（不能再走 markRevoked，那会二次哈希）
     await client.setex(REVOKED_PREFIX + sessionId, ttl, String(Date.now()))
     await client.del(key)
+    // WebSocket 通知客户端立即登出（不在线的靠黑名单在下次请求时拦截）
+    if (session) {
+      this.realtime.pushToUser(session.userId, WS_EVENTS.forceOffline, { sessionId, reason: '您已被管理员强制下线' })
+    }
   }
 
   /** 批量强退：逐条踢，会话已过期的不算失败（本来就不在线） */
@@ -313,6 +321,9 @@ export class OnlineService {
       // 全量下线时补用户级标记：覆盖「已签发但还没发过请求、没登记会话」的令牌
       if (!keepHash) {
         await this.revokeUser(userId, OnlineService.USER_REVOKE_TTL)
+      }
+      if (kicked > 0) {
+        this.realtime.pushToUser(userId, WS_EVENTS.forceOffline, { reason: '您已被强制下线' })
       }
       return kicked
     } catch (error) {
