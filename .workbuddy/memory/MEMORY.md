@@ -7,7 +7,9 @@
 ## 项目约定
 
 - **给用户的终端命令要用 PowerShell 5.1 语法**：用户在自己终端里粘贴执行，`&&`/`||`/三元/`??` 都会报「不是有效语句分隔符」。多命令用 `npm run build; if ($?) { npm run start:prod }`，环境变量用 `$env:PORT="3459"`。（我自己用 Bash 工具时仍可用 `&&`）
-- **重启后端一律 `npm run restart`**（= `nest build` + `scripts/serve.mjs`，启动前自动结束旧的 `dist/main.js` 实例），**绝不用 `nest start --watch`** —— watch 启动前清 dist（675 文件）会被 safe-delete 钩子拦死（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`）。裸跑 `node dist/main.js` 撞端口会 EADDRINUSE，查占用者用 `node scripts/serve.mjs --dry-run`
+- **重启后端一律 `npm run restart`**（= `nest build` + `scripts/serve.mjs`，启动前自动结束旧的 `dist/main.js` 实例），**绝不用 `nest start --watch`** —— watch 启动前清 dist 会被 safe-delete 钩子拦死（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`）。裸跑 `node dist/main.js` 撞端口会 EADDRINUSE，查占用者用 `node scripts/serve.mjs --dry-run`
+  - **`npm run restart` 会「假重启」**：`nest build` 清 dist（700+ 文件）同样会被 safe-delete 拦，`&&` 短路后 `serve.mjs` 根本没跑，但输出看着像成功。判断法：`curl /api/v1/<新路由>` 回 **404 = 路由没注册（旧进程）**，回 401 才是新代码在跑。被拦时改用「先 `npm run build`（会走审批绕过）、再 `node scripts/serve.mjs`」
+  - **启动服务的命令不要接管道**（`node scripts/serve.mjs | head -20`）：head 读满行关管道 → 子进程被杀，任务却显示 `completed exit 0`
 - NestJS 12 CJS + Jest + oxlint；TypeORM 1.1 + MySQL 8.4（本机服务 `MySQL84`，root/123456，库 `concise_server`）
 - 参照 E:\project\demo\nest-admin 演进为中后台架构
 - 工程链：ESLint 9 flat config（正确性）+ Prettier（`.prettierrc.js`，用户指定风格：**单引号/无分号/160 列/无尾逗号/arrowParens avoid**）+ oxlint（lint:ox 二道）+ husky pre-commit → lint-staged（staged .ts 跑 eslint --fix + prettier --write）。commit 前不要手动跑 format，钩子会处理。
@@ -42,3 +44,14 @@
 - 模块 `src/modules/system/watermark/`：全局 `sys_watermark_setting`（单行）+ `sys_user_watermark`（NULL=继承）；生效规则唯一入口 `resolveWatermarkState`（off > enforced=2 > enforced=1 > forced > 用户??全局），别在别处重写判定
 - 用户侧接口只允许 enabled/content/density，样式参数（opacity/rotate/fontSize）只能全局改——防止用户把水印调透明绕过；占位符由服务端渲染成 lines 下发
 - 坑：`PUT /v1/users/me/watermark` 必须声明在 `PUT /v1/users/:id/watermark` 之前；新表建表要显式 `COLLATE=utf8mb4_unicode_ci`（sys_user 是 unicode_ci，默认 0900_ai_ci JOIN 会炸）；删用户事务里要同步删水印行
+
+## 首页概览（2026-11-07）
+
+- 单接口 `GET /api/v1/dashboard/overview`（`src/modules/dashboard/`，**不挂 @Perms**，登录即可访问，裁剪在 service 内部）。契约铁律：**没权限的块返回 `null`，不是 0**；降级块带 `scope: 'all' | 'self'`
+- 裁剪三层：块级（按钮权限）→ 行级（`sys_role.data_scope`，走 `UserService.countScoped`）→ 归属级（`owner_id` / `assignee_id`）
+- 降级规则：登录趋势 / 今日登录 / 最近操作无全站权限时自动降级为「我自己的」；用户总数/在线/角色/系统状态无权限就隐藏
+- 前端只判 null 不判权限（localStorage 可篡改）；卡片的权限门槛必须等于目标页门槛（见 `quick-entries-card.tsx` 的 `ENTRIES`）
+- 首页是**常驻页面**：`/dashboard` 在 `lib/permissions.ts` 的 `ALWAYS_ALLOWED` 里，`resolveHomePath()` 恒返回首页（旧的「按注册表找第一个有权限页面」兜底已删）；侧边栏有固定「仪表盘」入口，不依赖 `menu_35` 授权
+- 顺带修：`applyDataScope` 原来漏了 `data_scope=1（全部）` 档，导致「有 system:user:list 但没挂部门」的账号 `1 = 0` 看不到任何用户（审计员用户列表为空就是这个）。现在 `scope === ALL` 直接 return 不过滤
+- 已知遗留：`task.assignee_id` 是 `int`，`sys_user.id` 是 `varchar(32)`，两边永远匹配不上 → 「我的待办」恒为 0（只统计 `assignee_id = 0` 未指派）；彻底修需把该列迁成 varchar
+- 冒烟：`scripts/smoke-dashboard.mjs`（60 项，admin/viewer/auditor/无角色 四类账号，临时账号自动清理），需 `PORT=3461 CAPTCHA_ENABLED=false` 的测试实例
