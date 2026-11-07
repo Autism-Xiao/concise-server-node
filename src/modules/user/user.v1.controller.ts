@@ -169,6 +169,15 @@ export class UserV1Controller {
     return this.userService.listRecycled(query)
   }
 
+  @ApiOperation({
+    summary: '批量查用户账号（v1，选人控件回显用）',
+    description: 'ids 英文逗号分隔，最多 100 个；只返回 id/账号/姓名，过滤已软删用户。登录即可访问（公告、日程等「选人」场景回显用，不要求用户管理权限）'
+  })
+  @Get('lookup')
+  lookup(@Query('ids') ids?: string) {
+    return this.userService.lookupBrief((ids ?? '').split(','))
+  }
+
   @ApiOperation({ summary: '查询用户详情（v1，含角色与部门）', description: '需 system:user:list' })
   @ApiOkResponse({ description: '用户信息', type: UserEntity })
   @Perms('system:user:list')

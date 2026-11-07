@@ -38,6 +38,9 @@ export const USER_EXPORT_MAX_ROWS = 5000
 export const USER_IMPORT_MAX_ROWS = 2000
 export const USER_IMPORT_MAX_SIZE = 5 * 1024 * 1024
 
+/** 批量查账号单次上限（选择器回显用，超出部分截断，避免超长 IN 查询） */
+export const USER_LOOKUP_MAX_IDS = 100
+
 /** 导入时密码列留空使用的初始密码（与前端「新增用户」默认值一致） */
 export const USER_IMPORT_DEFAULT_PASSWORD = '123456'
 
@@ -588,6 +591,17 @@ export class UserService extends BaseService<UserEntity> {
       this.applyDepts(user)
     }
     return user
+  }
+
+  /** 批量按 ID 查账号（「选人」控件回显用，过滤已软删）：只吐 id/账号/姓名，单次最多 USER_LOOKUP_MAX_IDS 个 */
+  async lookupBrief(ids: string[]): Promise<Array<{ id: string; username: string; realname?: string }>> {
+    const clean = Array.from(new Set(ids.map(id => id.trim()).filter(Boolean))).slice(0, USER_LOOKUP_MAX_IDS)
+    if (!clean.length) return []
+    const rows = await this.repository.find({
+      where: { id: In(clean), delFlag: 0 },
+      select: { id: true, username: true, realname: true }
+    })
+    return rows.map(row => ({ id: row.id, username: row.username, realname: row.realname ?? undefined }))
   }
 
   /** 详情：带出角色 + 部门 + 岗位（过滤已软删，不存在抛 404） */
