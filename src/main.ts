@@ -149,4 +149,15 @@ async function bootstrap() {
     console.log(`Swagger docs: http://localhost:${port}/${globalPrefix}/docs`)
   }
 }
-void bootstrap()
+
+bootstrap().catch((error: unknown) => {
+  // 本地最常见的启动失败：上一次的 node dist/main.js 没退，端口还占着
+  if ((error as NodeJS.ErrnoException)?.code === 'EADDRINUSE') {
+    console.error(`\n端口已被占用（EADDRINUSE: ${String(process.env.PORT ?? '见 .env 的 PORT')}），大概率是上一次的 node dist/main.js 还在跑。`)
+    console.error('  npm run start:prod    启动前自动结束旧实例（推荐）')
+    console.error('  node scripts/serve.mjs --dry-run    只查看是谁占着，不做处理\n')
+    process.exit(1)
+  }
+  console.error(error)
+  process.exit(1)
+})
