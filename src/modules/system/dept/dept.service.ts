@@ -1,8 +1,9 @@
 import { Injectable, BadRequestException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, IsNull, Repository, type DeepPartial } from 'typeorm'
+import { In, Repository, type DeepPartial } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { UserEntity } from '../../user/entities/user.entity'
 import { DeptEntity } from './entities/dept.entity'
@@ -134,7 +135,9 @@ export class DeptService extends BaseService<DeptEntity> {
 
   /** 全量部门（按 depart_order 升序，排除已删除） */
   async listAll(): Promise<DeptEntity[]> {
-    return this.repository.find({ where: { delFlag: '0' }, order: { departOrder: 'ASC', id: 'ASC' } })
+    const qb = this.repository.createQueryBuilder('d').where('d.delFlag = :delFlag', { delFlag: '0' })
+    applyTenantScope(qb, 'd')
+    return qb.orderBy('d.departOrder', 'ASC').addOrderBy('d.id', 'ASC').getMany()
   }
 
   /** 扁平列表转树（parent_id 为 null/'' 视为顶级） */
@@ -145,7 +148,9 @@ export class DeptService extends BaseService<DeptEntity> {
 
   /** 顶级部门 */
   async listRoots(): Promise<DeptEntity[]> {
-    return this.repository.find({ where: { parentId: IsNull(), delFlag: '0' }, order: { departOrder: 'ASC' } })
+    const qb = this.repository.createQueryBuilder('d').where('d.parentId IS NULL').andWhere('d.delFlag = :delFlag', { delFlag: '0' })
+    applyTenantScope(qb, 'd')
+    return qb.orderBy('d.departOrder', 'ASC').getMany()
   }
 
   /**
@@ -154,7 +159,11 @@ export class DeptService extends BaseService<DeptEntity> {
    * - 子级：父编码 + A01（如 A01A01）
    */
   private async generateOrgCode(parentId: string | null): Promise<string> {
-    const siblings = await this.repository.find({ where: parentId ? { parentId } : { parentId: IsNull() } })
+    const siblingsQb = this.repository.createQueryBuilder('d')
+    if (parentId) siblingsQb.where('d.parentId = :parentId', { parentId })
+    else siblingsQb.where('d.parentId IS NULL')
+    applyTenantScope(siblingsQb, 'd')
+    const siblings = await siblingsQb.getMany()
     let prefix = 'A'
     if (parentId) {
       const parent = await this.repository.findOne({ where: { id: parentId } })

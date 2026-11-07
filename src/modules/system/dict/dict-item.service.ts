@@ -4,6 +4,7 @@ import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { SysDictEntity } from './entities/sys-dict.entity'
 import { SysDictItemEntity } from './entities/sys-dict-item.entity'
@@ -33,6 +34,7 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
   /** 分页列表：可按字典、关键字、状态过滤，按 sort_order 升序 */
   async listByQuery(query: QueryDictItemDto): Promise<Pagination<SysDictItemEntity>> {
     const qb = this.itemRepository.createQueryBuilder('item').orderBy('item.sortOrder', 'ASC').addOrderBy('item.id', 'ASC')
+    applyTenantScope(qb, 'item')
 
     if (query.dictId) {
       qb.andWhere('item.dictId = :dictId', { dictId: query.dictId })

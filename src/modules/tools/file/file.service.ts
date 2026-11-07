@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, LessThan, Repository } from 'typeorm'
 
 import { paginate, type Pagination } from '../../../helper/paginate'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { getExtname, sanitizeFileName } from '../../../utils/file.util'
 import { detectImageSignature } from '../../../utils/image-signature.util'
 import { FileEntity } from './entities/file.entity'
@@ -138,6 +139,7 @@ export class FileService {
   /** 当前目录列表：文件夹优先，再按 sort 排；支持名称搜索、分类过滤、只看星标（星标视图跨目录） */
   async list(ownerId: string, query: QueryFileDto): Promise<Pagination<FileEntity>> {
     const qb = this.fileRepository.createQueryBuilder('f').where('f.owner_id = :ownerId', { ownerId }).andWhere('f.is_deleted = 0')
+    applyTenantScope(qb, 'f')
 
     // 星标是「跨目录」视图（相当于网盘的收藏夹），其余情况只看当前目录
     if (!query.starred) {
@@ -436,6 +438,7 @@ export class FileService {
       .where('f.owner_id = :ownerId', { ownerId })
       .andWhere('f.is_deleted = 1')
       .orderBy('f.deleted_at', 'DESC')
+    applyTenantScope(qb, 'f')
     return paginate(qb, { page, pageSize })
   }
 
@@ -553,7 +556,7 @@ export class FileService {
 
   /** 存储用量：总量 + 文件数 + 文件夹数 + 按分类分布（存储卡数据源） */
   async stats(ownerId: string): Promise<FileStats> {
-    const rows = (await this.fileRepository
+    const statsQb = this.fileRepository
       .createQueryBuilder('f')
       .select('f.is_folder', 'isFolder')
       .addSelect('f.ext', 'ext')
@@ -563,7 +566,8 @@ export class FileService {
       .andWhere('f.is_deleted = 0')
       .groupBy('f.is_folder')
       .addGroupBy('f.ext')
-      .getRawMany()) as Array<{ isFolder: number | string; ext: string; count: string | number; bytes: string | number }>
+    applyTenantScope(statsQb, 'f')
+    const rows = (await statsQb.getRawMany()) as Array<{ isFolder: number | string; ext: string; count: string | number; bytes: string | number }>
 
     const buckets = new Map<FileKind, { bytes: number; count: number }>()
     for (const kind of Object.keys(KIND_LABELS) as Array<Exclude<FileKind, 'all'>>) {
@@ -640,6 +644,7 @@ export class FileService {
     if (excludeId) {
       qb.andWhere('f.id <> :excludeId', { excludeId })
     }
+    applyTenantScope(qb, 'f')
     if (await qb.getExists()) {
       throw new BadRequestException(`当前目录下已存在「${name}」`)
     }
@@ -692,13 +697,14 @@ export class FileService {
 
   /** 已用字节数（只算文件，不含文件夹） */
   private async usedBytes(ownerId: string): Promise<number> {
-    const row = (await this.fileRepository
+    const bytesQb = this.fileRepository
       .createQueryBuilder('f')
       .select('COALESCE(SUM(f.size), 0)', 'bytes')
       .where('f.owner_id = :ownerId', { ownerId })
       .andWhere('f.is_deleted = 0')
       .andWhere('f.is_folder = 0')
-      .getRawOne()) as { bytes?: string | number } | undefined
+    applyTenantScope(bytesQb, 'f')
+    const row = (await bytesQb.getRawOne()) as { bytes?: string | number } | undefined
     return Number(row?.bytes ?? 0)
   }
 

@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository } from 'typeorm'
+import { Brackets, In, Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import {
   assertImportRows,
@@ -44,9 +45,11 @@ export class LevelService extends BaseService<LevelEntity> {
   /** 职级列表（level_rank 降序=级别从高到低），keyword 模糊匹配名称/备注 */
   async listByQuery(query: QueryLevelDto): Promise<LevelEntity[]> {
     const qb = this.levelRepository.createQueryBuilder('level').orderBy('level.level_rank', 'DESC')
+    applyTenantScope(qb, 'level')
     const keyword = query.keyword?.trim()
     if (keyword) {
-      qb.where('level.level_name LIKE :kw OR level.remark LIKE :kw', { kw: `%${keyword}%` })
+      // andWhere 而不是 where：避免把上面的租户条件覆盖掉
+      qb.andWhere(new Brackets(sub => sub.where('level.level_name LIKE :kw', { kw: `%${keyword}%` }).orWhere('level.remark LIKE :kw', { kw: `%${keyword}%` })))
     }
     return qb.getMany()
   }

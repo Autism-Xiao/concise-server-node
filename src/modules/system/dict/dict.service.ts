@@ -15,6 +15,7 @@ import {
   type ImportResult
 } from '../../../helper/import/excel-import'
 import { randomId32 } from '../../../utils/password.util'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { SysDictEntity } from './entities/sys-dict.entity'
 import { SysDictItemEntity } from './entities/sys-dict-item.entity'
 import type { CreateDictDto } from './dto/create-dict.dto'
@@ -73,6 +74,7 @@ export class DictService extends BaseService<SysDictEntity> {
   /** 字典列表：字典类型数量少，一次全量返回（不分页），并带上每个字典的字典项数量 */
   async listByQuery(query: QueryDictDto): Promise<SysDictEntity[]> {
     const qb = this.dictRepository.createQueryBuilder('dict').where('dict.del_flag = 0').orderBy('dict.create_time', 'DESC').addOrderBy('dict.id', 'DESC')
+    applyTenantScope(qb, 'dict')
 
     const keyword = query.keyword?.trim()
     if (keyword) {

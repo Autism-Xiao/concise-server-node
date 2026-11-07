@@ -19,6 +19,10 @@ export class FileEntity {
   @PrimaryGeneratedColumn({ comment: '主键' })
   id: number
 
+  @ApiPropertyOptional({ description: '租户 ID（0=平台共享）', example: 1 })
+  @Column({ type: 'int', default: 1, comment: '租户ID(0=平台共享)' })
+  tenantId?: number
+
   @ApiProperty({ description: '父目录 ID，0 表示根目录', example: 0 })
   @Column({ type: 'int', default: 0, comment: '父目录ID(0=根目录)' })
   parentId: number

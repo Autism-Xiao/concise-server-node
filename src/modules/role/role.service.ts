@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository, type EntityManager } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
+import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { isSuperRole } from '../../utils/super-role.util'
@@ -44,7 +45,9 @@ export class RoleService extends BaseService<RoleEntity> {
 
   /** 角色列表（含已授权菜单），角色数量少不分页，keyword 模糊匹配名称/编码 */
   async listByQuery(query: QueryRoleDto): Promise<RoleEntity[]> {
-    const roles = await this.roleRepository.find({ relations: { permissions: true }, order: { createTime: 'ASC' } })
+    const rolesQb = this.roleRepository.createQueryBuilder('role').leftJoinAndSelect('role.permissions', 'perm').orderBy('role.createTime', 'ASC')
+    applyTenantScope(rolesQb, 'role')
+    const roles = await rolesQb.getMany()
     const keyword = query.keyword?.trim().toLowerCase()
     if (!keyword) {
       return roles
@@ -54,10 +57,9 @@ export class RoleService extends BaseService<RoleEntity> {
 
   /** 角色下拉选项：只暴露 id/名称/编码，供用户表单分配角色、列表筛选（登录即可用，不含授权明细） */
   async listOptions(): Promise<Array<{ id: string; roleCode: string; roleName?: string }>> {
-    return this.roleRepository.find({
-      select: { id: true, roleCode: true, roleName: true },
-      order: { createTime: 'ASC' }
-    })
+    const qb = this.roleRepository.createQueryBuilder('role').select(['role.id', 'role.roleCode', 'role.roleName']).orderBy('role.createTime', 'ASC')
+    applyTenantScope(qb, 'role')
+    return qb.getMany()
   }
 
   /** 创建角色，支持 menuIds 绑定菜单权限（id 由 BaseService 自动生成 32 位） */

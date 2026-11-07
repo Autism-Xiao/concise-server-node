@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository } from 'typeorm'
+import { Brackets, In, Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import {
   assertImportRows,
@@ -47,9 +48,16 @@ export class PostService extends BaseService<PostEntity> {
   /** 岗位列表（post_sort 升序，带所属部门），keyword 模糊匹配名称/编码/描述，可按 deptId 过滤 */
   async listByQuery(query: QueryPostDto): Promise<PostEntity[]> {
     const qb = this.postRepository.createQueryBuilder('post').leftJoinAndSelect('post.dept', 'dept').orderBy('post.post_sort', 'ASC')
+    applyTenantScope(qb, 'post')
     const keyword = query.keyword?.trim()
     if (keyword) {
-      qb.where('post.post_name LIKE :kw OR post.post_code LIKE :kw OR post.description LIKE :kw', { kw: `%${keyword}%` })
+      const kw = `%${keyword}%`
+      // andWhere 而不是 where：避免把上面的租户条件覆盖掉
+      qb.andWhere(
+        new Brackets(sub =>
+          sub.where('post.post_name LIKE :kw', { kw }).orWhere('post.post_code LIKE :kw', { kw }).orWhere('post.description LIKE :kw', { kw })
+        )
+      )
     }
     if (query.deptId) {
       qb.andWhere('post.dept_id = :deptId', { deptId: query.deptId })

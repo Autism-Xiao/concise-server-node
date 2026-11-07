@@ -4,6 +4,7 @@ import { Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
 import { paginate, type Pagination } from '../../../helper/paginate'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { TaskEntity } from './entities/task.entity'
 
 /** 状态机：允许的状态流转 */
@@ -57,6 +58,7 @@ export class TaskService extends BaseService<TaskEntity> {
     assigneeId?: number
   }): Promise<Pagination<TaskEntity>> {
     const qb = this.repository.createQueryBuilder('task').orderBy('task.id', 'DESC')
+    applyTenantScope(qb, 'task')
     if (query.keyword) {
       qb.andWhere('task.title LIKE :keyword', { keyword: `%${query.keyword}%` })
     }

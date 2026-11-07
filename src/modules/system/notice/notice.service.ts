@@ -5,6 +5,7 @@ import { In, Repository, type SelectQueryBuilder } from 'typeorm'
 import { BaseService } from '../../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { paginate, type Pagination } from '../../../helper/paginate'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { UserEntity } from '../../user/entities/user.entity'
 import { SysAnnouncementEntity } from './entities/sys-announcement.entity'
 import type { CreateNoticeDto } from './dto/create-notice.dto'
@@ -110,6 +111,7 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
       .where('n.del_flag = :delFlag', { delFlag: '0' })
       .orderBy('n.create_time', 'DESC')
       .addOrderBy('n.id', 'DESC')
+    applyTenantScope(qb, 'n')
 
     const keyword = query.keyword?.trim()
     if (keyword) {
@@ -146,6 +148,7 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
       .andWhere('(n.end_time IS NULL OR n.end_time >= NOW())')
       .orderBy('n.send_time', 'DESC')
       .addOrderBy('n.id', 'DESC')
+    applyTenantScope(qb, 'n')
     if (query.msgCategory) {
       qb.andWhere('n.msg_category = :msgCategory', { msgCategory: query.msgCategory })
     }

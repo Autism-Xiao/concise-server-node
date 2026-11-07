@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common'
+import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core'
 import { createObserveModule } from '@nestjs/observe'
@@ -36,6 +36,9 @@ import { OnlineModule } from './modules/ops/online/online.module'
 import { MonitorModule } from './modules/ops/monitor/monitor.module'
 import { ToolsModule } from './modules/tools/tools.module'
 import { DashboardModule } from './modules/dashboard/dashboard.module'
+import { TenantModule } from './modules/system/tenant/tenant.module'
+import { TenantContextModule } from './shared/tenant/tenant-context.module'
+import { TenantMiddleware } from './shared/tenant/tenant.middleware'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule()
@@ -56,6 +59,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     RateLimitModule,
     // 权限集合缓存（按角色，Redis 优先，写侧主动失效），全局模块
     PermissionCacheModule,
+    // 多租户上下文（AsyncLocalStorage + 归属解析），全局模块
+    TenantContextModule,
     // 业务模块
     UserModule,
     AuthModule,
@@ -74,6 +79,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     WatermarkModule,
     LevelModule,
     PostModule,
+    // 多租户管理（sys_tenant + sys_user_tenant）
+    TenantModule,
     // 运维管理：定时任务（sys_quartz_job）/ 在线用户 / 服务与缓存监控
     JobModule,
     OnlineModule,
@@ -104,4 +111,12 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     { provide: APP_GUARD, useClass: PermsGuard }
   ]
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * 租户中间件挂到所有路由：只有中间件的 `TenantContext.run(store, next)` 能把
+   * AsyncLocalStorage 上下文包住后续整条链路（Guard / Interceptor / Handler）。
+   */
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(TenantMiddleware).forRoutes('*')
+  }
+}
