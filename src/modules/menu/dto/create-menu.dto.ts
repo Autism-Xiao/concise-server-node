@@ -70,6 +70,12 @@ export class CreateMenuDto {
   @IsIn([0, 1])
   hidden?: number
 
+  @ApiPropertyOptional({ description: '外链打开方式：0 内部打开 / 1 外部新窗口', example: 0, enum: [0, 1] })
+  @IsOptional()
+  @IsInt()
+  @IsIn([0, 1])
+  internalOrExternal?: number
+
   @ApiPropertyOptional({ description: '状态：0 无效 / 1 有效', example: '1', enum: ['0', '1'] })
   @IsOptional()
   @IsString()

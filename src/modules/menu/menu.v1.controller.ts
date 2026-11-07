@@ -10,6 +10,7 @@ import { setDownloadHeaders } from '../../utils/download.util'
 import { buildXlsx } from '../../utils/xlsx.util'
 import { CreateMenuDto } from './dto/create-menu.dto'
 import { UpdateMenuDto } from './dto/update-menu.dto'
+import { SavePermNodesDto } from './dto/perm-node.dto'
 import { MenuEntity } from './entities/menu.entity'
 import { MenuService } from './menu.service'
 
@@ -108,6 +109,17 @@ export class MenuV1Controller {
   @Put(':id')
   update(@Param('id') id: string, @Body() dto: UpdateMenuDto) {
     return this.menuService.update(id, dto)
+  }
+
+  @ApiOperation({
+    summary: '全量替换菜单下的按钮权限节点（v1）',
+    description: '「权限节点」穿梭框保存：提交的 nodes 为准，新 perms 新建按钮、未列出的既有按钮软删除、交集保留；事务执行并失效权限缓存'
+  })
+  @OperLog('菜单管理')
+  @Perms('system:menu:update')
+  @Put(':id/perm-nodes')
+  replacePermNodes(@Param('id') id: string, @Body() dto: SavePermNodesDto) {
+    return this.menuService.replacePermNodes(id, dto.nodes)
   }
 
   @ApiOperation({ summary: '删除菜单（v1）', description: '软删除（del_flag=1）；存在子菜单时拒绝，需先删子级' })
