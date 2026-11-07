@@ -4,6 +4,7 @@ import { Brackets, DataSource, Repository } from 'typeorm'
 
 import { Pagination } from '../../../helper/paginate/pagination'
 import { TenantAccessService } from '../../../shared/tenant/tenant-access.service'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { isDuplicateEntryError } from '../../../utils/db-error.util'
 import { CreateTenantDto } from './dto/create-tenant.dto'
 import { QueryTenantDto } from './dto/query-tenant.dto'
@@ -142,10 +143,14 @@ export class TenantService {
     tenants: { id: number; name: string; code: string; status: number; expireAt: string | null; usable: boolean }[]
   }> {
     const membership = await this.tenantAccess.loadMembership(userId)
-    const { tenantId } = await this.tenantAccess.resolveTenant(userId)
+    // 「当前生效租户」必须取中间件按 X-Tenant-Id 解析好的上下文。
+    // 这里再调一次 resolveTenant(userId) 是拿不到请求头的：超管会一律算成「平台视角」，
+    // 前端切换器于是永远显示「平台视角」并把该菜单项置灰 —— 表现就是「点了没反应」。
+    const store = TenantContext.get()
+    const current = store ? store.tenantId : (await this.tenantAccess.resolveTenant(userId)).tenantId
     const source = membership.isSuper ? await this.listAllTenants() : membership.tenants
     return {
-      current: tenantId,
+      current,
       isSuper: membership.isSuper,
       tenants: source.map(item => ({
         id: item.id,

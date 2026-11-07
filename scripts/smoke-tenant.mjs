@@ -130,6 +130,16 @@ try {
   const adminTenantIds = (adminMine.data?.tenants ?? []).map(item => item.id)
   check('超管 mine 列出全部租户（含 A/B）', adminTenantIds.includes(tenantA) && adminTenantIds.includes(tenantB))
 
+  // 回归：mine 必须反映「本次请求实际生效的租户」。
+  // 曾经的 bug —— mine 内部又调了一次 resolveTenant()，拿不到 X-Tenant-Id，
+  // 超管一律被算成平台视角，前端切换器就永远显示「平台视角」、并把该项置灰（点了没反应）。
+  const adminMineInA = await api('/tenants/mine', { token: adminToken, tenantId: tenantA })
+  check(
+    '超管带租户头时 mine.current = 该租户',
+    adminMineInA.data?.current === tenantA,
+    `current=${adminMineInA.data?.current} tenantA=${tenantA}`
+  )
+
   const backPlatform = await api('/tenants/switch', { method: 'POST', token: adminToken, body: { tenantId: 0 } })
   check('超管切回平台视角（tenantId=null）', backPlatform.data?.tenantId === null, JSON.stringify(backPlatform.body).slice(0, 160))
 
