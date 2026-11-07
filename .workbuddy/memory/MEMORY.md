@@ -55,3 +55,13 @@
 - 顺带修：`applyDataScope` 原来漏了 `data_scope=1（全部）` 档，导致「有 system:user:list 但没挂部门」的账号 `1 = 0` 看不到任何用户（审计员用户列表为空就是这个）。现在 `scope === ALL` 直接 return 不过滤
 - 已知遗留：`task.assignee_id` 是 `int`，`sys_user.id` 是 `varchar(32)`，两边永远匹配不上 → 「我的待办」恒为 0（只统计 `assignee_id = 0` 未指派）；彻底修需把该列迁成 varchar
 - 冒烟：`scripts/smoke-dashboard.mjs`（60 项，admin/viewer/auditor/无角色 四类账号，临时账号自动清理），需 `PORT=3461 CAPTCHA_ENABLED=false` 的测试实例
+
+## 多租户（2026-11-07，88caa2c）
+
+- 表：`sys_tenant` + `sys_user_tenant`（多对多）+ `sys_user.login_tenant_id`；9 张核心业务表 `tenant_id INT NOT NULL DEFAULT 1`，**`0` = 平台共享数据（所有租户可见）**
+- 隔离规则唯一入口 `src/shared/tenant/tenant-scope.util.ts`：`null` 不过滤（超管平台视角）/ `0` 只看共享 / `>0` 本租户 + 共享。别在 service 里手写判定
+- 上下文必须由**全局中间件** `TenantContext.run(store, next)` 建立（Guard 里 set 无效）；`BaseService` 对带 `tenantId` 的实体自动读写隔离，手写 QueryBuilder 的 service 需自己 `applyTenantScope(qb, alias)`（用 `andWhere(new Brackets(...))`，别 `where()` 覆盖）
+- 接口 `/api/v1/tenants` 九个：CRUD + `:id/users` 覆盖式分配 + `mine` + `switch`。超管 `mine` 返回**全表租户 + isSuper**，`switch(0)` = 回平台视角（仅超管）
+- 前端：顶栏 `TenantSwitcher` 写 localStorage `concise-tenant` → `http.ts` 自动带 `X-Tenant-Id`，切换后整页 reload
+- 坑：`@Column({ length })` 可空会被推断成 `Object`（必须显式 `type:'varchar'`）；新表 `COLLATE=utf8mb4_unicode_ci`；`Pagination` 无链式方法
+- 冒烟：`scripts/smoke-tenant.mjs`（26 项，需 `PORT=3461 CAPTCHA_ENABLED=false` 实例）
