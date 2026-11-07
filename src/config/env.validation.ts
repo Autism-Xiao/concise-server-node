@@ -130,6 +130,48 @@ class EnvironmentVariables {
   @IsOptional()
   @IsNumberString({}, { message: 'LOGIN_LOCK_HOURS 必须是数字' })
   LOGIN_LOCK_HOURS?: string
+
+  // ── OIDC / SSO 单点登录（src/config/oidc.config.ts）─────────────────────────
+
+  @IsOptional()
+  @IsIn(BOOLEAN_STRINGS, { message: 'OIDC_ENABLED 只能是 true/false/1/0/on/off/yes/no' })
+  OIDC_ENABLED?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_ISSUER?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_CLIENT_ID?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_CLIENT_SECRET?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_SCOPE?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_REDIRECT_URI?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_FRONTEND_REDIRECT?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_USERNAME_CLAIM?: string
+
+  @IsOptional()
+  @IsIn(BOOLEAN_STRINGS, { message: 'OIDC_AUTO_CREATE 只能是 true/false/1/0/on/off/yes/no' })
+  OIDC_AUTO_CREATE?: string
+
+  @IsOptional()
+  @IsString()
+  OIDC_DEFAULT_ROLES?: string
 }
 
 /**

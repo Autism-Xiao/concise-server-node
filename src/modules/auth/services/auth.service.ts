@@ -196,6 +196,17 @@ export class AuthService {
     return this.userService.stripPassword(user)
   }
 
+  /**
+   * SSO 登录：身份已在 IdP 侧验证通过，跳过密码/验证码/锁定逻辑直接签发令牌。
+   * 仍记登录日志（message=SSO 登录成功）并沿用强制改密标记，审计口径与密码登录一致。
+   */
+  async ssoLogin(user: import('../../user/entities/user.entity').UserEntity, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
+    await this.logService.recordLogin({ userId: user.id, username: user.username, status: 0, message: 'SSO 登录成功', ip: meta.ip, userAgent: meta.userAgent })
+    const result = await this.issueTokens(user)
+    result.mustChangePassword = await this.userService.needsPasswordChange(user)
+    return result
+  }
+
   /** 登录后权限汇总：角色 code、按钮权限、按角色过滤的菜单树（前端侧边栏与按钮级控制的数据源） */
   async getPermissions(userId: string): Promise<PermissionResult> {
     const user = await this.userService.findOneWithRolePermissions(userId)

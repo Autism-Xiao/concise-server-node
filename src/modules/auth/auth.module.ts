@@ -10,9 +10,11 @@ import { RedisModule } from '../../shared/redis/redis.module'
 import { OnlineModule } from '../ops/online/online.module'
 import { AuthController } from './controllers/auth.controller'
 import { AuthV1Controller } from './controllers/auth.v1.controller'
+import { SsoV1Controller } from './controllers/sso.v1.controller'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { AuthService } from './services/auth.service'
 import { CaptchaService } from './services/captcha.service'
+import { SsoService } from './services/sso.service'
 import { JwtStrategy } from './strategies/jwt.strategy'
 
 @Module({
@@ -33,8 +35,8 @@ import { JwtStrategy } from './strategies/jwt.strategy'
     })
   ],
   // 旧版（无 /v1）控制器默认不注册，见 config/legacy-routes.config.ts
-  controllers: [AuthV1Controller, ...(LEGACY_ROUTES_ENABLED ? [AuthController] : [])],
-  providers: [AuthService, CaptchaService, JwtStrategy, JwtAuthGuard],
+  controllers: [AuthV1Controller, SsoV1Controller, ...(LEGACY_ROUTES_ENABLED ? [AuthController] : [])],
+  providers: [AuthService, CaptchaService, SsoService, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard]
 })
 export class AuthModule {}
