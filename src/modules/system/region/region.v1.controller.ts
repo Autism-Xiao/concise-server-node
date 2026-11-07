@@ -30,6 +30,13 @@ export class RegionV1Controller {
     return this.regionService.getTree()
   }
 
+  @ApiOperation({ summary: '区划统计（v1）', description: '总数 + 各层级数量；登录即可访问，区划管理页树形视图头部展示' })
+  @ApiOkResponse({ description: '区划统计', schema: { example: { total: 44983, byLevel: { 0: 34, 1: 370, 2: 2900, 3: 0 } } } })
+  @Get('stats')
+  stats() {
+    return this.regionService.stats()
+  }
+
   @ApiOperation({ summary: '区划列表（v1，分页）', description: 'keyword 模糊匹配名称/简称/拼音/区划代码；level、parentCode 精确过滤；需 system:region:list' })
   @ApiOkResponse({ description: '区划分页列表', type: Pagination })
   @Perms('system:region:list')

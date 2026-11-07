@@ -14,6 +14,12 @@ export interface RegionTreeItem extends RegionEntity {
   children: RegionTreeItem[]
 }
 
+/** 区划统计：total 总数，byLevel 各层级数量（无数据的层级为 0） */
+export interface RegionStats {
+  total: number
+  byLevel: Record<number, number>
+}
+
 @Injectable()
 export class RegionService extends BaseService<RegionEntity> {
   constructor(
@@ -54,6 +60,31 @@ export class RegionService extends BaseService<RegionEntity> {
   /** 按上级区划代码查直接子级（级联选择器懒加载用） */
   async listChildren(parentCode: string): Promise<RegionEntity[]> {
     return this.repository.find({ where: { parentCode }, order: { areaCode: 'ASC' } })
+  }
+
+  /**
+   * 区划总量统计（按层级分组）
+   *
+   * 为什么单独做接口：区划管理页改成树形懒加载后，前端手里只有当前展开的节点，
+   * 拿不到「共多少条」。用一条 group by 查出来，避免为了个数字拉全量 4 万多行。
+   */
+  async stats(): Promise<RegionStats> {
+    const rows = await this.repository
+      .createQueryBuilder('region')
+      .select('region.level', 'level')
+      .addSelect('COUNT(1)', 'count')
+      .groupBy('region.level')
+      .getRawMany<{ level: number | string; count: string | number }>()
+    const byLevel: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0 }
+    let total = 0
+    for (const row of rows) {
+      const level = Number(row.level)
+      const count = Number(row.count)
+      if (!Number.isFinite(level) || !Number.isFinite(count)) continue
+      byLevel[level] = (byLevel[level] ?? 0) + count
+      total += count
+    }
+    return { total, byLevel }
   }
 
   /** 按区划代码查单条 */
