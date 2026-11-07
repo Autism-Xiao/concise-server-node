@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common'
+import { HttpStatus, Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
+import { hasSuperRole } from '../../../utils/super-role.util'
 import { normalizeWatermarkContent, renderWatermarkLines } from '../../../utils/watermark-template.util'
 import { UpdateMyWatermarkDto } from './dto/update-my-watermark.dto'
 import { UpdateUserWatermarkDto } from './dto/update-user-watermark.dto'
@@ -28,7 +29,12 @@ export interface WatermarkUserLike {
   username?: string | null
   realname?: string | null
   depts?: { departName?: string | null }[] | null
+  /** 鉴权时挂载的角色（停用角色已被 JwtStrategy 裁掉），用于判定是否超管 */
+  roles?: Array<{ roleCode?: string | null }> | null
 }
+
+/** 非超管用户看到的锁定原因：水印开关只归管理员，普通账号不能自行关闭（防绕过留痕要求） */
+export const USER_WATERMARK_LOCKED_REASON = '水印由管理员统一设置，如需调整请联系管理员'
 
 /** 下发给前端的生效水印配置（lines 已是最终文本，前端只负责画） */
 export interface ResolvedWatermark {
@@ -72,6 +78,9 @@ export class WatermarkService {
   async resolve(user: WatermarkUserLike, ip?: string | null): Promise<ResolvedWatermark> {
     const [setting, custom] = await Promise.all([this.getSetting(), this.userRepository.findOne({ where: { userId: user.id } })])
     const state = resolveWatermarkState(setting, custom)
+    // 开关权只给超管：普通用户即便在 optional 模式下也不能自行关闭水印（否则留痕要求形同虚设）；
+    // 全局 off / 用户 enforced / 全站 forced 的既有原因优先展示，没有更具体原因时才用统一话术
+    const isAdmin = hasSuperRole(user.roles)
 
     return {
       enabled: state.enabled,
@@ -88,8 +97,8 @@ export class WatermarkService {
       fontSize: setting.fontSize,
       mode: state.mode,
       enforced: state.enforced,
-      editable: state.editable,
-      reason: state.reason,
+      editable: isAdmin && state.editable,
+      reason: isAdmin ? state.reason : (state.reason ?? USER_WATERMARK_LOCKED_REASON),
       custom: {
         enabled: custom?.enabled ?? null,
         content: custom?.content ?? null,
@@ -98,8 +107,11 @@ export class WatermarkService {
     }
   }
 
-  /** 用户改自己的水印：被管理员锁定时直接拒绝，而不是静默忽略 */
+  /** 用户改自己的水印：只有超管可以（其余人由管理员在用户管理里逐人设定） */
   async updateMine(user: WatermarkUserLike, dto: UpdateMyWatermarkDto, ip?: string | null): Promise<ResolvedWatermark> {
+    if (!hasSuperRole(user.roles)) {
+      throw new BizException(BizErrorCode.FORBIDDEN, USER_WATERMARK_LOCKED_REASON, HttpStatus.FORBIDDEN)
+    }
     const state = await this.resolve(user, ip)
     if (!state.editable) {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, state.reason ?? '当前账号的水印由管理员锁定，无法修改')

@@ -69,6 +69,31 @@ export function formatLockDuration(seconds: number): string {
   return `${Math.ceil(hours / 24)} 天`
 }
 
+/** 一次密码错误的累计结果：给前端「还可尝试 N 次」的提示依据 */
+export interface PasswordFailureState {
+  /** 已累计的错误次数（含本次） */
+  attempts: number
+  /** 还可尝试次数；0 表示本次已触发锁定 */
+  remaining: number
+  /** 本次是否刚触发（或已处于）锁定 */
+  locked: boolean
+}
+
+/**
+ * 密码错误提示（未锁定）：「还可尝试 N 次」+ 锁定阈值，避免用户不知道还剩几次机会。
+ * accountHint=true 用于登录（保持「用户名或密码错误」的模糊性，不暴露账号是否存在）；
+ * false 用于锁屏解锁（当前账号已知，直接说密码不正确）。
+ */
+export function passwordFailureMessage(remaining: number, accountHint: boolean): string {
+  const prefix = accountHint ? '用户名或密码错误' : '密码不正确'
+  return `${prefix}，还可尝试 ${Math.max(remaining, 0)} 次（连续错误 ${LOGIN_MAX_FAILS} 次将锁定 ${formatLockDuration(LOGIN_LOCK_SECONDS)}）`
+}
+
+/** 触发锁定时的提示：明确锁多久 + 怎么解冻（到期自动 / 管理员提前解锁） */
+export function accountLockedMessage(): string {
+  return `密码错误次数过多，账号已锁定 ${formatLockDuration(LOGIN_LOCK_SECONDS)}，到期自动解冻，或联系管理员提前解锁`
+}
+
 /**
  * 补齐首页菜单节点（仪表盘）。
  *
@@ -152,10 +177,17 @@ export class AuthService {
       result.mustChangePassword = await this.userService.needsPasswordChange(user)
       return result
     } catch (error) {
-      await this.recordLoginFailure(failKey, dto.username, error)
-      const message = error instanceof HttpException ? error.message : '登录异常'
+      const failure = await this.recordLoginFailure(failKey, dto.username, error)
+      // 密码错误时把「还剩几次」写进返回文案；未达上限仍走 401，达到上限转 429 + ACCOUNT_LOCKED
+      const finalError =
+        failure == null
+          ? error
+          : failure.locked
+            ? new BizException(BizErrorCode.ACCOUNT_LOCKED, accountLockedMessage(), HttpStatus.TOO_MANY_REQUESTS)
+            : new BizException(BizErrorCode.LOGIN_FAILED, passwordFailureMessage(failure.remaining, true), HttpStatus.UNAUTHORIZED)
+      const message = finalError instanceof HttpException ? finalError.message : '登录异常'
       await this.logService.recordLogin({ userId: knownUserId, username: dto.username, status: 1, message, ip: meta.ip, userAgent: meta.userAgent })
-      throw error
+      throw finalError
     }
   }
 
@@ -297,27 +329,33 @@ export class AuthService {
       return
     }
     const remaining = Math.max(Math.ceil((hit.resetAt - Date.now()) / 1000), 1)
-    throw new BizException(BizErrorCode.ACCOUNT_LOCKED, `密码错误次数过多，账号已锁定，请 ${formatLockDuration(remaining)}后再试`, HttpStatus.TOO_MANY_REQUESTS)
+    throw new BizException(
+      BizErrorCode.ACCOUNT_LOCKED,
+      `密码错误次数过多，账号已锁定，请 ${formatLockDuration(remaining)}后再试，或联系管理员提前解锁`,
+      HttpStatus.TOO_MANY_REQUESTS
+    )
   }
 
   /** 只有「账号密码错误」才计数：验证码错误、账号冻结、已锁定都不算密码尝试 */
-  private async recordLoginFailure(failKey: string, username: string, error: unknown): Promise<void> {
+  private async recordLoginFailure(failKey: string, username: string, error: unknown): Promise<PasswordFailureState | null> {
     const isPasswordFailure = error instanceof BizException && error.getBizCode() === BizErrorCode.LOGIN_FAILED
     if (!isPasswordFailure) {
-      return
+      return null
     }
-    await this.countPasswordFailure(failKey, username)
+    return this.countPasswordFailure(failKey, username)
   }
 
   /** 累计一次密码错误；达到上限时把锁定截止重设为「现在 + 锁定时长」并告警 */
-  private async countPasswordFailure(failKey: string, username: string): Promise<void> {
+  private async countPasswordFailure(failKey: string, username: string): Promise<PasswordFailureState> {
     const hit = await this.rateLimitService.increment(failKey, LOGIN_LOCK_SECONDS)
+    const locked = hit.count >= LOGIN_MAX_FAILS
     if (hit.count === LOGIN_MAX_FAILS) {
       // 锁定从「第 N 次失败」起算：把窗口截止重设为现在 + 锁定时长。
       // 不重设的话截止时间停留在第一次失败那刻，锁定越靠后剩余时间越短，一天锁定会形同虚设。
       await this.rateLimitService.expire(failKey, LOGIN_LOCK_SECONDS)
       this.logger.warn(`账号 ${username} 连续 ${hit.count} 次密码错误，已锁定 ${formatLockDuration(LOGIN_LOCK_SECONDS)}`)
     }
+    return { attempts: hit.count, remaining: Math.max(LOGIN_MAX_FAILS - hit.count, 0), locked }
   }
 
   /**
@@ -330,9 +368,12 @@ export class AuthService {
     await this.assertNotLocked(failKey)
     const user = await this.userService.findByUsername(username)
     if (!user || !(await this.userService.verifyPassword(user, password))) {
-      await this.countPasswordFailure(failKey, username)
-      // 注意用 400 而不是 401：前端 getApiResult 把 401 统一按「登录过期」处理会强制登出
-      throw new BizException(BizErrorCode.LOGIN_FAILED, '密码不正确', HttpStatus.BAD_REQUEST)
+      const failure = await this.countPasswordFailure(failKey, username)
+      // 注意：未锁定用 400 而不是 401——前端 getApiResult 把 401 统一按「登录过期」处理会强制登出；
+      // 达到上限才用 429 + ACCOUNT_LOCKED（此时前端展示锁定提示，不再让继续试）
+      throw failure.locked
+        ? new BizException(BizErrorCode.ACCOUNT_LOCKED, accountLockedMessage(), HttpStatus.TOO_MANY_REQUESTS)
+        : new BizException(BizErrorCode.LOGIN_FAILED, passwordFailureMessage(failure.remaining, false), HttpStatus.BAD_REQUEST)
     }
     await this.rateLimitService.reset(failKey)
     return { verified: true }
