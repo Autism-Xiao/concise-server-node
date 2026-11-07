@@ -35,6 +35,7 @@ import { JobModule } from './modules/ops/job/job.module'
 import { OnlineModule } from './modules/ops/online/online.module'
 import { MonitorModule } from './modules/ops/monitor/monitor.module'
 import { ToolsModule } from './modules/tools/tools.module'
+import { DashboardModule } from './modules/dashboard/dashboard.module'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule()
@@ -66,7 +67,10 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     RegionModule,
     DictModule,
     NoticeModule,
+    // 待办任务（system/task）
     TaskModule,
+    // 首页概览聚合（/v1/dashboard/overview：按权限逐块裁剪，不建表）
+    DashboardModule,
     WatermarkModule,
     LevelModule,
     PostModule,

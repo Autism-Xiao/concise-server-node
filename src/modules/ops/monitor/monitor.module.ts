@@ -8,6 +8,8 @@ import { MonitorV1Controller } from './monitor.v1.controller'
 @Module({
   imports: [RedisModule],
   controllers: [MonitorV1Controller],
-  providers: [MonitorService]
+  providers: [MonitorService],
+  // 首页概览要复用 getServerInfo（CPU/内存/磁盘），导出服务而不是复制一份采集逻辑
+  exports: [MonitorService]
 })
 export class MonitorModule {}

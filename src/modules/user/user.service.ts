@@ -429,10 +429,42 @@ export class UserService extends BaseService<UserEntity> {
     return users
   }
 
-  /** 数据范围判定入参：req.user（含 roles 与 departIds）即可，无需额外查询 */
+  /**
+   * 所有「按数据范围收窄」的用户查询的唯一入口：软删过滤 + dataScope 都只在这一处拼。
+   *
+   * 为什么不各自 createQueryBuilder：首页的用户总数、列表、导出三个口径必须完全一致，
+   * 分开写迟早会漂（软删没滤、dataScope 漏加），同一张卡片和列表页对不上数字就是事故。
+   */
+  private async scopedQuery(actor?: DataScopeActor): Promise<SelectQueryBuilder<UserEntity>> {
+    const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 0')
+    await this.applyDataScope(qb, actor)
+    return qb
+  }
+
+  /**
+   * 统计当前账号可见的用户数（首页指标卡用）
+   *
+   * 与 listByQuery 共用 scopedQuery，因此软删过滤与数据范围完全同口径：
+   * 同样的账号看到的「用户总数」和用户列表的 total 永远一致。
+   */
+  async countScoped(actor?: DataScopeActor): Promise<{ total: number; active: number; frozen: number }> {
+    const row = await (
+      await this.scopedQuery(actor)
+    )
+      .select('COUNT(1)', 'total')
+      .addSelect('COALESCE(SUM(user.status = 1), 0)', 'active')
+      .addSelect('COALESCE(SUM(user.status = 2), 0)', 'frozen')
+      .getRawOne<{ total: string | number; active: string | number; frozen: string | number }>()
+    return {
+      total: Number(row?.total ?? 0),
+      active: Number(row?.active ?? 0),
+      frozen: Number(row?.frozen ?? 0)
+    }
+  }
+
   /** 列表/导出共用的查询构造：过滤条件集中一处，避免导出和列表口径跑偏 */
   private async buildListQuery(query: QueryUserDto, actor?: DataScopeActor): Promise<SelectQueryBuilder<UserEntity>> {
-    const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 0').orderBy('user.create_time', 'DESC')
+    const qb = (await this.scopedQuery(actor)).orderBy('user.create_time', 'DESC')
 
     if (query.keyword) {
       qb.andWhere('(user.username LIKE :keyword OR user.realname LIKE :keyword OR user.phone LIKE :keyword)', {
@@ -457,14 +489,14 @@ export class UserService extends BaseService<UserEntity> {
         deptFilters
       })
     }
-    await this.applyDataScope(qb, actor)
     return qb
   }
 
   /**
    * 数据范围过滤（sys_role.data_scope）：
    *  - 超管角色不受限；多角色取「可见范围最大」的档（数值最小）
-   *  - 仅本人 → user.id = 自己；本部门 → 命中自己任一部门；本部门及以下 → 部门树递归展开
+   *  - 全部(1) → 不加任何过滤；仅本人(4) → user.id = 自己；
+   *    本部门(3) → 命中自己任一部门；本部门及以下(2) → 部门树递归展开
    *  - 用户没有任何部门时，「本部门」档看不到任何人（1=0），避免误放成全量
    */
   private async applyDataScope(qb: SelectQueryBuilder<UserEntity>, actor?: DataScopeActor): Promise<void> {
@@ -477,6 +509,11 @@ export class UserService extends BaseService<UserEntity> {
       return
     }
     const scope = Math.min(...scopes)
+    // 全部(1)：语义就是不过滤。之前漏了这一档，导致「全部」的角色反而被自己的部门收窄，
+    // 没挂部门的账号直接 1=0 看不到任何人（有 system:user:list 的审计员看到空用户列表就是这个原因）
+    if (scope === DATA_SCOPE.ALL) {
+      return
+    }
     if (scope >= DATA_SCOPE.SELF_ONLY) {
       qb.andWhere('user.id = :scopeSelfId', { scopeSelfId: actor.id })
       return
