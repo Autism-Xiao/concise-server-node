@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, LessThan, Repository } from 'typeorm'
 
 import { paginate, type Pagination } from '../../../helper/paginate'
+import { storageProvider } from '../../../shared/storage'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { getExtname, sanitizeFileName } from '../../../utils/file.util'
 import { detectImageSignature } from '../../../utils/image-signature.util'
@@ -322,8 +323,8 @@ export class FileService {
     return this.findOneOrFail(ownerId, id)
   }
 
-  /** 下载信息（控制器负责设响应头并流式回传） */
-  async getDownloadInfo(ownerId: string, id: number): Promise<{ absolutePath: string; name: string; mime: string; size: number }> {
+  /** 下载信息（控制器负责设响应头并经存储驱动流式回传） */
+  async getDownloadInfo(ownerId: string, id: number): Promise<{ storageKey: string; name: string; mime: string; size: number }> {
     const item = await this.findOneOrFail(ownerId, id)
     if (item.isFolder) {
       throw new BadRequestException('文件夹暂不支持直接下载，请进入文件夹后选择具体文件')
@@ -331,11 +332,10 @@ export class FileService {
     if (!item.storageKey) {
       throw new NotFoundException('该文件没有物理存储记录')
     }
-    const absolutePath = this.absolutePath(item.storageKey)
-    if (!fs.existsSync(absolutePath)) {
+    if (!(await storageProvider().exists(item.storageKey))) {
       throw new NotFoundException('文件已丢失（可能被手动清理过存储目录）')
     }
-    return { absolutePath, name: item.name, mime: item.mime || 'application/octet-stream', size: item.size }
+    return { storageKey: item.storageKey, name: item.name, mime: item.mime || 'application/octet-stream', size: item.size }
   }
 
   /**
@@ -344,7 +344,7 @@ export class FileService {
    * 安全要点：类型判定不能只看扩展名和库里的 mime（都是上传时可伪造的），
    * 必须读文件头验真 —— 否则「.png 里装 HTML」就能 inline 渲染成同源页面。
    */
-  async getPreviewInfo(ownerId: string, id: number): Promise<{ absolutePath: string; name: string; mime: string; size: number }> {
+  async getPreviewInfo(ownerId: string, id: number): Promise<{ storageKey: string; name: string; mime: string; size: number }> {
     const item = await this.findOneOrFail(ownerId, id)
     if (item.isFolder) {
       throw new BadRequestException('文件夹不支持预览，请进入后选择文件')
@@ -352,30 +352,30 @@ export class FileService {
     if (!item.storageKey) {
       throw new NotFoundException('该文件没有物理存储记录')
     }
-    const absolutePath = this.absolutePath(item.storageKey)
-    if (!fs.existsSync(absolutePath)) {
+    const provider = storageProvider()
+    if (!(await provider.exists(item.storageKey))) {
       throw new NotFoundException('文件已丢失（可能被手动清理过存储目录）')
     }
 
     const ext = this.normalizeExt(item.ext || getExtname(item.name))
-    const head = await this.readHead(absolutePath)
+    const head = await provider.readHead(item.storageKey, 16)
 
     if (PREVIEW_IMAGE_EXTENSIONS.includes(ext)) {
       const signature = detectImageSignature(head)
       if (!signature) {
         throw new BadRequestException('文件内容与扩展名不符，无法预览，请下载查看')
       }
-      return { absolutePath, name: item.name, mime: signature.mime, size: item.size }
+      return { storageKey: item.storageKey, name: item.name, mime: signature.mime, size: item.size }
     }
     if (ext === 'pdf') {
       if (head.subarray(0, 4).toString('ascii') !== '%PDF') {
         throw new BadRequestException('文件内容与扩展名不符，无法预览，请下载查看')
       }
-      return { absolutePath, name: item.name, mime: 'application/pdf', size: item.size }
+      return { storageKey: item.storageKey, name: item.name, mime: 'application/pdf', size: item.size }
     }
     if (PREVIEW_TEXT_EXTENSIONS.includes(ext)) {
       // 统一按 text/plain 返回：即使内容真是 HTML，浏览器也不会解析执行
-      return { absolutePath, name: item.name, mime: 'text/plain; charset=utf-8', size: item.size }
+      return { storageKey: item.storageKey, name: item.name, mime: 'text/plain; charset=utf-8', size: item.size }
     }
     throw new BadRequestException('该类型暂不支持在线预览，请下载查看')
   }
@@ -717,21 +717,15 @@ export class FileService {
     const now = new Date()
     const dir = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`
     const relativeKey = `${dir}/${hash}${ext ? `.${ext}` : '.bin'}`
-    const absolute = this.absolutePath(relativeKey)
+    const provider = storageProvider()
 
-    if (fs.existsSync(absolute)) return relativeKey
-    await fs.promises.mkdir(path.dirname(absolute), { recursive: true })
+    if (await provider.exists(relativeKey)) return relativeKey
 
     if (tempPath) {
-      try {
-        await fs.promises.rename(tempPath, absolute)
-      } catch {
-        // 跨盘时 rename 会抛 EXDEV，退化成拷贝
-        await fs.promises.copyFile(tempPath, absolute)
-      }
+      await provider.saveFromTemp(tempPath, relativeKey)
       return relativeKey
     }
-    await fs.promises.writeFile(absolute, buffer ?? Buffer.alloc(0))
+    await provider.write(relativeKey, buffer ?? Buffer.alloc(0))
     return relativeKey
   }
 
@@ -780,7 +774,7 @@ export class FileService {
     if (!key) return
     const stillUsed = await this.fileRepository.count({ where: { storageKey: key } })
     if (stillUsed > 0) return
-    await fs.promises.unlink(this.absolutePath(key)).catch(() => undefined)
+    await storageProvider().delete(key)
   }
 
   /**

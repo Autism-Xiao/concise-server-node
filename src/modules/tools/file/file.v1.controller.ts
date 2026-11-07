@@ -26,6 +26,7 @@ import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { Pagination } from '../../../helper/paginate'
+import { storageProvider } from '../../../shared/storage'
 import { CreateFolderDto } from './dto/create-folder.dto'
 import { QueryFileDto } from './dto/query-file.dto'
 import { UpdateFileDto } from './dto/update-file.dto'
@@ -225,10 +226,10 @@ export class FileV1Controller {
       res.status(206)
       res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${info.size}`)
       res.setHeader('Content-Length', String(range.end - range.start + 1))
-      return new StreamableFile(fs.createReadStream(info.absolutePath, { start: range.start, end: range.end }))
+      return new StreamableFile(await storageProvider().openStream(info.storageKey, range))
     }
     res.setHeader('Content-Length', String(info.size))
-    return new StreamableFile(fs.createReadStream(info.absolutePath))
+    return new StreamableFile(await storageProvider().openStream(info.storageKey))
   }
 
   @ApiOperation({
@@ -249,7 +250,7 @@ export class FileV1Controller {
     if (!info.mime.startsWith('application/pdf')) {
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'")
     }
-    return new StreamableFile(fs.createReadStream(info.absolutePath))
+    return new StreamableFile(await storageProvider().openStream(info.storageKey))
   }
 
   @ApiOperation({ summary: '更新文件（v1）', description: '改名 / 移动 / 星标；移动会防环（不能移到自己或子孙目录）；需 system:file:update' })
