@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Not, Repository, SelectQueryBuilder, type EntityManager, type FindOptionsWhere } from 'typeorm'
+import { In, Not, Repository, SelectQueryBuilder, type EntityManager, type FindOptionsWhere, type QueryDeepPartialEntity } from 'typeorm'
 
 import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
@@ -24,6 +24,7 @@ import { FALLBACK_WATERMARK_SETTING, resolveWatermarkState } from '../system/wat
 import { UserEntity } from './entities/user.entity'
 import { RoleEntity } from '../role/entities/role.entity'
 import type { QueryUserDto } from './dto/query-user.dto'
+import type { UpdateMyProfileDto } from './dto/update-my-profile.dto'
 
 /** 用户状态（对齐 sys_user）：1 正常 / 2 冻结 */
 export const USER_STATUS = { NORMAL: 1, FROZEN: 2 } as const
@@ -561,6 +562,83 @@ export class UserService extends BaseService<UserEntity> {
     qb.andWhere('EXISTS (SELECT 1 FROM `sys_user_depart` ud2 WHERE ud2.`user_id` = user.id AND ud2.`dep_id` IN (:...scopeDeptIds))', {
       scopeDeptIds: deptIds
     })
+  }
+
+  /* ---------- 个人资料自助（/v1/users/me） ---------- */
+
+  /** 我的资料：带角色 / 部门 / 岗位 / 职级 / 水印，只查自己 —— 不需要 system:user:list 权限 */
+  async findMyProfile(id: string): Promise<UserEntity> {
+    return this.findOneDetail(id)
+  }
+
+  /**
+   * 自助更新个人资料
+   *
+   * 白名单写库：姓名 / 邮箱 / 手机号 / 座机 / 性别 / 生日 / 简介。
+   * DTO 层已经挡了一次（whitelist 会丢掉 roleIds、status 之类的多余键），这里再列一遍，
+   * 防止以后有人往 DTO 里加字段就顺带拿到了越权改状态的入口。
+   *
+   * 两个坑：
+   * 1. email / phone 在库上有唯一索引，且**回收站里的账号也占着**，所以写入前必须前置查重；
+   * 2. 空串要归一成 NULL —— 唯一索引下多个空串会互相冲突，而且 '' 与 null 在页面上没区别。
+   */
+  async updateMyProfile(id: string, dto: UpdateMyProfileDto): Promise<UserEntity> {
+    await this.findOne(id) // 不存在 / 已软删 → 404
+
+    const patch: Record<string, string | number | null> = {}
+    const assignText = (field: 'realname' | 'email' | 'phone' | 'telephone' | 'bio', value?: string | null) => {
+      if (value === undefined) return
+      const text = String(value ?? '').trim()
+      patch[field] = text === '' ? null : text
+    }
+    assignText('realname', dto.realname)
+    assignText('email', dto.email)
+    assignText('phone', dto.phone)
+    assignText('telephone', dto.telephone)
+    assignText('bio', dto.bio)
+
+    if (dto.birthday !== undefined) {
+      // 归一成 YYYY-MM-DD；normalizeDateText 认 1990/1/1、1990.1.1，非法值让它原样入库由数据库报错
+      patch.birthday = dto.birthday ? (normalizeDateText(dto.birthday) ?? dto.birthday) : null
+    }
+    if (dto.sex !== undefined) {
+      patch.sex = dto.sex
+    }
+    if (!Object.keys(patch).length) {
+      return this.findOneDetail(id)
+    }
+
+    await this.assertMyProfileUnique(id, patch)
+    try {
+      await this.repository
+        .createQueryBuilder()
+        .update(UserEntity)
+        .set(patch as QueryDeepPartialEntity<UserEntity>)
+        .where('id = :id', { id })
+        .execute()
+    } catch (error) {
+      throw new BadRequestException(describeWriteError(error))
+    }
+    return this.findOneDetail(id)
+  }
+
+  /** 自助改资料时的唯一键前置查重：邮箱 / 手机号被别的账号（含回收站）占用就报中文错 */
+  private async assertMyProfileUnique(id: string, patch: Record<string, string | number | null>): Promise<void> {
+    const checks: Array<['email' | 'phone', string]> = [
+      ['email', '邮箱'],
+      ['phone', '手机号']
+    ]
+    for (const [field, label] of checks) {
+      const value = patch[field]
+      if (!value) continue
+      const owner = await this.repository.findOne({
+        where: { [field]: value } as FindOptionsWhere<UserEntity>,
+        select: { id: true, username: true, delFlag: true }
+      })
+      if (owner && owner.id !== id) {
+        throw new BadRequestException(`${label}「${value}」已被账号「${owner.username}」占用${owner.delFlag === 1 ? '（该账号在回收站）' : ''}`)
+      }
+    }
   }
 
   /** 单查覆盖：过滤已软删用户 */

@@ -18,6 +18,7 @@ import { ResetUserPasswordDto } from './dto/reset-user-password.dto'
 import { RestoreUserDto } from './dto/restore-user.dto'
 import { UpdateUserDto } from './dto/update-user.dto'
 import { UpdateUserStatusDto } from './dto/update-user-status.dto'
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto'
 import { UserEntity } from './entities/user.entity'
 import { USER_IMPORT_DEFAULT_PASSWORD, USER_IMPORT_MAX_SIZE, UserService } from './user.service'
 
@@ -176,6 +177,27 @@ export class UserV1Controller {
   @Get('lookup')
   lookup(@Query('ids') ids?: string) {
     return this.userService.lookupBrief((ids ?? '').split(','))
+  }
+
+  @ApiOperation({
+    summary: '我的资料（v1）',
+    description: '当前登录用户的完整资料 + 角色/部门/岗位/职级/水印；登录即可访问，不需要 system:user:list（个人资料页专用）'
+  })
+  @ApiOkResponse({ description: '我的资料', type: UserEntity })
+  @Get('me')
+  me(@Request() req: { user: UserEntity }) {
+    return this.userService.findMyProfile(req.user.id)
+  }
+
+  @ApiOperation({
+    summary: '更新我的资料（v1）',
+    description:
+      '本人可改：姓名 / 邮箱 / 手机号 / 座机 / 性别 / 生日 / 简介；空串表示清空该字段。账号、工号、状态、角色、部门、密码各有专用接口，塞进来也会被忽略（不能自助提权）'
+  })
+  @OperLog('个人资料')
+  @Put('me')
+  updateMe(@Body() dto: UpdateMyProfileDto, @Request() req: { user: UserEntity }) {
+    return this.userService.updateMyProfile(req.user.id, dto)
   }
 
   @ApiOperation({ summary: '查询用户详情（v1，含角色与部门）', description: '需 system:user:list' })

@@ -47,6 +47,10 @@ export class UserEntity {
   @Column({ type: 'date', nullable: true, comment: '生日' })
   birthday?: string
 
+  /** 个人简介（个人资料页可自助编辑，255 字符，纯展示字段） */
+  @Column({ type: 'varchar', length: 255, nullable: true, comment: '个人简介' })
+  bio?: string | null
+
   @ApiPropertyOptional({ description: '性别：0 未知 / 1 男 / 2 女', example: 1, enum: [0, 1, 2], nullable: true })
   @Column({ type: 'tinyint', nullable: true, comment: '性别(0-默认未知,1-男,2-女)' })
   sex?: number
