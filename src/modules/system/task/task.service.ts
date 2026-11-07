@@ -55,7 +55,7 @@ export class TaskService extends BaseService<TaskEntity> {
     keyword?: string
     priority?: number
     status?: number
-    assigneeId?: number
+    assigneeId?: string
   }): Promise<Pagination<TaskEntity>> {
     const qb = this.repository.createQueryBuilder('task').orderBy('task.id', 'DESC')
     applyTenantScope(qb, 'task')

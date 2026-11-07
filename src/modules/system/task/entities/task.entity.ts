@@ -27,9 +27,9 @@ export class TaskEntity {
   @Column({ type: 'tinyint', default: 0, comment: '状态：0待处理 1进行中 2已完成 3已取消' })
   status: number
 
-  @ApiPropertyOptional({ description: '负责人用户 ID，0 为未指派', example: 1 })
-  @Column({ type: 'int', default: 0, comment: '负责人用户ID，0为未指派' })
-  assigneeId: number
+  @ApiPropertyOptional({ description: '负责人用户 ID，"0" 为未指派', example: 'e9ca23d68d884d4ebb19d07889727dae' })
+  @Column({ length: 32, default: '0', comment: '负责人用户ID，0为未指派' })
+  assigneeId: string
 
   @ApiPropertyOptional({ description: '截止时间', example: '2026-12-01T00:00:00.000Z', nullable: true })
   @Column({ name: 'due_date', type: 'datetime', nullable: true, comment: '截止时间' })

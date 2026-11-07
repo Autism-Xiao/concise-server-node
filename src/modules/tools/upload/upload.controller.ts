@@ -22,7 +22,7 @@ export const UPLOAD_FILE_SIZE = 10 * 1024 * 1024
 export const UPLOAD_MIMETYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/bmp']
 
 /** multer 文件过滤：先按声明的 Content-Type 拦一遍，非图片不落盘（不占磁盘、不进内存缓冲） */
-function imageFileFilter(_request: unknown, file: Express.Multer.File, callback: (error: Error | null, acceptFile: boolean) => void): void {
+export function imageFileFilter(_request: unknown, file: Express.Multer.File, callback: (error: Error | null, acceptFile: boolean) => void): void {
   const declared = (file.mimetype ?? '').toLowerCase()
   if (!UPLOAD_MIMETYPES.includes(declared)) {
     callback(new BadRequestException(`仅支持上传 PNG / JPEG / GIF / WEBP / BMP 图片，当前文件类型为「${declared || '未知'}」`), false)

@@ -281,22 +281,15 @@ export class DashboardService {
   }
 
   private async myTasks(actor: DashboardActor, scope: DashboardScope): Promise<TaskBlock> {
-    /**
-     * 已知数据模型不一致：task.assignee_id 是 int，而 sys_user.id 是 varchar(32)（JeecgBoot 主键）。
-     * 因此只有「纯数字历史 ID」能对上；对不上的账号不是返回全 0，而是仍然统计 assignee_id = 0（未指派），
-     * 否则有任务权限的账号会误以为系统里一条任务都没有。
-     */
-    const numericId = /^\d+$/.test(actor.id) ? Number(actor.id) : null
+    // task.assignee_id 已迁移为 varchar(32)，与 sys_user.id 同型，可直接匹配；'0' 表示未指派
     const params: unknown[] = []
     let where: string
     if (scope === 'all') {
-      where = numericId === null ? 'assignee_id = 0' : '(assignee_id = ? OR assignee_id = 0)'
-      if (numericId !== null) params.push(numericId)
+      where = "(assignee_id = ? OR assignee_id = '0')"
+      params.push(actor.id)
     } else {
-      // 只看自己：ID 对不上就真的没有"指派给我"的任务
-      if (numericId === null) return { scope, pending: 0, doing: 0, done: 0, cancelled: 0 }
       where = 'assignee_id = ?'
-      params.push(numericId)
+      params.push(actor.id)
     }
 
     const rows = await this.dataSource.query<Array<{ status: number; n: string | number }>>(

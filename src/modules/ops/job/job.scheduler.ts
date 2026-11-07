@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { CronJob, CronTime } from 'cron'
 import { Repository } from 'typeorm'
 
+import { RedisService } from '../../../shared/redis/redis.service'
+import { withRedisLock } from '../../../shared/redis/redis-lock.util'
 import { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
 import { JobHandlerRegistry, type JobTrigger } from './job.handlers'
 
@@ -42,7 +44,8 @@ export class JobScheduler implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectRepository(SysQuartzJobEntity)
     private readonly jobRepository: Repository<SysQuartzJobEntity>,
-    private readonly registry: JobHandlerRegistry
+    private readonly registry: JobHandlerRegistry,
+    private readonly redis: RedisService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -132,6 +135,20 @@ export class JobScheduler implements OnModuleInit, OnModuleDestroy {
   }
 
   private async execute(job: SysQuartzJobEntity, trigger: JobTrigger): Promise<JobExecutionResult> {
+    // cron 触发走分布式锁：多实例部署时同一周期只有一个实例真正执行；
+    // 手动触发（runOnce）不走锁——管理员点「立即执行」必须次次有结果。
+    // 锁 TTL 600s：任务没有超时控制，取一个远大于常规执行时长的值，宁可极端场景漏发不可重复跑。
+    if (trigger === 'cron') {
+      await withRedisLock(this.redis, `job:lock:${job.id}`, 600, async () => {
+        await this.runAndRecord(job, trigger)
+      })
+      // 被锁跳过时无执行记录可写，返回一个中性的「未持锁」结果
+      return { success: true, message: '已在其他实例执行（分布式锁跳过）', duration: 0, trigger, runAt: new Date().toISOString() }
+    }
+    return this.runAndRecord(job, trigger)
+  }
+
+  private async runAndRecord(job: SysQuartzJobEntity, trigger: JobTrigger): Promise<JobExecutionResult> {
     const startedAt = Date.now()
     const runAt = new Date().toISOString()
     let success = true

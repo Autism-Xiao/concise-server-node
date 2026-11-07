@@ -25,6 +25,7 @@ import { LogModule } from './modules/system/log/log.module'
 import { DeptModule } from './modules/system/dept/dept.module'
 import { ScheduleModule } from './modules/schedule/schedule.module'
 import { RegionModule } from './modules/system/region/region.module'
+import { MessageModule } from './modules/message/message.module'
 import { DictModule } from './modules/system/dict/dict.module'
 import { NoticeModule } from './modules/system/notice/notice.module'
 import { TaskModule } from './modules/system/task/task.module'
@@ -71,6 +72,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     DeptModule,
     ScheduleModule,
     RegionModule,
+    MessageModule,
     DictModule,
     NoticeModule,
     // 待办任务（system/task）

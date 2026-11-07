@@ -1,6 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Type } from 'class-transformer'
-import { IsIn, IsInt, IsISO8601, IsOptional, IsString, Length, Min } from 'class-validator'
+import { IsIn, IsISO8601, IsOptional, IsString, Length } from 'class-validator'
 
 export class CreateTaskDto {
   @ApiProperty({ description: '任务标题', example: '整理需求文档', maxLength: 64 })
@@ -18,12 +17,11 @@ export class CreateTaskDto {
   @IsIn([0, 1, 2])
   priority?: number
 
-  @ApiPropertyOptional({ description: '负责人用户 ID，0 为未指派', example: 1, minimum: 0 })
+  @ApiPropertyOptional({ description: '负责人用户 ID（sys_user.id 字符串主键），"0" 为未指派', example: '0' })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Type(() => Number)
-  assigneeId?: number
+  @IsString()
+  @Length(1, 32, { message: '负责人 ID 长度须在 1~32 位之间' })
+  assigneeId?: string
 
   @ApiPropertyOptional({ description: '截止时间（ISO 8601 字符串，校验后由 Service 转 Date）', example: '2026-12-01T00:00:00Z' })
   @IsOptional()

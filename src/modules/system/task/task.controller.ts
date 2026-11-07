@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common'
 import { ApiBearerAuth, ApiExcludeController, ApiOkResponse, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger'
 import { Type } from 'class-transformer'
-import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator'
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator'
 
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
@@ -30,12 +30,11 @@ class QueryTaskDto extends PagerDto {
   @Type(() => Number)
   status?: number
 
-  @ApiPropertyOptional({ description: '负责人用户 ID 过滤', example: 1, minimum: 0 })
+  @ApiPropertyOptional({ description: '负责人用户 ID 过滤（sys_user.id 字符串主键）', example: '0' })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Type(() => Number)
-  assigneeId?: number
+  @IsString()
+  @MaxLength(32)
+  assigneeId?: string
 }
 
 class ChangeStatusDto {
