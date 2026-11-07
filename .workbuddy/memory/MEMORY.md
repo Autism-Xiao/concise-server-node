@@ -9,6 +9,7 @@
 - **给用户的终端命令要用 PowerShell 5.1 语法**：用户在自己终端里粘贴执行，`&&`/`||`/三元/`??` 都会报「不是有效语句分隔符」。多命令用 `npm run build; if ($?) { npm run start:prod }`，环境变量用 `$env:PORT="3459"`。（我自己用 Bash 工具时仍可用 `&&`）
 - **重启后端一律 `npm run restart`**（= `nest build` + `scripts/serve.mjs`，启动前自动结束旧的 `dist/main.js` 实例），**绝不用 `nest start --watch`** —— watch 启动前清 dist 会被 safe-delete 钩子拦死（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`）。裸跑 `node dist/main.js` 撞端口会 EADDRINUSE，查占用者用 `node scripts/serve.mjs --dry-run`
   - **`npm run restart` 会「假重启」**：`nest build` 清 dist（700+ 文件）同样会被 safe-delete 拦，`&&` 短路后 `serve.mjs` 根本没跑，但输出看着像成功。判断法：`curl /api/v1/<新路由>` 回 **404 = 路由没注册（旧进程）**，回 401 才是新代码在跑。被拦时改用「先 `npm run build`（会走审批绕过）、再 `node scripts/serve.mjs`」
+  - **后台启动 `serve.mjs` 的任务会被标成 failed**（父进程退出、子进程存活），别当成服务挂了：用 `curl /api/docs-json` 看路由是否已注册，或看 3459 上 node 进程的 StartTime 是否晚于 dist 构建时间
   - **启动服务的命令不要接管道**（`node scripts/serve.mjs | head -20`）：head 读满行关管道 → 子进程被杀，任务却显示 `completed exit 0`
 - NestJS 12 CJS + Jest + oxlint；TypeORM 1.1 + MySQL 8.4（本机服务 `MySQL84`，root/123456，库 `concise_server`）
 - 参照 E:\project\demo\nest-admin 演进为中后台架构
