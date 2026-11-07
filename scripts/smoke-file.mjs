@@ -4,13 +4,36 @@
  * 用法：
  *   SMOKE_BASE=http://127.0.0.1:3460/api SMOKE_USER=admin SMOKE_PASSWORD=<登录密码> node scripts/smoke-file.mjs
  * 前提：目标实例已关闭验证码（CAPTCHA_ENABLED=false），否则登录拿不到 token。
- * 覆盖：建文件夹 → 上传中文名文件 → 列表/面包屑/统计 → 改名 → 星标 → 移动 → 下载 → 软删 → 回收站 → 恢复 → 彻底删除
+ * 覆盖：建文件夹 → 上传中文名文件 → 列表/面包屑/统计 → 改名 → 星标 → 移动 → 下载（含 Range）
+ *      → 预览白名单 → 覆盖上传清盘 → 恢复重名改名 → 软删 → 回收站 → 恢复 → 彻底删除
+ *
+ * 注意：脚本需与后端同机运行 —— 覆盖清盘、物理文件存在性这类断言要直接读 storage 目录。
  */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const PROJECT_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const BASE = process.env.SMOKE_BASE ?? 'http://127.0.0.1:3460/api'
 const USERNAME = process.env.SMOKE_USER ?? 'admin'
 const PASSWORD = process.env.SMOKE_PASSWORD ?? 'admin123'
 let token = ''
 const results = []
+
+/** storage_key → 本地绝对路径（内容寻址，根目录默认 ./storage/files） */
+function storagePath(storageKey) {
+  const root = process.env.FILE_STORAGE_DIR?.trim() || path.join(PROJECT_ROOT, 'storage/files')
+  return path.join(root, storageKey)
+}
+
+/** 文本文件上传表单（冒烟里大量重复构造） */
+function textForm(name, content, parentId = 0, onConflict) {
+  const form = new FormData()
+  form.append('file', new Blob([content], { type: 'text/plain' }), name)
+  form.append('parentId', String(parentId))
+  if (onConflict) form.append('onConflict', onConflict)
+  return form
+}
 
 function check(name, ok, detail = '') {
   results.push({ name, ok, detail })
@@ -118,6 +141,43 @@ check('下载内容一致', body.includes('smoke test'), `长度 ${body.length}`
 check('下载文件名编码', disposition.includes(encodeURIComponent('改名后.md')), disposition.slice(0, 80))
 check('下载防嗅探头', download.headers.get('x-content-type-options') === 'nosniff')
 
+// ---- Range：大文件拖动进度条 / 断点续传靠它 ----
+const partial = await fetch(`${BASE}/v1/files/${fileNode.id}/download`, {
+  headers: { Authorization: `Bearer ${token}`, Range: 'bytes=0-3' }
+})
+check('Range 返回 206', partial.status === 206, String(partial.status))
+check('Range 响应头正确', (partial.headers.get('content-range') ?? '').startsWith('bytes 0-3/'), partial.headers.get('content-range') ?? '')
+check('Range 内容为前 4 字节', (await partial.text()) === 'hell')
+
+const badRange = await fetch(`${BASE}/v1/files/${fileNode.id}/download`, {
+  headers: { Authorization: `Bearer ${token}`, Range: 'bytes=999999-' }
+})
+check('越界 Range 返回 416', badRange.status === 416, String(badRange.status))
+
+// ---- 预览：只放行位图/PDF/纯文本，且类型要按文件头验真 ----
+const textPreview = await fetch(`${BASE}/v1/files/${fileNode.id}/preview`, { headers: { Authorization: `Bearer ${token}` } })
+const previewType = textPreview.headers.get('content-type') ?? ''
+const previewDisposition = textPreview.headers.get('content-disposition') ?? ''
+check('文本预览 200', textPreview.status === 200, String(textPreview.status))
+check('预览为 inline + text/plain', previewDisposition.startsWith('inline') && previewType.includes('text/plain'), `${previewDisposition.slice(0, 20)} / ${previewType}`)
+
+// 扩展名伪装成图片、内容其实是 HTML：必须被文件头校验拦下
+const fakeForm = new FormData()
+fakeForm.append('file', new Blob(['<html><script>alert(1)</script></html>'], { type: 'image/png' }), 'fake.png')
+fakeForm.append('parentId', '0')
+const fakeUpload = await api('/v1/files/upload', { method: 'POST', body: fakeForm })
+const fakeId = fakeUpload.json?.result?.file?.id
+const fakePreview = await fetch(`${BASE}/v1/files/${fakeId}/preview`, { headers: { Authorization: `Bearer ${token}` } })
+check('伪装图片被拒预览', fakePreview.status === 400, `${fakePreview.status} ${(await fakePreview.text()).slice(0, 60)}`)
+
+const zipForm = new FormData()
+zipForm.append('file', new Blob(['PK\u0003\u0004 fake zip'], { type: 'application/zip' }), 'archive.zip')
+zipForm.append('parentId', '0')
+const zipUpload = await api('/v1/files/upload', { method: 'POST', body: zipForm })
+const zipId = zipUpload.json?.result?.file?.id
+const zipPreview = await fetch(`${BASE}/v1/files/${zipId}/preview`, { headers: { Authorization: `Bearer ${token}` } })
+check('不支持的类型拒绝预览', zipPreview.status === 400, String(zipPreview.status))
+
 const overlap = await api('/v1/files/upload', { method: 'POST', body: (() => {
   const again = new FormData()
   again.append('file', new Blob(['hello 文件管理 smoke test\n'], { type: 'text/plain' }), '改名后.md')
@@ -146,15 +206,47 @@ const purged = await api('/v1/files/purge', {
 })
 check('彻底删除', purged.json?.result?.purged === 1)
 
+// ---- 覆盖上传：旧内容的物理文件必须被回收，否则每覆盖一次漏一份磁盘 ----
+const overwriteName = `覆盖-${Date.now()}.txt`
+const firstVersion = await api('/v1/files/upload', { method: 'POST', body: textForm(overwriteName, '第一版', 0, 'overwrite') })
+const overwriteId = firstVersion.json?.result?.file?.id
+const firstKey = (await api(`/v1/files/${overwriteId}`)).json?.result?.storageKey
+check('覆盖前物理文件存在', !!firstKey && fs.existsSync(storagePath(firstKey)), firstKey)
+
+const secondVersion = await api('/v1/files/upload', { method: 'POST', body: textForm(overwriteName, '第二版内容更长一些，sha256 必然不同', 0, 'overwrite') })
+const secondKey = (await api(`/v1/files/${overwriteId}`)).json?.result?.storageKey
+check('覆盖复用同一条记录', secondVersion.json?.result?.file?.id === overwriteId, String(secondVersion.json?.result?.file?.id))
+check('覆盖后旧物理文件已清盘', firstKey !== secondKey && !fs.existsSync(storagePath(firstKey)), `${firstKey} → ${secondKey}`)
+check('覆盖后新物理文件存在', !!secondKey && fs.existsSync(storagePath(secondKey)))
+
+// ---- 恢复重名：删除期间又建了同名文件，恢复要自动改名而不是造出两条同名 ----
+const dupName = `恢复冲突-${Date.now()}.txt`
+const older = await api('/v1/files/upload', { method: 'POST', body: textForm(dupName, '旧的那份', 0) })
+const olderId = older.json?.result?.file?.id
+await api(`/v1/files/${olderId}`, { method: 'DELETE' })
+const newer = await api('/v1/files/upload', { method: 'POST', body: textForm(dupName, '新的那份', 0) })
+const newerId = newer.json?.result?.file?.id
+check('删除后可重新建同名', newer.json?.result?.file?.name === dupName, newer.json?.result?.file?.name)
+
+const restoreDup = await api('/v1/files/restore', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ids: [String(olderId)] })
+})
+check('恢复时重名自动改名', (restoreDup.json?.result?.renamed ?? 0) >= 1, JSON.stringify(restoreDup.json?.result))
+const restoredOlder = await api(`/v1/files/${olderId}`)
+check('恢复后名字带序号', (restoredOlder.json?.result?.name ?? '').includes('(1)'), restoredOlder.json?.result?.name)
+
 const bad = await api('/v1/files/9999999')
 check('不存在返回 404', bad.json?.code === 404 || bad.res.status === 404, `${bad.json?.code}/${bad.res.status}`)
 
+const cleanupIds = [folderId, fileNode.id, overwriteId, fakeId, zipId, olderId, newerId].filter(Boolean).map(String)
 const cleanup = await api('/v1/files/purge', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ ids: [String(folderId), String(fileNode.id)] })
+  body: JSON.stringify({ ids: cleanupIds })
 })
-check('清理冒烟数据（连子目录一起彻底删）', cleanup.json?.result?.purged >= 2, `purged=${cleanup.json?.result?.purged}`)
+check('清理冒烟数据（连子目录一起彻底删）', cleanup.json?.result?.purged >= 2, `purged=${cleanup.json?.result?.purged} / 提交 ${cleanupIds.length} 个 id`)
 
 const failed = results.filter(r => !r.ok)
 console.log(`\n结果：${results.length - failed.length}/${results.length} 通过`)

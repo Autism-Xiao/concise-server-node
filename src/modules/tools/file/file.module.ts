@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
+import { FileCleaner } from './file.cleaner'
 import { FileEntity } from './entities/file.entity'
 import { FileV1Controller } from './file.v1.controller'
 import { FileService } from './file.service'
@@ -9,7 +10,7 @@ import { FileService } from './file.service'
 @Module({
   imports: [TypeOrmModule.forFeature([FileEntity])],
   controllers: [FileV1Controller],
-  providers: [FileService],
+  providers: [FileService, FileCleaner],
   exports: [FileService]
 })
 export class FileModule {}

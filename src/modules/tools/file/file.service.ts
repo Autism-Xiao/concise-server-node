@@ -3,10 +3,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository } from 'typeorm'
+import { In, LessThan, Repository } from 'typeorm'
 
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { getExtname, sanitizeFileName } from '../../../utils/file.util'
+import { detectImageSignature } from '../../../utils/image-signature.util'
 import { FileEntity } from './entities/file.entity'
 import type { CreateFolderDto } from './dto/create-folder.dto'
 import type { FileKind, QueryFileDto } from './dto/query-file.dto'
@@ -32,6 +33,26 @@ export function fileQuotaBytes(): number {
   return Number(process.env.FILE_QUOTA_MB ?? 2048) * 1024 * 1024
 }
 
+/**
+ * 上传临时目录：与存储目录同盘，multer 落盘后 rename 才是毫秒级。
+ * 控制器（multer diskStorage）与清理任务共用这个入口，别在两处各写一份默认值。
+ */
+export function fileTempDir(): string {
+  return process.env.FILE_TEMP_DIR?.trim() || path.join(process.cwd(), 'storage/tmp')
+}
+
+/** 回收站保留天数（默认 30 天，<=0 表示不自动清理 —— 交给人工彻底删除） */
+export function recycleRetentionDays(): number {
+  const days = Number(process.env.FILE_RECYCLE_DAYS ?? 30)
+  return Number.isFinite(days) ? days : 30
+}
+
+/** 临时文件保留小时数（默认 24 小时，<=0 表示不清理） */
+export function tempRetentionHours(): number {
+  const hours = Number(process.env.FILE_TMP_HOURS ?? 24)
+  return Number.isFinite(hours) ? hours : 24
+}
+
 /** 分类 → 扩展名集合（other 走反向排除，避免漏掉新类型） */
 const KIND_EXTENSIONS: Record<Exclude<FileKind, 'all' | 'other'>, string[]> = {
   image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tif', 'tiff', 'psd', 'heic'],
@@ -41,6 +62,12 @@ const KIND_EXTENSIONS: Record<Exclude<FileKind, 'all' | 'other'>, string[]> = {
 }
 
 const ALL_KNOWN_EXTENSIONS = Object.values(KIND_EXTENSIONS).flat()
+
+/** 可在线预览的位图扩展名（SVG 刻意排除：XML 文本能内嵌脚本，inline 渲染等于同源 XSS） */
+const PREVIEW_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
+
+/** 可 inline 返回的纯文本类型（配 text/plain + nosniff，浏览器不会当 HTML 执行） */
+const PREVIEW_TEXT_EXTENSIONS = ['txt', 'md', 'json', 'csv', 'log', 'yml', 'yaml', 'xml', 'ini', 'conf']
 
 /** 常见扩展名 → MIME（下载头用；不在表里的一律 application/octet-stream） */
 const MIME_BY_EXT: Record<string, string> = {
@@ -218,34 +245,47 @@ export class FileService {
       const size = file.size
       const hash = tempPath ? await this.hashFile(tempPath) : crypto.createHash('sha256').update(file.buffer).digest('hex')
 
-      const used = await this.usedBytes(ownerId)
-      if (used + size > fileQuotaBytes()) {
-        throw new BadRequestException(`存储空间不足：已用 ${this.readableSize(used)}，配额 ${this.readableSize(fileQuotaBytes())}，请先清理回收站`)
-      }
-
+      // 冲突先判：skip 直接返回（不必算配额）；overwrite 的配额增量要扣掉被替换文件的大小
       const existing = await this.fileRepository.findOne({ where: { ownerId, parentId, name: safeName, isDeleted: 0 } })
       let name = safeName
+      let overwriting: FileEntity | null = null
       if (existing) {
         const mode = dto.onConflict ?? 'rename'
         if (mode === 'skip') {
           return { skipped: true, message: `「${safeName}」已存在，已跳过` }
         }
         if (mode === 'overwrite') {
-          // 覆盖：复用原记录，只替换内容和大小；物理文件按内容重新寻址
-          const storageKey = await this.persistUpload(tempPath, file.buffer, hash, ext)
-          existing.size = size
-          existing.hash = hash
-          existing.ext = ext
-          existing.mime = MIME_BY_EXT[ext] ?? 'application/octet-stream'
-          existing.storageKey = storageKey
-          existing.updateTime = new Date()
-          const saved = await this.fileRepository.save(existing)
-          return { skipped: false, file: saved, message: `已覆盖「${safeName}」` }
+          overwriting = existing
+        } else {
+          name = await this.uniqueName(ownerId, parentId, safeName)
         }
-        name = await this.uniqueName(ownerId, parentId, safeName)
+      }
+
+      // 配额：覆盖是「替换」不是「新增」，增量要减掉旧文件大小，否则 100MB 覆盖 100MB 会被误判空间不足
+      const used = await this.usedBytes(ownerId)
+      const delta = size - (overwriting?.size ?? 0)
+      if (delta > 0 && used + delta > fileQuotaBytes()) {
+        throw new BadRequestException(`存储空间不足：已用 ${this.readableSize(used)}，配额 ${this.readableSize(fileQuotaBytes())}，请先清理回收站`)
       }
 
       const storageKey = await this.persistUpload(tempPath, file.buffer, hash, ext)
+
+      if (overwriting) {
+        const previousKey = overwriting.storageKey
+        overwriting.size = size
+        overwriting.hash = hash
+        overwriting.ext = ext
+        overwriting.mime = MIME_BY_EXT[ext] ?? 'application/octet-stream'
+        overwriting.storageKey = storageKey
+        overwriting.updateTime = new Date()
+        const saved = await this.fileRepository.save(overwriting)
+        // 旧内容的物理文件此刻可能已无人引用：不清就是「每覆盖一次漏一份磁盘」
+        if (previousKey && previousKey !== storageKey) {
+          await this.removeStorageIfUnused(previousKey)
+        }
+        return { skipped: false, file: saved, message: `已覆盖「${safeName}」` }
+      }
+
       const saved = await this.fileRepository.save(
         this.fileRepository.create({
           parentId,
@@ -266,6 +306,8 @@ export class FileService {
           updateTime: new Date()
         })
       )
+      // 前置校验与 INSERT 之间没有锁，并发上传可能双双通过；落地后再核一次，超额就撤销本次写入
+      await this.assertQuotaAfterWrite(ownerId, saved)
       return { skipped: false, file: saved, message: name === safeName ? `已上传「${name}」` : `同名文件已存在，已保存为「${name}」` }
     } finally {
       // 临时文件兜底清理（正常路径已被 rename 掉，unlink 会失败，忽略即可）
@@ -292,6 +334,48 @@ export class FileService {
       throw new NotFoundException('文件已丢失（可能被手动清理过存储目录）')
     }
     return { absolutePath, name: item.name, mime: item.mime || 'application/octet-stream', size: item.size }
+  }
+
+  /**
+   * 在线预览信息：只放行位图 / PDF / 纯文本，其余让前端回退到下载。
+   *
+   * 安全要点：类型判定不能只看扩展名和库里的 mime（都是上传时可伪造的），
+   * 必须读文件头验真 —— 否则「.png 里装 HTML」就能 inline 渲染成同源页面。
+   */
+  async getPreviewInfo(ownerId: string, id: number): Promise<{ absolutePath: string; name: string; mime: string; size: number }> {
+    const item = await this.findOneOrFail(ownerId, id)
+    if (item.isFolder) {
+      throw new BadRequestException('文件夹不支持预览，请进入后选择文件')
+    }
+    if (!item.storageKey) {
+      throw new NotFoundException('该文件没有物理存储记录')
+    }
+    const absolutePath = this.absolutePath(item.storageKey)
+    if (!fs.existsSync(absolutePath)) {
+      throw new NotFoundException('文件已丢失（可能被手动清理过存储目录）')
+    }
+
+    const ext = this.normalizeExt(item.ext || getExtname(item.name))
+    const head = await this.readHead(absolutePath)
+
+    if (PREVIEW_IMAGE_EXTENSIONS.includes(ext)) {
+      const signature = detectImageSignature(head)
+      if (!signature) {
+        throw new BadRequestException('文件内容与扩展名不符，无法预览，请下载查看')
+      }
+      return { absolutePath, name: item.name, mime: signature.mime, size: item.size }
+    }
+    if (ext === 'pdf') {
+      if (head.subarray(0, 4).toString('ascii') !== '%PDF') {
+        throw new BadRequestException('文件内容与扩展名不符，无法预览，请下载查看')
+      }
+      return { absolutePath, name: item.name, mime: 'application/pdf', size: item.size }
+    }
+    if (PREVIEW_TEXT_EXTENSIONS.includes(ext)) {
+      // 统一按 text/plain 返回：即使内容真是 HTML，浏览器也不会解析执行
+      return { absolutePath, name: item.name, mime: 'text/plain; charset=utf-8', size: item.size }
+    }
+    throw new BadRequestException('该类型暂不支持在线预览，请下载查看')
   }
 
   /** 改名 / 移动 / 星标；移动时防环（目标不能是自己或自己的子孙目录） */
@@ -355,10 +439,16 @@ export class FileService {
     return paginate(qb, { page, pageSize })
   }
 
-  /** 从回收站恢复；父目录也已被删时一并恢复父链，避免恢复出一个孤儿 */
-  async restore(ownerId: string, ids: number[]): Promise<{ restored: number }> {
+  /**
+   * 从回收站恢复；父目录也已被删时一并恢复父链，避免恢复出一个孤儿。
+   *
+   * 恢复前要查一次重名：文件在回收站期间，同目录可能又新建了同名文件，
+   * 直接 `is_deleted = 0` 会出现两条同名记录，之后重命名/移动的查重也会一直报冲突。
+   * 冲突的按 `报告(1).pdf` 自动改名，并在返回值里报告数量。
+   */
+  async restore(ownerId: string, ids: number[]): Promise<{ restored: number; renamed: number }> {
     const items = await this.fileRepository.find({ where: { id: In(ids), ownerId, isDeleted: 1 } })
-    if (!items.length) return { restored: 0 }
+    if (!items.length) return { restored: 0, renamed: 0 }
 
     const restoreIds = new Set<number>()
     for (const item of items) {
@@ -372,8 +462,18 @@ export class FileService {
     }
     for (const item of items) restoreIds.add(item.id)
 
+    let renamed = 0
+    const targets = await this.fileRepository.find({ where: { id: In([...restoreIds]), ownerId } })
+    for (const target of targets) {
+      const conflict = await this.fileRepository.findOne({ where: { ownerId, parentId: target.parentId, name: target.name, isDeleted: 0 } })
+      if (!conflict) continue
+      const next = await this.uniqueName(ownerId, target.parentId, target.name)
+      await this.fileRepository.update(target.id, { name: next })
+      renamed++
+    }
+
     const result = await this.fileRepository.update({ id: In([...restoreIds]), ownerId }, { isDeleted: 0, deletedAt: null, updateTime: new Date() })
-    return { restored: result.affected ?? 0 }
+    return { restored: result.affected ?? 0, renamed }
   }
 
   /** 彻底删除：先删记录，再按 hash 判断物理文件是否还有别的引用，没有才删磁盘 */
@@ -387,11 +487,68 @@ export class FileService {
     const storageKeys = [...new Set(items.map(item => item.storageKey).filter(Boolean))]
     for (const key of storageKeys) {
       // 还有别的记录引用同一份物理内容时不能删（同一 sha256 可能被多个用户/多处引用）
-      const stillUsed = await this.fileRepository.count({ where: { storageKey: key } })
-      if (stillUsed > 0) continue
-      await fs.promises.unlink(this.absolutePath(key)).catch(() => undefined)
+      await this.removeStorageIfUnused(key)
     }
     return { purged: items.length }
+  }
+
+  /**
+   * 清空超期回收站（定时任务调用，无需登录态）
+   *
+   * 为什么必须有：配额只统计 `is_deleted = 0`，回收站不占账面空间，
+   * 但物理文件还在磁盘上 —— 没有保留期的话磁盘只增不减，配额形同虚设。
+   * 保留天数由 FILE_RECYCLE_DAYS 控制，<=0 关闭自动清理。
+   */
+  async sweepRecycled(): Promise<{ purged: number; owners: number }> {
+    const days = recycleRetentionDays()
+    if (days <= 0) return { purged: 0, owners: 0 }
+
+    const deadline = new Date(Date.now() - days * 86_400_000)
+    // 单轮上限，避免积压过多时一次跑爆内存/长时间占连接；其余下一轮继续
+    const rows = await this.fileRepository.find({
+      where: { isDeleted: 1, deletedAt: LessThan(deadline) },
+      select: { id: true, ownerId: true },
+      take: 1000
+    })
+    if (!rows.length) return { purged: 0, owners: 0 }
+
+    const byOwner = new Map<string, number[]>()
+    for (const row of rows) {
+      const list = byOwner.get(row.ownerId)
+      if (list) list.push(row.id)
+      else byOwner.set(row.ownerId, [row.id])
+    }
+
+    let purged = 0
+    for (const [ownerId, ids] of byOwner) {
+      const result = await this.purge(ownerId, ids)
+      purged += result.purged
+    }
+    return { purged, owners: byOwner.size }
+  }
+
+  /**
+   * 清掉上传中断留下的临时文件（定时任务调用）
+   *
+   * multer 正常路径的临时文件会被 upload() 的 finally 删掉，
+   * 但客户端中途断开、进程被强杀时没人收尸，长期会堆满 storage/tmp。
+   */
+  async sweepTempFiles(): Promise<{ removed: number }> {
+    const hours = tempRetentionHours()
+    if (hours <= 0) return { removed: 0 }
+
+    const dir = fileTempDir()
+    const names = await fs.promises.readdir(dir).catch(() => [] as string[])
+    const deadline = Date.now() - hours * 3_600_000
+    let removed = 0
+    for (const name of names) {
+      const full = path.join(dir, name)
+      const stat = await fs.promises.stat(full).catch(() => null)
+      if (!stat || !stat.isFile() || stat.mtimeMs > deadline) continue
+      await fs.promises.unlink(full).catch(() => undefined)
+      removed++
+    }
+    return { removed }
   }
 
   /** 存储用量：总量 + 文件数 + 文件夹数 + 按分类分布（存储卡数据源） */
@@ -591,6 +748,49 @@ export class FileService {
       throw new BadRequestException('非法的存储路径')
     }
     return target
+  }
+
+  /** 读文件头 16 字节（验真实类型用，不要把整个文件读进内存） */
+  private async readHead(filePath: string): Promise<Buffer> {
+    const handle = await fs.promises.open(filePath, 'r')
+    try {
+      const buffer = Buffer.alloc(16)
+      const { bytesRead } = await handle.read(buffer, 0, 16, 0)
+      return buffer.subarray(0, bytesRead)
+    } finally {
+      await handle.close()
+    }
+  }
+
+  /**
+   * 物理文件没有任何记录引用时才清盘。
+   *
+   * 两处必须走这里：彻底删除（purge）与覆盖上传（overwrite）。
+   * 覆盖上传尤其容易漏 —— 旧 `storage_key` 被替换后，那份文件就成了无主孤儿，
+   * 页面照常能用，只有 `du -sh storage` 会慢慢涨。
+   */
+  private async removeStorageIfUnused(storageKey: string | null | undefined): Promise<void> {
+    const key = storageKey?.trim()
+    if (!key) return
+    const stillUsed = await this.fileRepository.count({ where: { storageKey: key } })
+    if (stillUsed > 0) return
+    await fs.promises.unlink(this.absolutePath(key)).catch(() => undefined)
+  }
+
+  /**
+   * 写库后二次核配额：超额就撤销本次写入并清盘。
+   *
+   * 前置的「查 SUM → 判断 → INSERT」没有事务锁，并发上传时两个请求可能都读到旧值、
+   * 双双通过检查。这里在落地后复核一次，让账面永远不超过配额。
+   * 代价：并发打满时后完成的那次会被撤销并提示重试 —— 比长期超配额、磁盘被撑爆好。
+   */
+  private async assertQuotaAfterWrite(ownerId: string, saved: FileEntity): Promise<void> {
+    const quota = fileQuotaBytes()
+    const after = await this.usedBytes(ownerId)
+    if (after <= quota) return
+    await this.fileRepository.delete({ id: saved.id, ownerId })
+    await this.removeStorageIfUnused(saved.storageKey)
+    throw new BadRequestException(`存储空间不足：本次上传后已达 ${this.readableSize(after)}，超过配额 ${this.readableSize(quota)}，请先清理回收站`)
   }
 
   /** multer 的 originalname 按 latin1 解出来，中文会变乱码，这里转回 utf8 */

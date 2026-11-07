@@ -1,10 +1,10 @@
 import fs from 'node:fs'
-import path from 'node:path'
 import {
   Body,
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   ParseIntPipe,
   Post,
@@ -31,16 +31,49 @@ import { QueryFileDto } from './dto/query-file.dto'
 import { UpdateFileDto } from './dto/update-file.dto'
 import { UploadFileDto } from './dto/upload-file.dto'
 import { FileEntity } from './entities/file.entity'
-import { FileService } from './file.service'
+import { fileTempDir, FileService } from './file.service'
 
 /** 单文件上限（MB），默认 200；大文件走 diskStorage，不占 Node 内存 */
 function uploadMaxBytes(): number {
   return Number(process.env.FILE_UPLOAD_MAX_MB ?? 200) * 1024 * 1024
 }
 
-/** multer 临时目录：和存储目录同盘，后续 rename 才是毫秒级 */
-function uploadTempDir(): string {
-  return process.env.FILE_TEMP_DIR?.trim() || path.join(process.cwd(), 'storage/tmp')
+/**
+ * Content-Disposition：`filename` 给老浏览器的 ASCII 兜底名（中文会被剔光，退化成 file-{id}），
+ * `filename*` 按 RFC 5987 带 UTF-8 原名。
+ */
+function contentDisposition(type: 'attachment' | 'inline', name: string, fallbackId: number): string {
+  const fallback =
+    name
+      .replace(/[^\x20-\x7e]/g, '')
+      .replace(/["\\]/g, '')
+      .trim() || `file-${fallbackId}`
+  return `${type}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`
+}
+
+/** 单区间 Range；多区间不处理（返回 null 走整文件），非法返回 'invalid' */
+function parseRange(header: string | undefined, total: number): { start: number; end: number } | null | 'invalid' {
+  if (!header) return null
+  const matched = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (!matched) return null
+  const [, rawStart, rawEnd] = matched
+  if (!rawStart && !rawEnd) return 'invalid'
+
+  let start: number
+  let end: number
+  if (!rawStart) {
+    // bytes=-500：请求最后 500 字节（视频拖动进度条时常见）
+    const suffix = Number(rawEnd)
+    if (!Number.isFinite(suffix) || suffix <= 0) return 'invalid'
+    start = Math.max(total - suffix, 0)
+    end = total - 1
+  } else {
+    start = Number(rawStart)
+    end = rawEnd ? Number(rawEnd) : total - 1
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) return 'invalid'
+  return { start, end: Math.min(end, total - 1) }
 }
 
 interface AuthedRequest {
@@ -146,7 +179,7 @@ export class FileV1Controller {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (_req, _file, callback) => {
-          const dir = uploadTempDir()
+          const dir = fileTempDir()
           fs.promises
             .mkdir(dir, { recursive: true })
             .then(() => callback(null, dir))
@@ -163,18 +196,59 @@ export class FileV1Controller {
     return this.fileService.upload(this.ownerIdOf(req), file, dto)
   }
 
-  @ApiOperation({ summary: '下载文件（v1）', description: '流式下载，响应头带 UTF-8 文件名；文件夹请进目录后选具体文件；需 system:file:download' })
+  @ApiOperation({
+    summary: '下载文件（v1）',
+    description: '流式下载，支持 Range 断点续传（206/416）；文件名按 RFC 5987 编码；文件夹请进目录后选具体文件；需 system:file:download'
+  })
   @Perms('system:file:download')
   @Get(':id/download')
-  async download(@Param('id', ParseIntPipe) id: number, @Request() req: AuthedRequest, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+  async download(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: AuthedRequest,
+    @Headers('range') rangeHeader: string | undefined,
+    @Res({ passthrough: true }) res: Response
+  ): Promise<StreamableFile> {
     const info = await this.fileService.getDownloadInfo(this.ownerIdOf(req), id)
-    // ASCII 兜底名：中文全被剔除时用文件 id 代替，老浏览器也能存下来
-    const fallback = info.name.replace(/[^\x20-\x7e]/g, '').replace(/["\\]/g, '') || `file-${id}`
     res.setHeader('Content-Type', info.mime)
-    res.setHeader('Content-Length', String(info.size))
-    res.setHeader('Content-Disposition', `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(info.name)}`)
+    res.setHeader('Content-Disposition', contentDisposition('attachment', info.name, id))
     // 禁止浏览器嗅探内容类型：防止把上传的文本当 HTML 渲染
     res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Accept-Ranges', 'bytes')
+
+    const range = parseRange(rangeHeader, info.size)
+    if (range === 'invalid') {
+      res.status(416)
+      res.setHeader('Content-Range', `bytes */${info.size}`)
+      return new StreamableFile(Buffer.alloc(0))
+    }
+    if (range) {
+      res.status(206)
+      res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${info.size}`)
+      res.setHeader('Content-Length', String(range.end - range.start + 1))
+      return new StreamableFile(fs.createReadStream(info.absolutePath, { start: range.start, end: range.end }))
+    }
+    res.setHeader('Content-Length', String(info.size))
+    return new StreamableFile(fs.createReadStream(info.absolutePath))
+  }
+
+  @ApiOperation({
+    summary: '在线预览（v1）',
+    description: '仅位图 / PDF / 纯文本，inline 返回；类型按文件头验真（防 .png 里装 HTML）；SVG 等可执行类型不放行；需 system:file:download'
+  })
+  @Perms('system:file:download')
+  @Get(':id/preview')
+  async preview(@Param('id', ParseIntPipe) id: number, @Request() req: AuthedRequest, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+    const info = await this.fileService.getPreviewInfo(this.ownerIdOf(req), id)
+    res.setHeader('Content-Type', info.mime)
+    res.setHeader('Content-Length', String(info.size))
+    res.setHeader('Content-Disposition', contentDisposition('inline', info.name, id))
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Cache-Control', 'private, max-age=300')
+    // 预览内容来自用户上传，按不可信资源处理：禁脚本、禁外链。
+    // PDF 不设 CSP —— 交给浏览器内置阅读器，加 CSP 可能让它在部分版本里白屏。
+    if (!info.mime.startsWith('application/pdf')) {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'")
+    }
     return new StreamableFile(fs.createReadStream(info.absolutePath))
   }
 
