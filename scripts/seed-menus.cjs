@@ -21,32 +21,36 @@
    * type: 0 一级菜单 / 1 子菜单；status: '1' 有效 / '0' 停用
    */
   const MENUS = [
-    // ---- 顶级 ----
-    { id: 'menu_35', parent: null, name: '仪表盘', url: '/dashboard', type: 0, sort: 1, icon: 'LayoutDashboard' },
-    { id: 'menu_1', parent: null, name: '系统管理', url: '/system', type: 0, sort: 6, icon: 'Settings' },
-    { id: 'menu_38', parent: null, name: '运维管理', url: '/ops', type: 0, sort: 17, icon: 'Server' },
-    // ---- 系统管理子菜单 ----
-    { id: 'menu_2', parent: 'menu_1', name: '用户管理', url: '/system/users', type: 1, sort: 7, icon: 'Users', perms: 'system:user:list' }, // 原 /system/user 修正
-    { id: 'menu_39', parent: 'menu_1', name: '菜单管理', url: '/system/menu', type: 1, sort: 8, icon: 'ListTree', perms: 'system:menu:list' },
-    { id: 'menu_40', parent: 'menu_1', name: '角色权限', url: '/system/role', type: 1, sort: 9, icon: 'ShieldCheck', perms: 'system:role:list' },
-    { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 10, icon: 'Building2', perms: 'system:dept:list' },
-    { id: 'menu_14', parent: 'menu_1', name: '数据字典', url: '/system/dict', type: 1, sort: 11, icon: 'Database', perms: 'system:dict:list' },
-    { id: 'menu_18', parent: 'menu_1', name: '日志管理', url: '/system/log', type: 1, sort: 12, icon: 'ScrollText' },
-    { id: 'menu_31', parent: 'menu_1', name: '文件管理', url: '/system/file', type: 1, sort: 13, icon: 'FolderOpen', perms: 'system:file:list' }, // 原「存储管理 /tools/storage」修正
-    { id: 'menu_41', parent: 'menu_1', name: '日历管理', url: '/system/calendar', type: 1, sort: 14, icon: 'CalendarDays' },
-    { id: 'menu_42', parent: 'menu_1', name: '职级管理', url: '/system/level', type: 1, sort: 22, icon: 'Medal', perms: 'system:level:list' },
-    { id: 'menu_43', parent: 'menu_1', name: '岗位管理', url: '/system/post', type: 1, sort: 23, icon: 'Briefcase', perms: 'system:post:list' },
-    { id: 'menu_44', parent: 'menu_1', name: '租户管理', url: '/system/tenant', type: 1, sort: 24, icon: 'Network' },
-    { id: 'menu_21', parent: 'menu_1', name: '通知公告', url: '/system/notice', type: 1, sort: 25, icon: 'Megaphone', perms: 'system:notice:list' }, // 原「公告管理」
-    { id: 'menu_45', parent: 'menu_1', name: '行政区划', url: '/system/region', type: 1, sort: 26, icon: 'MapPin' },
-    // ---- 日志管理子菜单 ----
-    { id: 'menu_46', parent: 'menu_18', name: '登录日志', url: '/system/log/login', type: 1, sort: 15, icon: 'LogIn', perms: 'system:log:login' },
-    { id: 'menu_47', parent: 'menu_18', name: '操作日志', url: '/system/log/operation', type: 1, sort: 16, icon: 'FileText', perms: 'system:log:oper' },
-    // ---- 运维管理子菜单 ----
-    { id: 'menu_48', parent: 'menu_38', name: '定时任务', url: '/ops/job', type: 1, sort: 18, icon: 'Timer', perms: 'system:job:list' },
-    { id: 'menu_49', parent: 'menu_38', name: '在线用户', url: '/ops/online', type: 1, sort: 19, icon: 'UserCheck', perms: 'system:online:list' },
-    { id: 'menu_50', parent: 'menu_38', name: '服务监控', url: '/ops/server', type: 1, sort: 20, icon: 'Activity', perms: 'system:monitor:server' },
-    { id: 'menu_51', parent: 'menu_38', name: '缓存监控', url: '/ops/cache', type: 1, sort: 21, icon: 'Package', perms: 'system:monitor:cache' }
+    // ---- 顶级（顺序：仪表盘 → 系统管理 → 数据管理 → 运维管理 → 安全审计 → 协同办公）----
+    { id: 'menu_35', parent: null, name: '仪表盘', url: '/dashboard', type: 0, sort: 10, icon: 'LayoutDashboard' },
+    { id: 'menu_1', parent: null, name: '系统管理', url: '/system', type: 0, sort: 20, icon: 'Settings' },
+    { id: 'menu_data', parent: null, name: '数据管理', url: '/data', type: 0, sort: 30, icon: 'Database' },
+    { id: 'menu_38', parent: null, name: '运维管理', url: '/ops', type: 0, sort: 40, icon: 'Server' },
+    { id: 'menu_audit', parent: null, name: '安全审计', url: '/audit', type: 0, sort: 50, icon: 'ShieldCheck' },
+    { id: 'menu_collab', parent: null, name: '协同办公', url: '/collab', type: 0, sort: 60, icon: 'Handshake' },
+    // ---- 系统管理：账号与权限 ----
+    { id: 'menu_2', parent: 'menu_1', name: '用户管理', url: '/system/users', type: 1, sort: 1, icon: 'Users', perms: 'system:user:list' },
+    { id: 'menu_40', parent: 'menu_1', name: '角色权限', url: '/system/role', type: 1, sort: 2, icon: 'ShieldCheck', perms: 'system:role:list' },
+    { id: 'menu_39', parent: 'menu_1', name: '菜单管理', url: '/system/menu', type: 1, sort: 3, icon: 'ListTree', perms: 'system:menu:list' },
+    { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 4, icon: 'Building2', perms: 'system:dept:list' },
+    { id: 'menu_43', parent: 'menu_1', name: '岗位管理', url: '/system/post', type: 1, sort: 5, icon: 'Briefcase', perms: 'system:post:list' },
+    { id: 'menu_42', parent: 'menu_1', name: '职级管理', url: '/system/level', type: 1, sort: 6, icon: 'Medal', perms: 'system:level:list' },
+    { id: 'menu_44', parent: 'menu_1', name: '租户管理', url: '/system/tenant', type: 1, sort: 7, icon: 'Network' },
+    // ---- 数据管理：基础数据与资源 ----
+    { id: 'menu_14', parent: 'menu_data', name: '数据字典', url: '/system/dict', type: 1, sort: 1, icon: 'Database', perms: 'system:dict:list' },
+    { id: 'menu_45', parent: 'menu_data', name: '行政区划', url: '/system/region', type: 1, sort: 2, icon: 'MapPin', perms: 'system:region:list' },
+    { id: 'menu_31', parent: 'menu_data', name: '文件管理', url: '/system/file', type: 1, sort: 3, icon: 'FolderOpen', perms: 'system:file:list' },
+    // ---- 运维管理：运行状态 ----
+    { id: 'menu_48', parent: 'menu_38', name: '定时任务', url: '/ops/job', type: 1, sort: 1, icon: 'Timer', perms: 'system:job:list' },
+    { id: 'menu_49', parent: 'menu_38', name: '在线用户', url: '/ops/online', type: 1, sort: 2, icon: 'UserCheck', perms: 'system:online:list' },
+    { id: 'menu_50', parent: 'menu_38', name: '服务监控', url: '/ops/server', type: 1, sort: 3, icon: 'Activity', perms: 'system:monitor:server' },
+    { id: 'menu_51', parent: 'menu_38', name: '缓存监控', url: '/ops/cache', type: 1, sort: 4, icon: 'Package', perms: 'system:monitor:cache' },
+    // ---- 安全审计：日志已从「系统管理 > 日志管理」上提，直接挂顶层分组 ----
+    { id: 'menu_46', parent: 'menu_audit', name: '登录日志', url: '/system/log/login', type: 1, sort: 1, icon: 'LogIn', perms: 'system:log:login' },
+    { id: 'menu_47', parent: 'menu_audit', name: '操作日志', url: '/system/log/operation', type: 1, sort: 2, icon: 'FileText', perms: 'system:log:oper' },
+    // ---- 协同办公：内容与日程 ----
+    { id: 'menu_21', parent: 'menu_collab', name: '通知公告', url: '/system/notice', type: 1, sort: 1, icon: 'Megaphone', perms: 'system:notice:list' },
+    { id: 'menu_41', parent: 'menu_collab', name: '日历管理', url: '/system/calendar', type: 1, sort: 2, icon: 'CalendarDays' }
   ]
 
   const parentIds = new Set(MENUS.filter(m => m.type === 0).map(m => m.id))
@@ -128,7 +132,17 @@
     { id: 'menu_89', parent: 'menu_31', name: '新建文件夹', perms: 'system:file:add', sort: 2 },
     { id: 'menu_90', parent: 'menu_31', name: '文件修改', perms: 'system:file:update', sort: 3 },
     { id: 'menu_91', parent: 'menu_31', name: '文件删除', perms: 'system:file:delete', sort: 4 },
-    { id: 'menu_92', parent: 'menu_31', name: '文件下载', perms: 'system:file:download', sort: 5 }
+    { id: 'menu_92', parent: 'menu_31', name: '文件下载', perms: 'system:file:download', sort: 5 },
+    // 行政区划（menu_45）：列表权限挂在菜单项本身上，这里只补增删改导入
+    { id: 'menu_96', parent: 'menu_45', name: '区划新增', perms: 'system:region:add', sort: 1 },
+    { id: 'menu_97', parent: 'menu_45', name: '区划修改', perms: 'system:region:update', sort: 2 },
+    { id: 'menu_98', parent: 'menu_45', name: '区划删除', perms: 'system:region:delete', sort: 3 },
+    { id: 'menu_99', parent: 'menu_45', name: '区划导入', perms: 'system:region:import', sort: 4 },
+    // 用户管理（menu_2）：重置密码 / 回收站恢复，前端按钮靠这两个权限码控制显隐
+    { id: 'menu_93', parent: 'menu_2', name: '重置密码', perms: 'system:user:reset-password', sort: 6 },
+    { id: 'menu_94', parent: 'menu_2', name: '恢复用户', perms: 'system:user:restore', sort: 7 },
+    // 全局水印策略（前台 /settings/watermark 与用户水印 Tab 共用的开关）
+    { id: 'menu_95', parent: 'menu_1', name: '水印策略', perms: 'system:watermark:edit', sort: 8 }
   ]
   for (const b of BUTTONS) {
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])
