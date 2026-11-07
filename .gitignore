@@ -63,3 +63,4 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # 上传的文件
 /public
+.env.docker

@@ -1,0 +1,88 @@
+# 一键起全栈：app + MySQL 8.4 + Redis 7
+#   docker compose up -d --build          首次启动（含构建）
+#   docker compose logs -f app            看应用日志
+#   docker compose down                   停止（-v 连数据卷一起删）
+#
+# 生产注意：改掉 MYSQL_ROOT_PASSWORD / JWT_SECRET（.env.docker 里配强随机值）
+
+services:
+  app:
+    build: .
+    container_name: concise-server
+    restart: unless-stopped
+    ports:
+      - '${APP_PORT:-3000}:3000'
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      API_PREFIX: api
+      # 首次启动建表：只在一个实例上开（多副本时其余实例设 false）
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: ${DB_USERNAME:-concise}
+      DB_PASSWORD: ${DB_PASSWORD:-concise123}
+      DB_DATABASE: ${DB_DATABASE:-concise_server}
+      DB_POOL_SIZE: 20
+      REDIS_ENABLED: 'true'
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # JWT 密钥务必在 .env.docker 里显式给强随机值
+      JWT_SECRET: ${JWT_SECRET:?请在 .env.docker 中设置 JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?请在 .env.docker 中设置 JWT_REFRESH_SECRET}
+      TRUST_PROXY: 'loopback,linklocal,uniquelocal'
+      # 上传文件落盘路径（挂卷持久化）
+      FILE_STORAGE_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/v1/health']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  mysql:
+    image: mysql:8.4
+    container_name: concise-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: ${DB_DATABASE:-concise_server}
+      MYSQL_USER: ${DB_USERNAME:-concise}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-concise123}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=300
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-p${MYSQL_ROOT_PASSWORD:-root123456}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: concise-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  mysql-data:
+  redis-data:
+  uploads:

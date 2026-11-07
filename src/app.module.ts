@@ -14,6 +14,7 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { LoggerService } from './shared/logger/logger.service'
+import { HealthModule } from './modules/health/health.module'
 import { DatabaseModule } from './shared/database/database.module'
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module'
 import { PermissionCacheModule } from './shared/permission-cache/permission-cache.module'
@@ -59,6 +60,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     }),
     // 数据库连接（TypeORM + MySQL）
     DatabaseModule,
+    HealthModule,
     // 计数基础设施（限流 / 登录失败锁定），全局模块
     RateLimitModule,
     // 权限集合缓存（按角色，Redis 优先，写侧主动失效），全局模块
