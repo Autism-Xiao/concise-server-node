@@ -59,6 +59,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user || user.status !== 1) {
       throw new UnauthorizedException('账号不存在或已被冻结')
     }
+    // 停用角色不参与鉴权：RolesGuard / @Roles 匹配的 req.user.roles 在这里统一裁剪
+    user.roles = (user.roles ?? []).filter(role => role.status !== 0)
 
     if (token) {
       await this.onlineService.touch(token, { id: payload.id, username: payload.username, exp: (payload as { exp?: number }).exp }, request, user)

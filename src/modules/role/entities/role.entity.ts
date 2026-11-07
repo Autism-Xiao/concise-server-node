@@ -35,6 +35,10 @@ export class RoleEntity {
   @Column({ length: 255, nullable: true, comment: '描述' })
   description?: string
 
+  @ApiPropertyOptional({ description: '状态：1 正常 / 0 停用（停用后不再参与权限计算，也不能再分配给用户）', example: 1, enum: [1, 0] })
+  @Column({ type: 'tinyint', default: 1, comment: '状态(1正常 0停用)' })
+  status: number
+
   @ApiPropertyOptional({ description: '创建人', nullable: true })
   @Column({ length: 32, nullable: true, comment: '创建人' })
   createBy?: string

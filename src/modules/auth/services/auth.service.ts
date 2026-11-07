@@ -171,9 +171,11 @@ export class AuthService {
       throw new BizException(BizErrorCode.UNAUTHORIZED, '账号不存在或已被冻结', HttpStatus.UNAUTHORIZED)
     }
 
-    const roles = (user.roles ?? []).map(role => role.roleCode).filter(Boolean)
+    // 停用角色不参与权限计算（角色管理里可停用；内置超管角色禁止停用，这里不会把超管滤掉）
+    const enabledRoles = (user.roles ?? []).filter(role => role.status !== 0)
+    const roles = enabledRoles.map(role => role.roleCode).filter(Boolean)
     // 超管：内置规则全权（不读 sys_role_permission），与 PermsGuard / RolesGuard 共用同一判定
-    const isAdmin = hasSuperRole(user.roles)
+    const isAdmin = hasSuperRole(enabledRoles)
     // 有效菜单（未删除、状态有效），按 sort_no 升序
     const allMenus = (await this.menuService.listAll()).filter(menu => menu.status === '1')
 
@@ -183,7 +185,7 @@ export class AuthService {
 
     // 非超管：汇总各角色授权的菜单/按钮 id
     const allowedIds = new Set<string>()
-    for (const role of user.roles ?? []) {
+    for (const role of enabledRoles) {
       for (const perm of role.permissions ?? []) {
         allowedIds.add(perm.id)
       }

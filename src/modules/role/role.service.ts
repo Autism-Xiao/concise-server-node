@@ -55,9 +55,13 @@ export class RoleService extends BaseService<RoleEntity> {
     return roles.filter(role => (role.roleName ?? '').toLowerCase().includes(keyword) || (role.roleCode ?? '').toLowerCase().includes(keyword))
   }
 
-  /** 角色下拉选项：只暴露 id/名称/编码，供用户表单分配角色、列表筛选（登录即可用，不含授权明细） */
+  /** 角色下拉选项：只暴露 id/名称/编码，供用户表单分配角色、列表筛选（登录即可用，不含授权明细）；停用角色不给新分配 */
   async listOptions(): Promise<Array<{ id: string; roleCode: string; roleName?: string }>> {
-    const qb = this.roleRepository.createQueryBuilder('role').select(['role.id', 'role.roleCode', 'role.roleName']).orderBy('role.createTime', 'ASC')
+    const qb = this.roleRepository
+      .createQueryBuilder('role')
+      .select(['role.id', 'role.roleCode', 'role.roleName'])
+      .where('role.status = 1')
+      .orderBy('role.createTime', 'ASC')
     applyTenantScope(qb, 'role')
     return qb.getMany()
   }
@@ -80,6 +84,7 @@ export class RoleService extends BaseService<RoleEntity> {
           roleCode: dto.roleCode,
           description: dto.description,
           dataScope: dto.dataScope ?? 1,
+          status: dto.status ?? 1,
           createTime: new Date()
         })
       )
@@ -103,13 +108,18 @@ export class RoleService extends BaseService<RoleEntity> {
       }
       await this.assertCodeAvailable(dto.roleCode)
     }
+    // 内置超管角色是权限体系的兜底，停用它会把所有管理员锁在门外
+    if (dto.status === 0 && isSuperRole(role.roleCode)) {
+      throw new BadRequestException('内置管理员角色不允许停用')
+    }
     await this.roleRepository.manager.transaction(async manager => {
       await manager.getRepository(RoleEntity).update(id, {
         roleName: dto.roleName,
         roleCode: dto.roleCode,
         description: dto.description,
-        // 数据范围只接受显式传入；undefined 表示本次不改（前端没传别把已有配置冲掉）
+        // 数据范围/状态只接受显式传入；undefined 表示本次不改（前端没传别把已有配置冲掉）
         ...(dto.dataScope !== undefined ? { dataScope: dto.dataScope } : {}),
+        ...(dto.status !== undefined ? { status: dto.status } : {}),
         updateTime: new Date()
       })
       if (dto.menuIds) {

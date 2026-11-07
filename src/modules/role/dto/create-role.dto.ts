@@ -25,6 +25,12 @@ export class CreateRoleDto {
   @Type(() => Number)
   dataScope?: number
 
+  @ApiPropertyOptional({ description: '状态：1 正常 / 0 停用（默认 1；停用后角色不再参与权限计算）', example: 1, enum: [1, 0] })
+  @IsOptional()
+  @IsIn([0, 1], { message: '状态只允许 0（停用）/ 1（正常）' })
+  @Type(() => Number)
+  status?: number
+
   @ApiPropertyOptional({ description: '授权菜单/按钮 ID 列表（sys_permission.id）；空数组表示清空授权', type: [String] })
   @IsOptional()
   @IsArray()
