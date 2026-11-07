@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { InjectRepository } from '@nestjs/typeorm'
 import { DataSource, Repository } from 'typeorm'
 
+import { Pagination } from '../../helper/paginate'
 import { BaseCalendarEntity } from './entities/base-calendar.entity'
 import { BaseScheduleEventEntity } from './entities/base-schedule-event.entity'
 import { BaseScheduleReminderLogEntity } from './entities/base-schedule-reminder-log.entity'
@@ -200,23 +201,28 @@ export class ScheduleService {
 
   /* ---------------- 站内提醒消息 ---------------- */
 
-  async listReminders(userId: string, page: { current: number; size: number; isRead?: boolean }) {
+  /** 站内提醒消息分页（字段对齐全局 Pagination：records/total/current/size/pages） */
+  async listReminders(userId: string, page: { current: number; size: number; isRead?: boolean }): Promise<Pagination<BaseScheduleReminderLogEntity>> {
     const qb = this.logRepo.createQueryBuilder('l').where('l.userId = :uid', { uid: userId })
     if (page.isRead !== undefined) qb.andWhere('l.isRead = :r', { r: page.isRead })
     qb.orderBy('l.createTime', 'DESC')
       .limit(page.size)
       .offset((page.current - 1) * page.size)
     const [records, total] = await Promise.all([qb.getMany(), qb.getCount()])
-    return { records, total, current: page.current, size: page.size }
+    return new Pagination(records, total, page.current, page.size)
   }
 
-  async markRead(userId: string, id: number): Promise<void> {
+  /** 单条已读；不属于当前用户的记录按「不存在」处理，避免越权探测 */
+  async markRead(userId: string, id: number): Promise<number> {
     const res = await this.logRepo.update({ id, userId: userId }, { isRead: true, readAt: new Date() })
     if (!res.affected) throw new NotFoundException('消息不存在')
+    return res.affected
   }
 
-  async markAllRead(userId: string): Promise<void> {
-    await this.logRepo.update({ userId: userId, isRead: false }, { isRead: true, readAt: new Date() })
+  /** 全部已读，返回本次更新条数（已全读时返回 0，不报错） */
+  async markAllRead(userId: string): Promise<number> {
+    const res = await this.logRepo.update({ userId: userId, isRead: false }, { isRead: true, readAt: new Date() })
+    return res.affected ?? 0
   }
 
   async unreadCount(userId: string): Promise<number> {
