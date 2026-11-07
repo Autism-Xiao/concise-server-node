@@ -1,11 +1,14 @@
 import { HttpStatus, Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository } from 'typeorm'
+import { In, Repository } from 'typeorm'
 
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
+import { normalizeBatchIds } from '../../../helper/crud/batch-delete'
 import { hasSuperRole } from '../../../utils/super-role.util'
 import { normalizeWatermarkContent, renderWatermarkLines } from '../../../utils/watermark-template.util'
+import { UserService } from '../../user/user.service'
+import { type BatchWatermarkMode } from './dto/batch-user-watermark.dto'
 import { UpdateMyWatermarkDto } from './dto/update-my-watermark.dto'
 import { UpdateUserWatermarkDto } from './dto/update-user-watermark.dto'
 import { UpdateWatermarkSettingDto } from './dto/update-watermark-setting.dto'
@@ -56,6 +59,17 @@ export interface ResolvedWatermark {
 }
 
 /**
+ * 批量设置水印的结果
+ *
+ * 与批量启停同语义：一次请求逐条结算，返回成功条数 + 跳过明细（原因直接给前端展示）。
+ */
+export interface BatchWatermarkOutcome {
+  mode: BatchWatermarkMode
+  updated: number
+  skipped: Array<{ id: string; reason: string }>
+}
+
+/**
  * 页面水印服务
  *
  * 配置来源只有两处：sys_watermark_setting（全局，admin 维护）与 sys_user_watermark（用户覆盖）。
@@ -65,7 +79,9 @@ export interface ResolvedWatermark {
 export class WatermarkService {
   constructor(
     @InjectRepository(WatermarkSettingEntity) private readonly settingRepository: Repository<WatermarkSettingEntity>,
-    @InjectRepository(UserWatermarkEntity) private readonly userRepository: Repository<UserWatermarkEntity>
+    @InjectRepository(UserWatermarkEntity) private readonly userRepository: Repository<UserWatermarkEntity>,
+    /** 只用于批量操作前确认目标用户存在（UserModule 不反向依赖本模块，无循环引用） */
+    private readonly userService: UserService
   ) {}
 
   /** 全局策略（无配置行时用兜底值，保证接口不因缺数据而 500） */
@@ -154,6 +170,55 @@ export class WatermarkService {
     await this.userRepository.save(entity)
 
     return { enabled: entity.enabled ?? null, enforced: entity.enforced, content: entity.content ?? null, density: entity.density ?? null }
+  }
+
+  /**
+   * 批量设置用户水印（用户管理列表勾选后一次提交）
+   *
+   * 三档动作映射到 enabled/enforced，语义与单个用户弹窗的「管控方式」一致：
+   *  - on      enabled=1 + enforced=1（全局关掉也照样显示）
+   *  - off     enabled=0 + enforced=2（全局强制开也不显示）
+   *  - inherit 清掉个人开关/内容/密度，enforced 归 0，重新跟随全局
+   *
+   * 不存在或已软删的用户直接跳过并回传原因（与批量启停同语义：单条失败不阻断其他条）；
+   * 全程一个事务，避免刷到一半留下半开半关的中间态。
+   */
+  async batchUpdateForUsers(ids: string[], mode: BatchWatermarkMode, operator?: string | null): Promise<BatchWatermarkOutcome> {
+    const clean = normalizeBatchIds(ids)
+    const existing = await this.userService.findExistingBriefs(clean)
+    const foundIds = new Set(existing.map(user => user.id))
+    const skipped: BatchWatermarkOutcome['skipped'] = clean.filter(id => !foundIds.has(id)).map(id => ({ id, reason: '用户不存在或已删除' }))
+
+    if (existing.length > 0) {
+      const now = new Date()
+      await this.userRepository.manager.transaction(async manager => {
+        // 事务内必须用 manager 取仓库，默认连接看不到未提交数据
+        const repo = manager.getRepository(UserWatermarkEntity)
+        const rows = await repo.find({ where: { userId: In(existing.map(user => user.id)) } })
+        const byUserId = new Map(rows.map(row => [row.userId, row]))
+        for (const user of existing) {
+          const entity = byUserId.get(user.id) ?? repo.create({ userId: user.id, enforced: 0 })
+          if (mode === 'on') {
+            entity.enabled = 1
+            entity.enforced = 1
+          } else if (mode === 'off') {
+            entity.enabled = 0
+            entity.enforced = 2
+          } else {
+            // 恢复跟随全局 = 把个人配置整行清空（只清 enabled 会留下"跟全局但文案还是自己的"的怪状态）
+            entity.enabled = null
+            entity.enforced = 0
+            entity.content = null
+            entity.density = null
+          }
+          entity.updatedBy = operator ?? null
+          entity.updatedAt = now
+          await repo.save(entity)
+        }
+      })
+    }
+
+    return { mode, updated: existing.length, skipped }
   }
 
   /** 管理员修改全局策略；enabled 与 mode 联动，避免出现「开着但全站关闭」的自相矛盾状态 */

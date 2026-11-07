@@ -604,6 +604,18 @@ export class UserService extends BaseService<UserEntity> {
     return rows.map(row => ({ id: row.id, username: row.username, realname: row.realname ?? undefined }))
   }
 
+  /**
+   * 批量确认用户存在（过滤已软删），给「批量业务」跳过无效目标用
+   *
+   * 只回 id + 账号：批量接口只需要知道谁在执行范围内、跳过的是谁，
+   * 不关心完整资料；也不做 100 条截断（批量上限由调用方的 DTO 控制）。
+   */
+  async findExistingBriefs(ids: string[]): Promise<Array<{ id: string; username: string }>> {
+    const clean = Array.from(new Set(ids.map(id => String(id ?? '').trim()).filter(Boolean)))
+    if (!clean.length) return []
+    return this.repository.find({ where: { id: In(clean), delFlag: 0 }, select: { id: true, username: true } })
+  }
+
   /** 详情：带出角色 + 部门 + 岗位（过滤已软删，不存在抛 404） */
   async findOneDetail(id: string): Promise<UserEntity> {
     const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true, posts: true } })

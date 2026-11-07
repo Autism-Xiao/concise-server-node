@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, Put, Request } from '@nestjs/common'
+import { Body, Controller, Get, Param, Post, Put, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { UserService } from '../../user/user.service'
+import { BatchUserWatermarkDto } from './dto/batch-user-watermark.dto'
 import { UpdateMyWatermarkDto } from './dto/update-my-watermark.dto'
 import { UpdateUserWatermarkDto } from './dto/update-user-watermark.dto'
 import { UpdateWatermarkSettingDto } from './dto/update-watermark-setting.dto'
@@ -62,6 +63,17 @@ export class WatermarkController {
     // 先确认用户存在，避免给不存在的 id 写出孤儿配置行
     await this.userService.findOne(id)
     return this.watermarkService.updateForUser(id, dto, req.user.username)
+  }
+
+  @ApiOperation({
+    summary: '批量设置用户水印',
+    description: '用户管理勾选后一次提交：on 强制开启（用户关不掉）/ off 强制关闭（用户开不了）/ inherit 清除个人设置恢复跟随全局；需 system:user:update'
+  })
+  @Perms('system:user:update')
+  @OperLog('页面水印')
+  @Post('users/batch-watermark')
+  batchUpdateForUsers(@Body() dto: BatchUserWatermarkDto, @Request() req: AuthedWatermarkRequest) {
+    return this.watermarkService.batchUpdateForUsers(dto.ids, dto.mode, req.user.username)
   }
 
   @ApiOperation({ summary: '读取全局水印策略', description: '默认开关、策略模式、默认文案与样式参数；需 system:watermark:edit' })
