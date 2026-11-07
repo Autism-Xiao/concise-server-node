@@ -29,6 +29,7 @@ import { DictModule } from './modules/system/dict/dict.module'
 import { NoticeModule } from './modules/system/notice/notice.module'
 import { TaskModule } from './modules/system/task/task.module'
 import { WatermarkModule } from './modules/system/watermark/watermark.module'
+import { UserSettingModule } from './modules/system/user-setting/user-setting.module'
 import { LevelModule } from './modules/system/level/level.module'
 import { PostModule } from './modules/system/post/post.module'
 import { JobModule } from './modules/ops/job/job.module'
@@ -77,6 +78,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     // 首页概览聚合（/v1/dashboard/overview：按权限逐块裁剪，不建表）
     DashboardModule,
     WatermarkModule,
+    // 用户界面设置（sys_user_setting：/v1/users/me/settings，前端本地兜底的云端副本）
+    UserSettingModule,
     LevelModule,
     PostModule,
     // 多租户管理（sys_tenant + sys_user_tenant）
