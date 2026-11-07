@@ -35,7 +35,7 @@
     { id: 'menu_10', parent: 'menu_1', name: '部门管理', url: '/system/dept', type: 1, sort: 10, icon: 'Building2', perms: 'system:dept:list' },
     { id: 'menu_14', parent: 'menu_1', name: '数据字典', url: '/system/dict', type: 1, sort: 11, icon: 'Database', perms: 'system:dict:list' },
     { id: 'menu_18', parent: 'menu_1', name: '日志管理', url: '/system/log', type: 1, sort: 12, icon: 'ScrollText' },
-    { id: 'menu_31', parent: 'menu_1', name: '文件管理', url: '/system/file', type: 1, sort: 13, icon: 'FolderOpen' }, // 原「存储管理 /tools/storage」修正
+    { id: 'menu_31', parent: 'menu_1', name: '文件管理', url: '/system/file', type: 1, sort: 13, icon: 'FolderOpen', perms: 'system:file:list' }, // 原「存储管理 /tools/storage」修正
     { id: 'menu_41', parent: 'menu_1', name: '日历管理', url: '/system/calendar', type: 1, sort: 14, icon: 'CalendarDays' },
     { id: 'menu_42', parent: 'menu_1', name: '职级管理', url: '/system/level', type: 1, sort: 22, icon: 'Medal', perms: 'system:level:list' },
     { id: 'menu_43', parent: 'menu_1', name: '岗位管理', url: '/system/post', type: 1, sort: 23, icon: 'Briefcase', perms: 'system:post:list' },
@@ -125,7 +125,13 @@
     // 菜单导出（menu_39）
     { id: 'menu_86', parent: 'menu_39', name: '菜单导出', perms: 'system:menu:export', sort: 4 },
     // 定时任务导出（menu_48）
-    { id: 'menu_87', parent: 'menu_48', name: '任务导出', perms: 'system:job:export', sort: 5 }
+    { id: 'menu_87', parent: 'menu_48', name: '任务导出', perms: 'system:job:export', sort: 5 },
+    // 文件管理（menu_31）：查询权限挂在菜单项本身上
+    { id: 'menu_88', parent: 'menu_31', name: '文件上传', perms: 'system:file:upload', sort: 1 },
+    { id: 'menu_89', parent: 'menu_31', name: '新建文件夹', perms: 'system:file:add', sort: 2 },
+    { id: 'menu_90', parent: 'menu_31', name: '文件修改', perms: 'system:file:update', sort: 3 },
+    { id: 'menu_91', parent: 'menu_31', name: '文件删除', perms: 'system:file:delete', sort: 4 },
+    { id: 'menu_92', parent: 'menu_31', name: '文件下载', perms: 'system:file:download', sort: 5 }
   ]
   for (const b of BUTTONS) {
     const exists = await ds.query('SELECT id FROM sys_permission WHERE id = ?', [b.id])
@@ -133,8 +139,8 @@
       await ds.query('UPDATE sys_permission SET parent_id=?, name=?, perms=?, menu_type=2, del_flag=0, update_time=NOW() WHERE id=?', [b.parent, b.name, b.perms, b.id])
     } else {
       await ds.query(
-        `INSERT INTO sys_permission (id, parent_id, name, perms, menu_type, is_route, is_leaf, hidden, perms_type, del_flag, rule_flag, create_by, create_time)
-         VALUES (?, ?, ?, ?, 2, 1, 1, 0, '1', 0, 0, 'seed', NOW())`,
+        `INSERT INTO sys_permission (id, parent_id, name, perms, menu_type, status, is_route, is_leaf, hidden, perms_type, del_flag, rule_flag, create_by, create_time)
+         VALUES (?, ?, ?, ?, 2, '1', 1, 1, 0, '1', 0, 0, 'seed', NOW())`,
         [b.id, b.parent, b.name, b.perms]
       )
     }
@@ -149,6 +155,13 @@
     if (Number(hasChildren[0].n) > 0) {
       await ds.query('UPDATE sys_permission SET is_leaf = 0 WHERE id = ?', [pid])
     }
+  }
+
+  // 补齐历史按钮权限的 status：权限查询只认 status='1'，
+  // 早期从 jeecg 迁移过来的按钮（menu_type=2）status 是 NULL，导致非 admin 角色的按钮权限一直不生效
+  const fixedButtons = await ds.query("UPDATE sys_permission SET status = '1' WHERE menu_type = 2 AND status IS NULL AND del_flag = 0")
+  if (fixedButtons.affectedRows) {
+    console.log(`已补齐 ${fixedButtons.affectedRows} 条历史按钮权限的 status（原为 NULL，权限校验不认）`)
   }
 
   console.log(`完成：更新 ${updated} 条，新增 ${inserted} 条`)

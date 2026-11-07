@@ -6,6 +6,9 @@
 # TypeScript build cache
 *.tsbuildinfo
 
+# 文件管理的物理存储与上传临时文件（内容寻址，不入库）
+/storage
+
 # Logs
 logs
 *.log

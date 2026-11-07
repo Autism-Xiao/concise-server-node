@@ -59,6 +59,7 @@
     "ip2region": "^4.0.1",
     "jimp": "0.22.12",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0",
     "mysql2": "^3.24.6",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
