@@ -51,7 +51,7 @@
 - 裁剪三层：块级（按钮权限）→ 行级（`sys_role.data_scope`，走 `UserService.countScoped`）→ 归属级（`owner_id` / `assignee_id`）
 - 降级规则：登录趋势 / 今日登录 / 最近操作无全站权限时自动降级为「我自己的」；用户总数/在线/角色/系统状态无权限就隐藏
 - 前端只判 null 不判权限（localStorage 可篡改）；卡片的权限门槛必须等于目标页门槛（见 `quick-entries-card.tsx` 的 `ENTRIES`）
-- 首页是**常驻页面**：`/dashboard` 在 `lib/permissions.ts` 的 `ALWAYS_ALLOWED` 里，`resolveHomePath()` 恒返回首页（旧的「按注册表找第一个有权限页面」兜底已删）；侧边栏有固定「仪表盘」入口，不依赖 `menu_35` 授权
+- 首页是**常驻页面**：`/dashboard` 在 `lib/permissions.ts` 的 `ALWAYS_ALLOWED` 里，`resolveHomePath()` 恒返回首页（旧的「按注册表找第一个有权限页面」兜底已删）；侧边栏入口走**动态菜单**——`AuthService.getPermissions()` 末尾 `withHomeMenu()` 会把 `sys_permission` 里的 `/dashboard` 节点补到树顶（超管/按角色两个分支都过），前端 `app-sidebar.tsx` 不再有硬编码入口，另对 localStorage 老菜单树做兜底注入
 - 顺带修：`applyDataScope` 原来漏了 `data_scope=1（全部）` 档，导致「有 system:user:list 但没挂部门」的账号 `1 = 0` 看不到任何用户（审计员用户列表为空就是这个）。现在 `scope === ALL` 直接 return 不过滤
 - 已知遗留：`task.assignee_id` 是 `int`，`sys_user.id` 是 `varchar(32)`，两边永远匹配不上 → 「我的待办」恒为 0（只统计 `assignee_id = 0` 未指派）；彻底修需把该列迁成 varchar
 - 冒烟：`scripts/smoke-dashboard.mjs`（60 项，admin/viewer/auditor/无角色 四类账号，临时账号自动清理），需 `PORT=3461 CAPTCHA_ENABLED=false` 的测试实例

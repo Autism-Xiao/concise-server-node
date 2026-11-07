@@ -55,6 +55,9 @@ export interface PermissionResult {
   menus: MenuTreeItem[]
 }
 
+/** 首页菜单地址（与前端 HOME_PATH 常量同值）：仪表盘是登录后的落地页 */
+const HOME_MENU_URL = '/dashboard'
+
 /** 拥有全部权限的超级角色 code（统一由 utils/super-role.util 判定，勿在各处另写） */
 
 /** 锁定剩余时长的人性化展示：>1 天按天、>1 小时按小时、其余按分钟（向上取整，避免提示「0 分钟」） */
@@ -64,6 +67,24 @@ export function formatLockDuration(seconds: number): string {
   const hours = Math.ceil(minutes / 60)
   if (hours < 24) return `${hours} 小时`
   return `${Math.ceil(hours / 24)} 天`
+}
+
+/**
+ * 补齐首页菜单节点（仪表盘）。
+ *
+ * 前端侧边栏改为**完全由菜单树渲染**，不再硬编码顶部固定入口；但仪表盘是登录后的落地页，
+ * 新建角色常常没勾选它 → 这里把菜单表里的首页节点直接挂到树顶，保证任何角色都有入口。
+ * 菜单表里没有该节点（或被停用、未过滤进来）时不做处理：运维可以主动关闭首页菜单。
+ */
+function withHomeMenu(menus: MenuTreeItem[], allMenus: MenuEntity[]): MenuTreeItem[] {
+  const hasHome = (list: MenuTreeItem[]): boolean => list.some(node => node.url === HOME_MENU_URL || hasHome(node.children ?? []))
+  if (hasHome(menus)) return menus
+  const home = allMenus.find(menu => menu.url === HOME_MENU_URL && menu.menuType !== 2)
+  if (!home) return menus
+  // 实体实例展开为 plain object 组树（响应走 JSON 序列化，无原型丢失问题）
+  // oxlint-disable-next-line typescript/no-misused-spread
+  const node: MenuTreeItem = { ...home, children: [] }
+  return [node, ...menus]
 }
 
 @Injectable()
@@ -157,7 +178,7 @@ export class AuthService {
     const allMenus = (await this.menuService.listAll()).filter(menu => menu.status === '1')
 
     if (isAdmin) {
-      return { roles, permissions: ['*'], menus: buildMenuTree(allMenus, null) }
+      return { roles, permissions: ['*'], menus: withHomeMenu(buildMenuTree(allMenus, null), allMenus) }
     }
 
     // 非超管：汇总各角色授权的菜单/按钮 id
@@ -187,7 +208,7 @@ export class AuthService {
       null
     )
 
-    return { roles, permissions, menus }
+    return { roles, permissions, menus: withHomeMenu(menus, allMenus) }
   }
 
   /**
