@@ -55,7 +55,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('登录状态已失效，请重新登录')
     }
 
-    const user = await this.userService.findOneWithRoles(String(payload.id))
+    const user = await this.findUserCached(String(payload.id))
     if (!user || user.status !== 1) {
       throw new UnauthorizedException('账号不存在或已被冻结')
     }
@@ -65,6 +65,32 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (token) {
       await this.onlineService.touch(token, { id: payload.id, username: payload.username, exp: (payload as { exp?: number }).exp }, request, user)
     }
+    return user
+  }
+
+  /**
+   * 用户态短缓存：validate 在**每个鉴权请求**都会执行，findOneWithRoles（users+user_roles+roles 三表 join）
+   * 是热路径最大的单笔开销。30s 内存缓存后，绝大多数请求免去这次查库。
+   * 一致性边界：冻结/删除/改角色最多延迟 30s 生效（安全上可接受——密码错误锁定、
+   * 强制下线走上面的 Redis 黑名单，不受缓存影响、即时生效）；角色授权变更后需要立即生效的场景，
+   * 已有的 PermissionCacheService 同样是缓存语义，前端重新登录或调权限缓存清理接口即可。
+   */
+  private static readonly USER_CACHE_TTL_MS = 30_000
+  private readonly userCache = new Map<string, { value: Awaited<ReturnType<UserService['findOneWithRoles']>> | null; expiresAt: number }>()
+
+  private async findUserCached(userId: string) {
+    const cached = this.userCache.get(userId)
+    if (cached && cached.expiresAt > Date.now()) return cached.value
+
+    const user = await this.userService.findOneWithRoles(userId)
+    // 顺手清理：缓存条目数超 2 倍常见在线用户量时清一遍过期项，防长期驻留泄漏
+    if (this.userCache.size > 2000) {
+      const now = Date.now()
+      for (const [key, entry] of this.userCache) {
+        if (entry.expiresAt <= now) this.userCache.delete(key)
+      }
+    }
+    this.userCache.set(userId, { value: user, expiresAt: Date.now() + JwtStrategy.USER_CACHE_TTL_MS })
     return user
   }
 }

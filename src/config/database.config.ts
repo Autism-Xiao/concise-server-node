@@ -25,6 +25,11 @@ export const databaseConfig = registerAs('database', (): DataSourceOptions => ({
   charset: 'utf8mb4_unicode_ci',
   timezone: '+08:00',
   extra: {
-    connectionLimit: 10
+    // 压测基线（docs/2026-11-08-压测基线与负载脚本.md）：池 = 10 时所有碰库接口封顶 ~100 RPS、
+    // 延迟随并发线性膨胀。20 对单实例够用；多副本注意 max_connections 总量 = 实例数 × 20 + 余量
+    connectionLimit: envNumber('DB_POOL_SIZE', 20),
+    // 复用 TCP 长连接：避免空闲期被服务端断开后首个请求重建连接的长尾延迟
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10_000
   }
 }))

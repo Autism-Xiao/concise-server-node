@@ -1,5 +1,6 @@
 import { ValidationPipe } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
+import compression from 'compression'
 import { ConfigService } from '@nestjs/config'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import type { NestExpressApplication } from '@nestjs/platform-express'
@@ -82,6 +83,9 @@ async function bootstrap() {
 
   // 信任反向代理头（X-Forwarded-For 等）：默认只信本机，避免审计 IP 被伪造
   app.set('trust proxy', resolveTrustProxy(process.env.TRUST_PROXY))
+
+  // 响应压缩：JSON 列表/树/导出场景体积砍 60~80%，带宽换 CPU（阈值 1KB，小响应不压）
+  app.use(compression({ threshold: 1024 }))
 
   // 静态资源目录：public/upload 下的上传文件可直接以 {host}/upload/... 访问
   app.useStaticAssets(path.join(process.cwd(), 'public'), {
