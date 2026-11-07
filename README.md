@@ -23,7 +23,31 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+通用后台底座后端（NestJS 12 + TypeORM + MySQL 8.4），提供 RBAC 权限、用户/角色/菜单/部门/岗位、字典、公告、日志、行政区划、租户、水印、日程提醒等能力，接口统一挂 `/api/v1/**`，响应体 `{ code, data, message }`。
+
+**配套前端仓库：[concise-admin](https://github.com/Autism-Xiao/concise-admin)**（React 19 + Vite + shadcn/ui，源码在 `../concise-admin`），前端页面全部依赖本服务，两仓库需同批发布。
+
+| 用途 | 地址 |
+| --- | --- |
+| 前端仓库 | https://github.com/Autism-Xiao/concise-admin |
+| 前端本地地址 | http://localhost:5173 |
+| 本服务 API 根 | http://127.0.0.1:3000/api/v1 |
+| Swagger 在线文档 | http://127.0.0.1:3000/api/docs |
+| OpenAPI JSON | http://127.0.0.1:3000/api/docs-json |
+
+端口取 `.env` 的 `PORT`（当前 3000），前端通过 vite 代理 `/backend-api` → `/api` 对接，且代理目标会自动读取本仓库 `.env` 的 `PORT`，改端口后重启前端 dev 即可，无需改前端代码。
+
+## Quick start
+
+```bash
+npm install
+npm run migration:run      # 建表 + 预置省级区划/菜单/角色等初始数据
+npm run restart            # 构建并启动（scripts/serve.mjs 会先结束旧实例）
+```
+
+可选：`sql/` 目录下有全量数据脚本（行政区划 44983 条、全库快照），恢复方式见 `sql/README.md`。
+
+基于 [Nest](https://github.com/nestjs/nest) framework 构建。
 
 ## Project setup
 
