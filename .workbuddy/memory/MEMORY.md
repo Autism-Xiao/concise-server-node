@@ -6,6 +6,8 @@
 
 ## 项目约定
 
+- **给用户的终端命令要用 PowerShell 5.1 语法**：用户在自己终端里粘贴执行，`&&`/`||`/三元/`??` 都会报「不是有效语句分隔符」。多命令用 `npm run build; if ($?) { npm run start:prod }`，环境变量用 `$env:PORT="3459"`。（我自己用 Bash 工具时仍可用 `&&`）
+- **重启后端：`npm run build` 后 `node dist/main.js`，绝不用 `nest start --watch`** —— watch 启动前清 dist（675 文件）会被 safe-delete 钩子拦死（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`）
 - NestJS 12 CJS + Jest + oxlint；TypeORM 1.1 + MySQL 8.4（本机服务 `MySQL84`，root/123456，库 `concise_server`）
 - 参照 E:\project\demo\nest-admin 演进为中后台架构
 - 工程链：ESLint 9 flat config（正确性）+ Prettier（`.prettierrc.js`，用户指定风格：**单引号/无分号/160 列/无尾逗号/arrowParens avoid**）+ oxlint（lint:ox 二道）+ husky pre-commit → lint-staged（staged .ts 跑 eslint --fix + prettier --write）。commit 前不要手动跑 format，钩子会处理。
