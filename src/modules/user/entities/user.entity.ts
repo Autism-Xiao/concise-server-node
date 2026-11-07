@@ -3,6 +3,7 @@ import { Column, Entity, JoinTable, ManyToMany, PrimaryColumn } from 'typeorm'
 import { RoleEntity } from '../../role/entities/role.entity'
 import { DeptEntity } from '../../system/dept/entities/dept.entity'
 import { PostEntity } from '../../system/post/entities/post.entity'
+import { LevelEntity } from '../../system/level/entities/level.entity'
 
 /**
  * 用户表（对齐 JeecgBoot sys_user）
@@ -149,6 +150,14 @@ export class UserEntity {
     inverseJoinColumns: [{ name: 'post_id', referencedColumnName: 'id' }]
   })
   posts?: PostEntity[]
+
+  @ApiPropertyOptional({ description: '职级ID（sys_level 主键，一人一个职级，可空）', example: 'lvl_3' })
+  @Column({ type: 'varchar', length: 32, nullable: true, comment: '职级ID(sys_level)' })
+  levelId?: string | null
+
+  /** 职级（非数据库列，列表/详情由 UserService 批量组装，只取 id/levelName 避免带出大对象） */
+  @ApiPropertyOptional({ description: '职级（levelId 对应的 sys_level，只读）', nullable: true })
+  level?: Pick<LevelEntity, 'id' | 'levelName'> | null
 
   /**
    * 水印开关原始值（非数据库列，列表/详情由 UserService 批量组装）

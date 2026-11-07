@@ -108,4 +108,10 @@ export class CreateUserDto {
   @IsArray({ message: 'postIds 必须是数组' })
   @IsString({ each: true, message: 'postIds 元素必须是字符串' })
   postIds?: string[]
+
+  @ApiPropertyOptional({ description: '职级 ID（sys_level.id，单选，可空；传 null/不传表示不设置）', example: 'lvl_3' })
+  @IsOptional()
+  @IsString({ message: 'levelId 必须是字符串' })
+  @MaxLength(32)
+  levelId?: string | null
 }

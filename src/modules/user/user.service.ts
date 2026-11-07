@@ -17,6 +17,7 @@ import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-er
 import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
 import { PostEntity } from '../system/post/entities/post.entity'
+import { LevelEntity } from '../system/level/entities/level.entity'
 import { UserWatermarkEntity } from '../system/watermark/entities/user-watermark.entity'
 import { WatermarkSettingEntity } from '../system/watermark/entities/watermark-setting.entity'
 import { FALLBACK_WATERMARK_SETTING, resolveWatermarkState } from '../system/watermark/watermark.util'
@@ -189,6 +190,8 @@ export class UserService extends BaseService<UserEntity> {
     private readonly watermarkSettingRepository: Repository<WatermarkSettingEntity>,
     @InjectRepository(PostEntity)
     private readonly postRepository: Repository<PostEntity>,
+    @InjectRepository(LevelEntity)
+    private readonly levelRepository: Repository<LevelEntity>,
     private readonly rateLimitService: RateLimitService,
     private readonly onlineService: OnlineService,
     private readonly permissionCacheService: PermissionCacheService
@@ -201,6 +204,7 @@ export class UserService extends BaseService<UserEntity> {
     const { roleIds, deptIds, deptId, postIds, passwordExpireAt, ...rest } = dto
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
+    data.levelId = await this.resolveLevelId(data.levelId)
     data.passwordExpireAt = normalizePasswordExpireAt(passwordExpireAt)
     // 唯一性预检：数据库唯一索引不区分软删除，必须提前给出可读提示（否则并发/软删占用会以 500 暴露）
     await this.assertUniqueFields(data)
@@ -244,6 +248,7 @@ export class UserService extends BaseService<UserEntity> {
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
     delete data.username // 账号不允许修改（改账号会让审计与历史密码哈希对不上）
+    data.levelId = await this.resolveLevelId(data.levelId)
     data.passwordExpireAt = normalizePasswordExpireAt(passwordExpireAt)
     await this.findOne(id)
     await this.assertUniqueFields(data, id)
@@ -415,6 +420,7 @@ export class UserService extends BaseService<UserEntity> {
     await this.attachDepts(result.records)
     await this.attachRoles(result.records)
     await this.attachPosts(result.records)
+    await this.attachLevel(result.records)
     await this.attachWatermark(result.records)
     return result
   }
@@ -425,6 +431,7 @@ export class UserService extends BaseService<UserEntity> {
     await this.attachDepts(users)
     await this.attachRoles(users)
     await this.attachPosts(users)
+    await this.attachLevel(users)
     await this.attachWatermark(users)
     return users
   }
@@ -590,6 +597,7 @@ export class UserService extends BaseService<UserEntity> {
       throw new NotFoundException('用户不存在')
     }
     this.applyDepts(user)
+    await this.attachLevel([user])
     await this.attachWatermark([user])
     return user
   }
@@ -1163,6 +1171,23 @@ export class UserService extends BaseService<UserEntity> {
     delete data.departIds
     delete data.orgCode
     delete data.posts
+    delete data.level
+  }
+
+  /**
+   * 归一化职级 ID：空串/空白统一为 null（前端「未选择」会传 ''），非空必须真实存在，
+   * 否则写进去一条孤儿引用，列表上永远显示不出职级名称还没法排查
+   */
+  private async resolveLevelId(levelId?: string | null): Promise<string | null> {
+    const trimmed = levelId?.trim()
+    if (!trimmed) {
+      return null
+    }
+    const exists = await this.levelRepository.findOne({ where: { id: trimmed }, select: { id: true } })
+    if (!exists) {
+      throw new BadRequestException(`职级不存在：${trimmed}`)
+    }
+    return trimmed
   }
 
   /** 按 depart_ids 顺序整理部门，并把 depts[0] 同步到兼容字段 dept / deptId */
@@ -1218,6 +1243,19 @@ export class UserService extends BaseService<UserEntity> {
     const postsByUser = new Map(rows.map(row => [row.id, row.posts ?? []]))
     for (const user of users) {
       user.posts = postsByUser.get(user.id) ?? []
+    }
+  }
+
+  /** 批量补职级（列表/导出/详情共用，只取 id/levelName；levelId 为空的用户跳过查询） */
+  private async attachLevel(users: UserEntity[]): Promise<void> {
+    const levelIds = [...new Set(users.map(user => user.levelId).filter((id): id is string => !!id))]
+    if (!levelIds.length) {
+      return
+    }
+    const levels = await this.levelRepository.find({ where: { id: In(levelIds) }, select: { id: true, levelName: true } })
+    const levelMap = new Map(levels.map(level => [level.id, level]))
+    for (const user of users) {
+      user.level = user.levelId ? (levelMap.get(user.levelId) ?? null) : null
     }
   }
 
