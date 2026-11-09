@@ -1,9 +1,12 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository } from 'typeorm'
+import { EntityManager, Repository } from 'typeorm'
 
 import { UserSettingEntity } from './entities/user-setting.entity'
 import { MAX_SETTINGS_BYTES, normalizeSettings, settingsSize, type UserSettings } from './user-setting.util'
+
+/** 空设置：表示「没有任何自定义项」，具体默认值由前端 `DEFAULT_SETTINGS` 提供 */
+const EMPTY_SETTINGS = '{}'
 
 /** 一份设置快照：内容 + 服务端最后修改时间（毫秒，供前端与本地副本比较新旧） */
 export interface UserSettingSnapshot {
@@ -19,6 +22,23 @@ export class UserSettingService {
     @InjectRepository(UserSettingEntity)
     private readonly repository: Repository<UserSettingEntity>
   ) {}
+
+  /**
+   * 建号即建行（幂等）
+   *
+   * 用户一创建就落一行空设置，而不是等前端第一次点「保存」才 upsert：
+   * ① 后台「用户管理」能直接看到这个账号有没有自定义过偏好，不用登录一遍；
+   * ② 避免「用户存在但设置行不存在」这种半成品状态被复制、导出、比对时当成脏数据。
+   *
+   * 存 `'{}'` 而不是前端那份完整默认值：默认值将来会改（加设置项、换默认主题），
+   * 一旦固化成具体值，老用户就永远停在建号那天的默认。
+   * `update_time` 留 NULL 表示「从未修改过」，前端据此判新旧时不会压掉本机改动。
+   */
+  async ensure(userId: string, manager?: EntityManager): Promise<void> {
+    const repo = manager ? manager.getRepository(UserSettingEntity) : this.repository
+    // INSERT IGNORE：重复调用（并发建号 / 恢复账号）静默跳过，不做「先查后插」
+    await repo.createQueryBuilder().insert().values({ userId, settings: EMPTY_SETTINGS, updateTime: null }).orIgnore().execute()
+  }
 
   /** 读取：没有记录返回 `{ settings: null, updatedAt: null }`，由前端决定用默认值 */
   async get(userId: string): Promise<UserSettingSnapshot> {

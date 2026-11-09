@@ -21,6 +21,7 @@ import { LevelEntity } from '../system/level/entities/level.entity'
 import { UserWatermarkEntity } from '../system/watermark/entities/user-watermark.entity'
 import { WatermarkSettingEntity } from '../system/watermark/entities/watermark-setting.entity'
 import { FALLBACK_WATERMARK_SETTING, resolveWatermarkState } from '../system/watermark/watermark.util'
+import { UserSettingService } from '../system/user-setting/user-setting.service'
 import { UserEntity } from './entities/user.entity'
 import { RoleEntity } from '../role/entities/role.entity'
 import type { QueryUserDto } from './dto/query-user.dto'
@@ -199,7 +200,8 @@ export class UserService extends BaseService<UserEntity> {
     private readonly levelRepository: Repository<LevelEntity>,
     private readonly rateLimitService: RateLimitService,
     private readonly onlineService: OnlineService,
-    private readonly permissionCacheService: PermissionCacheService
+    private readonly permissionCacheService: PermissionCacheService,
+    private readonly userSettingService: UserSettingService
   ) {
     super(repository, '用户')
   }
@@ -242,6 +244,8 @@ export class UserService extends BaseService<UserEntity> {
       if (postIds?.length) {
         await this.assignPosts(user.id, postIds, manager)
       }
+      // 界面设置行随账号一起落库：同一事务，不留「有用户没设置」的半成品
+      await this.userSettingService.ensure(user.id, manager)
       return user.id
     })
     return this.findOneDetail(id) as Promise<UserEntity>
@@ -750,6 +754,8 @@ export class UserService extends BaseService<UserEntity> {
       await manager.query('DELETE FROM sys_user_post WHERE user_id = ?', [id])
       // 水印个性化配置同样按 user_id 主键，不清会在表里越积越多
       await manager.query('DELETE FROM sys_user_watermark WHERE user_id = ?', [id])
+      // 界面设置同理：恢复时 ensure() 会重建空行，没必要留着上一个占位账号的偏好
+      await manager.query('DELETE FROM sys_user_setting WHERE user_id = ?', [id])
       await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null })
     })
   }
@@ -938,6 +944,8 @@ export class UserService extends BaseService<UserEntity> {
       if (deptIds) {
         await this.assignDepts(id, deptIds, manager)
       }
+      // 软删时设置行一并清掉了，恢复要重新建，否则恢复出来的账号仍是「有用户没设置」的半成品
+      await this.userSettingService.ensure(id, manager)
     })
     // 回收站里的行是裸查出来的（无关联），重查一次补齐角色/部门
     await this.attachRoles([recycled])
