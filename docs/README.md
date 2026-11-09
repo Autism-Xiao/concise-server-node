@@ -61,6 +61,7 @@
 | 2026-11-09 | [多租户隔离落地](./2026-11-09-多租户隔离落地.md) | 本轮 | P0/P1 全修：is_platform_admin 身份分层、角色唯一键按租户、权限 scope 分层、首页/日志/水印/站内信/用户列表补隔离；冒烟 23 项全过 |
 | 2026-11-09 | [平台管理员开关与鉴权缓存](./2026-11-09-平台管理员开关与鉴权缓存.md) | 本轮 | ① `PUT /users/:id/platform-admin` + 权限点 `system:user:platform`（scope=platform），三道门：守卫 scope、service 复查 actor、不能取消自己/最后一个；字段显式 `stripUnwritableFields`，通用更新接口写不进去；② 鉴权用户缓存从 JwtStrategy 私有 Map 抽成 `AuthUserCacheService`（@Global），`setPlatformAdmin/setStatus/assignRoles/delete` 主动失效 —— 修掉「取消平台管理员 30s 内仍有效」，角色停用/删除也补了 `invalidateAll`；③ 前端账号列「平台」徽标 + 操作项；④ 修 `smoke-tenant` 临时账号继承 `is_platform_admin=1` 导致 4 项越权断言失真、`smoke-user-setting` 2 条 C 方案前旧断言 |
 | 2026-11-09 | [前端设置同步去时钟依赖](./2026-11-09-前端设置同步去时钟依赖.md) | 本轮（concise-admin） | 设置加载不再比较「本地 `Date.now()` vs 服务端 `updatedAt`」——两个时钟不可比，机器偏快会让云端更新被永久忽略；改成 `dirty` 标记（本地有未推送改动才以本地为准），推送成功后 `markSynced` 清标记并带内容比对（防异步回调把用户新改动标成已同步）；老快照无 `dirty` 按已同步处理 |
+| 2026-11-09 | [批量导入导出核验与部门表窄屏适配](./2026-11-09-批量导入导出核验与部门表窄屏适配.md) | 本轮 | ① 核验 #57~#62：能力早在 `7a49496` 已落地，补 `scripts/smoke-batch-io.mjs` 31 项断言（导出/模板/导入行级错误/批量删部分成功与业务保护/字典双工作表/在线批量强退），后端业务零改动；② 部门表操作列改纯图标（`w-44`→`w-28`），1280 视口横向溢出由 2px 归零，1180 仍有 10px（内容最小宽 836px 物理下限）；③ 脚本坑：POST 默认 201、列表返回 Pagination、`batch-kick` 字段是 `ids` |
 
 ## 快速导航
 
