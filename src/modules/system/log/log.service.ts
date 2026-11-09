@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository } from 'typeorm'
+import { Repository, type DeleteQueryBuilder, type SelectQueryBuilder } from 'typeorm'
 
 import { assertImportRows, createImportResult, failImportRow, type ImportResult, pickCell, resolveImportLayout } from '../../../helper/import/excel-import'
 import { paginate, type Pagination } from '../../../helper/paginate'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { randomId32 } from '../../../utils/password.util'
 import { parseRequestInfo } from '../../../utils/request-info.util'
 import { SysLogEntity } from './entities/sys-log.entity'
@@ -17,6 +18,8 @@ export interface LoginLogInput {
   message: string
   ip: string
   userAgent?: string
+  /** 归属租户（不传则按用户当前登录租户推导，见 resolveLoginTenant） */
+  tenantId?: number
 }
 
 /** 操作日志入参（status 为 jeecg 语义：0 成功 / 1 失败） */
@@ -31,7 +34,12 @@ export interface OperLogInput {
   status: number
   errorMsg?: string
   elapsed: number
+  /** 归属租户：0 表示平台视角下的操作（仅平台管理员可见） */
+  tenantId?: number
 }
+
+/** 无租户归属时的兜底租户（默认租户） */
+const DEFAULT_TENANT_ID = 1
 
 /**
  * 日志服务（单表 sys_log，对齐 JeecgBoot）：
@@ -52,9 +60,11 @@ export class LogService {
       // trust proxy 开启后 IPv4 可能以 ::ffff: 前缀（IPv4-mapped IPv6）落库，统一清洗成纯 IPv4
       const ip = input.ip.replace(/^::ffff:/, '')
       const { browser, os, location } = parseRequestInfo(ip, input.userAgent)
+      const tenantId = await this.resolveLoginTenant(input.userId, input.tenantId)
       await this.logRepository.save(
         this.logRepository.create({
           id: randomId32(),
+          tenantId,
           logContent: input.message,
           logType: 0,
           operateUserId: input.userId,
@@ -73,12 +83,39 @@ export class LogService {
     }
   }
 
+  /**
+   * 登录日志的归属租户
+   *
+   * 登录请求没有 token，中间件给的上下文是租户 0，不能直接用。
+   * 口径：优先调用方显式传入 → 用户上次选择的租户 → 用户第一个可用租户 → 默认租户。
+   * 都要不到（账号不存在）就落默认租户，平台管理员仍可看到。
+   */
+  private async resolveLoginTenant(userId?: string, explicit?: number): Promise<number> {
+    if (explicit && explicit > 0) return explicit
+    if (!userId) return DEFAULT_TENANT_ID
+    try {
+      const rows: Array<{ tenantId: number | string | null }> = await this.logRepository.manager.query(
+        `SELECT COALESCE(
+                  u.login_tenant_id,
+                  (SELECT ut.tenant_id FROM sys_user_tenant ut WHERE ut.user_id = u.id AND ut.status = 0 ORDER BY ut.id LIMIT 1),
+                  ?) AS tenantId
+           FROM sys_user u WHERE u.id = ?`,
+        [DEFAULT_TENANT_ID, userId]
+      )
+      const resolved = Number(rows[0]?.tenantId ?? DEFAULT_TENANT_ID)
+      return resolved > 0 ? resolved : DEFAULT_TENANT_ID
+    } catch {
+      return DEFAULT_TENANT_ID
+    }
+  }
+
   /** 记录一次写操作；log_content 记「模块 - 动作」 */
   async recordOper(input: OperLogInput): Promise<void> {
     try {
       await this.logRepository.save(
         this.logRepository.create({
           id: randomId32(),
+          tenantId: input.tenantId ?? TenantContext.currentTenantId() ?? 0,
           logContent: `${input.module} - ${input.action}`.slice(0, 1000),
           logType: 1,
           operateType: input.operateType,
@@ -98,6 +135,25 @@ export class LogService {
     }
   }
 
+  /**
+   * 把当前请求的租户条件并进日志查询
+   *
+   * 与其它表**不同**：这里不用「tenant_id = 0 是共享数据」的通用语义。
+   * 审计可见性 != 数据共享 —— 平台级操作（tenant_id=0）只给平台管理员看，
+   * 租户查询用严格相等，绝不 OR 0，否则平台管理员的运维记录会漏进每个租户的审计列表。
+   * 没有租户归属（tenantId=0）的账号一条都看不到（1 = 0）。
+   */
+  private applyLogTenantScope(qb: SelectQueryBuilder<SysLogEntity>): SelectQueryBuilder<SysLogEntity> {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return qb
+    if (tenantId === 0) {
+      qb.andWhere('1 = 0')
+      return qb
+    }
+    qb.andWhere('log.tenant_id = :logTenantId', { logTenantId: tenantId })
+    return qb
+  }
+
   /** 登录日志查询条件构造（列表与导出共用，log_type=0） */
   private buildLoginLogQb(query: { userId?: string; username?: string; status?: number; startTime?: string; endTime?: string }) {
     const qb = this.logRepository
@@ -105,6 +161,7 @@ export class LogService {
       .where('log.log_type = :logType', { logType: 0 })
       .orderBy('log.create_time', 'DESC')
       .addOrderBy('log.id', 'DESC')
+    this.applyLogTenantScope(qb)
     // 精确按用户过滤（用户管理页「登录日志」弹窗用）：优先 userId，改名不影响历史归属
     if (query.userId) {
       qb.andWhere('log.operate_user_id = :userId', { userId: query.userId })
@@ -131,6 +188,7 @@ export class LogService {
       .where('log.log_type = :logType', { logType: 1 })
       .orderBy('log.create_time', 'DESC')
       .addOrderBy('log.id', 'DESC')
+    this.applyLogTenantScope(qb)
     if (query.username) {
       qb.andWhere('log.operate_user_name LIKE :username', { username: `%${query.username}%` })
     }
@@ -181,9 +239,11 @@ export class LogService {
     return this.buildOperLogQb(query).take(50000).getMany()
   }
 
-  /** 登录日志详情，不存在抛 404 */
+  /** 登录日志详情，不存在抛 404（跨租户同样视为不存在，不泄漏存在性） */
   async findLoginLog(id: string): Promise<SysLogEntity> {
-    const log = await this.logRepository.findOne({ where: { id, logType: 0 } })
+    const qb = this.logRepository.createQueryBuilder('log').where('log.id = :id', { id }).andWhere('log.log_type = :logType', { logType: 0 })
+    this.applyLogTenantScope(qb)
+    const log = await qb.getOne()
     if (!log) {
       throw new NotFoundException('登录日志不存在')
     }
@@ -192,23 +252,37 @@ export class LogService {
 
   /** 操作日志详情，不存在抛 404 */
   async findOperLog(id: string): Promise<SysLogEntity> {
-    const log = await this.logRepository.findOne({ where: { id, logType: 1 } })
+    const qb = this.logRepository.createQueryBuilder('log').where('log.id = :id', { id }).andWhere('log.log_type = :logType', { logType: 1 })
+    this.applyLogTenantScope(qb)
+    const log = await qb.getOne()
     if (!log) {
       throw new NotFoundException('操作日志不存在')
     }
     return log
   }
 
-  /** 批量删除登录日志，返回删除条数 */
+  /** 批量删除登录日志，返回删除条数（带租户条件，避免构造 id 跨租户删除） */
   async removeLoginLogs(ids: string[]): Promise<{ deleted: number }> {
-    const result = await this.logRepository.delete({ id: In(ids), logType: 0 })
-    return { deleted: result.affected ?? 0 }
+    const qb = this.logRepository.createQueryBuilder().delete().where('id IN (:...ids)', { ids }).andWhere('log_type = :logType', { logType: 0 })
+    return { deleted: (await this.applyDeleteTenantScope(qb).execute()).affected ?? 0 }
   }
 
   /** 批量删除操作日志，返回删除条数 */
   async removeOperLogs(ids: string[]): Promise<{ deleted: number }> {
-    const result = await this.logRepository.delete({ id: In(ids), logType: 1 })
-    return { deleted: result.affected ?? 0 }
+    const qb = this.logRepository.createQueryBuilder().delete().where('id IN (:...ids)', { ids }).andWhere('log_type = :logType', { logType: 1 })
+    return { deleted: (await this.applyDeleteTenantScope(qb).execute()).affected ?? 0 }
+  }
+
+  /** DELETE 语句没有别名，租户列直接写 tenant_id（与 tenantRawCondition 同语义，但不含 0 共享） */
+  private applyDeleteTenantScope(qb: DeleteQueryBuilder<SysLogEntity>): DeleteQueryBuilder<SysLogEntity> {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return qb
+    if (tenantId === 0) {
+      qb.andWhere('1 = 0')
+      return qb
+    }
+    qb.andWhere('tenant_id = :logTenantId', { logTenantId: tenantId })
+    return qb
   }
 
   /**
@@ -285,6 +359,8 @@ export class LogService {
 
     const result = createImportResult(dataRows.length)
     const entities: SysLogEntity[] = []
+    // 导入的日志归属当前租户（平台视角导入落平台级 0，仅平台管理员可见）
+    const importTenantId = TenantContext.filterTenantId() ?? 0
 
     for (const { rowNumber, cells } of dataRows) {
       const username = pickCell(columns, cells, 'username')
@@ -300,6 +376,7 @@ export class LogService {
       entities.push(
         this.logRepository.create({
           id: randomId32(),
+          tenantId: importTenantId,
           logType,
           operateUserName: parsed.username,
           logContent: String(parsed.content ?? '').slice(0, 1000),

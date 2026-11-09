@@ -222,4 +222,4 @@ export class DashboardOverview {
 }
 
 /** 请求上下文里的用户：就是 JwtStrategy.validate 返回的 UserEntity（只声明用到的那几个字段） */
-export type DashboardActor = Pick<UserEntity, 'id' | 'username' | 'realname' | 'avatar' | 'departIds' | 'depts' | 'roles'>
+export type DashboardActor = Pick<UserEntity, 'id' | 'username' | 'realname' | 'avatar' | 'departIds' | 'depts' | 'roles' | 'isPlatformAdmin'>

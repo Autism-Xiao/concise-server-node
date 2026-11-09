@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto'
 
 import { captchaConfig, jwtConfig, type CaptchaConfig, type JwtConfig } from '../../../config'
 import { envNumber } from '../../../global/env'
-import { hasSuperRole } from '../../../utils/super-role.util'
 import { isArgon2Hash } from '../../../utils/password.util'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
@@ -214,13 +213,14 @@ export class AuthService {
       throw new BizException(BizErrorCode.UNAUTHORIZED, '账号不存在或已被冻结', HttpStatus.UNAUTHORIZED)
     }
 
-    // 停用角色不参与权限计算（角色管理里可停用；内置超管角色禁止停用，这里不会把超管滤掉）
+    // 停用角色不参与权限计算（角色管理里可停用；内置平台管理员角色禁止停用，这里不会把内置角色滤掉）
     const enabledRoles = (user.roles ?? []).filter(role => role.status !== 0)
     const roles = enabledRoles.map(role => role.roleCode).filter(Boolean)
-    // 超管：内置规则全权（不读 sys_role_permission），与 PermsGuard / RolesGuard 共用同一判定
-    const isAdmin = hasSuperRole(enabledRoles)
-    // 有效菜单（未删除、状态有效），按 sort_no 升序
-    const allMenus = (await this.menuService.listAll()).filter(menu => menu.status === '1')
+    // 平台管理员：账号属性（sys_user.is_platform_admin），不是角色编码 —— 见 UserEntity 注释
+    const isAdmin = Number(user.isPlatformAdmin ?? 0) === 1
+    // 有效菜单（未删除、状态有效），按 sort_no 升序；
+    // 租户用户看不到平台级菜单（租户管理/菜单管理/运维监控），否则点了就是 403
+    const allMenus = (await this.menuService.listAll()).filter(menu => menu.status === '1' && (isAdmin || menu.scope !== 'platform'))
 
     if (isAdmin) {
       return { roles, permissions: ['*'], menus: withHomeMenu(buildMenuTree(allMenus, null), allMenus) }

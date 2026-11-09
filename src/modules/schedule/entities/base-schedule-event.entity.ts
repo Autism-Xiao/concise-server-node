@@ -1,7 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm'
 
-/** 日程事件表 base_schedule_event（userId 为创建者=提醒接收人，不用 0 表示全局） */
+/**
+ * 日程事件表 base_schedule_event（userId 为创建者=提醒接收人，不用 0 表示全局）
+ *
+ * **多租户决策：日程跟随人，不按租户隔离（刻意不加 tenant_id）**
+ * - 日程是用户自己写的个人事务（会议、私事），不是「租户的业务资产」，租户管理员没有理由看到；
+ * - 加 tenant_id 会让同一个人在 A、B 两个租户的日程被切成两套，切租户就"丢日程"；
+ * - 与 sys_user_setting / sys_user_watermark 同类：偏好和私人数据跟人走。
+ * 访问控制靠 userId = 当前登录人，已经是比租户更细的隔离。
+ * 如果将来产品要求「日程也按租户分区」，需要同时改 base_calendar / base_schedule_reminder_log
+ * 和提醒调度器（scheduler 里按租户上下文跑），不要只给事件表加列。
+ */
 @Entity('base_schedule_event')
 export class BaseScheduleEventEntity {
   @ApiProperty({ description: '主键 ID', example: 1 })

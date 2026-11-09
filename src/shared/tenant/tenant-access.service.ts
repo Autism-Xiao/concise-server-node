@@ -42,9 +42,9 @@ export class TenantAccessService {
     const cached = this.cache.get(userId)
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value
 
-    const [roles, rows, preferred] = await Promise.all([
-      this.dataSource.query<{ roleCode: string }[]>(
-        'SELECT r.role_code AS roleCode FROM sys_user_role ur JOIN sys_role r ON r.id = ur.role_id WHERE ur.user_id = ?',
+    const [profile, rows] = await Promise.all([
+      this.dataSource.query<{ isPlatformAdmin: number | null; loginTenantId: number | null }[]>(
+        'SELECT is_platform_admin AS isPlatformAdmin, login_tenant_id AS loginTenantId FROM sys_user WHERE id = ?',
         [userId]
       ),
       this.dataSource.query<{ id: number; name: string; code: string; status: number; expireAt: string | null }[]>(
@@ -54,15 +54,21 @@ export class TenantAccessService {
           WHERE ut.user_id = ? AND ut.status = 0 AND t.del_flag = 0
           ORDER BY t.id`,
         [userId]
-      ),
-      this.dataSource.query<{ loginTenantId: number | null }[]>('SELECT login_tenant_id AS loginTenantId FROM sys_user WHERE id = ?', [userId])
+      )
     ])
 
-    const isSuper = roles.some(role => ['admin', 'superadmin'].includes(role.roleCode))
+    /**
+     * 「平台管理员」只认 sys_user.is_platform_admin
+     *
+     * 之前按 role_code in ('admin','superadmin') 判定：sys_role 是租户级表，
+     * 任何被授予 admin 角色的租户用户都会变成平台超管 —— 可以随意指定 X-Tenant-Id 读任意租户，
+     * 不带请求头时更是 tenantId=null 导致全库不过滤。身份必须是账号属性，不能来自角色编码。
+     */
+    const isSuper = Number(profile[0]?.isPlatformAdmin ?? 0) === 1
     const value: TenantMembership = {
       isSuper,
       tenants: rows.map(row => ({ ...row, id: Number(row.id), status: Number(row.status) })),
-      preferredTenantId: preferred[0]?.loginTenantId != null ? Number(preferred[0].loginTenantId) : null
+      preferredTenantId: profile[0]?.loginTenantId != null ? Number(profile[0].loginTenantId) : null
     }
     this.cache.set(userId, { at: Date.now(), value })
     return value
@@ -71,9 +77,12 @@ export class TenantAccessService {
   /**
    * 算出本次请求生效的租户
    *
-   * - 超管：带了 `X-Tenant-Id` 就进那个租户，否则 `null`（平台视角，不过滤）
+   * - 平台管理员：带了 `X-Tenant-Id` 就进那个租户，否则 `null`（平台视角，不过滤）
    * - 普通用户：只能选自己所属且可用的租户；没带则用默认（最近登录的，其次第一个可用）
    * - 一个租户都没有：`0`（只看平台共享数据，不泄漏别人租户的数据）
+   *
+   * 铁律：**非平台管理员永远拿不到 `null`**。null 意味着「所有查询不加租户条件」，
+   * 一旦普通账号拿到它，等于整库裸奔（历史上就是 admin 角色被误判成超管 + 前端没带请求头触发的）。
    */
   async resolveTenant(userId: string, requested?: number | null): Promise<{ tenantId: number | null; membership: TenantMembership }> {
     const membership = await this.loadMembership(userId)

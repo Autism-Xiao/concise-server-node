@@ -19,8 +19,14 @@ export class RoleEntity {
   @Column({ length: 200, nullable: true, comment: '角色名称' })
   roleName?: string
 
-  @ApiProperty({ description: '角色编码（英文，用于 @Roles() 匹配）', example: 'admin' })
-  @Column({ length: 100, unique: true, comment: '角色编码' })
+  /**
+   * 角色编码：唯一性由数据库联合唯一键 `(tenant_id, role_code)` 保证
+   *
+   * 之前在列上写了 unique:true（全局唯一），导致租户 B 无法创建自己的 admin 编码，
+   * 软删角色也会一直占着唯一键。多租户下唯一性必须带上租户维度。
+   */
+  @ApiProperty({ description: '角色编码（英文，用于 @Roles() 匹配；同一租户内唯一）', example: 'admin' })
+  @Column({ length: 100, comment: '角色编码' })
   roleCode: string
 
   @ApiPropertyOptional({
@@ -55,9 +61,19 @@ export class RoleEntity {
   @Column({ type: 'datetime', nullable: true, comment: '更新时间' })
   updateTime?: Date
 
-  @ApiPropertyOptional({ description: '租户 ID（对齐 JeecgBoot，默认 0）', example: 0, nullable: true })
+  @ApiPropertyOptional({ description: '租户 ID（0=平台共享，>0 归属该租户）', example: 1, nullable: true })
   @Column({ type: 'int', default: 0, comment: '租户ID' })
   tenantId: number
+
+  /**
+   * 内置角色标记（admin / superadmin）
+   *
+   * 保护规则（不可删除 / 不可停用 / 不可授权 / 编码不可改）必须看这个标记，不能看 role_code：
+   * 租户可以合法拥有自己的 admin 编码（联合唯一键允许），按编码判断会连带锁死租户的管理员角色。
+   */
+  @ApiProperty({ description: '是否内置角色（内置角色不可删除/停用/授权）', example: 0, enum: [0, 1] })
+  @Column({ type: 'tinyint', default: 0, name: 'is_builtin', comment: '是否内置角色(1是 0否)' })
+  isBuiltin: number
 
   @ApiProperty({ description: '已授权菜单/按钮（sys_permission）', type: [MenuEntity], required: false })
   @ManyToMany(() => MenuEntity, menu => menu.roles)

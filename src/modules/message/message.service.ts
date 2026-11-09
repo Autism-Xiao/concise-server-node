@@ -140,10 +140,13 @@ export class MessageService {
     const unread = query.unread === undefined ? undefined : Number(query.unread)
     const page = Math.max(query.page ?? 1, 1)
     const pageSize = Math.max(query.pageSize ?? 10, 1)
+    // 「我的消息」按收件人查，但消息本体是租户资产：同一用户在 A、B 两个租户各有各的收件箱，
+    // 不加这个条件会把 B 租户发给他的消息也列出来（tenant_id=0 是平台公告，所有租户可见）
+    const tenantJoin = this.messageTenantJoin()
 
     const listQb = this.messageUserRepo
       .createQueryBuilder('mu')
-      .innerJoin(SysMessageEntity, 'm', 'm.id = mu.messageId')
+      .innerJoin(SysMessageEntity, 'm', `m.id = mu.messageId${tenantJoin.clause}`)
       .select([
         'm.id AS id',
         'm.title AS title',
@@ -158,7 +161,12 @@ export class MessageService {
       .orderBy('mu.createdAt', 'DESC')
       .offset((page - 1) * pageSize)
       .limit(pageSize)
-    const countQb = this.messageUserRepo.createQueryBuilder('mu').where('mu.userId = :userId', { userId })
+    if (tenantJoin.params) listQb.setParameters(tenantJoin.params)
+    const countQb = this.messageUserRepo
+      .createQueryBuilder('mu')
+      .innerJoin(SysMessageEntity, 'm', `m.id = mu.messageId${tenantJoin.clause}`)
+      .where('mu.userId = :userId', { userId })
+    if (tenantJoin.params) countQb.setParameters(tenantJoin.params)
     if (unread === 1) {
       listQb.andWhere('mu.isRead = 0')
       countQb.andWhere('mu.isRead = 0')
@@ -167,9 +175,29 @@ export class MessageService {
     return new Pagination(records, total, page, pageSize)
   }
 
-  /** 未读数（顶栏红点） */
+  /** 未读数（顶栏红点）：同样按租户收窄，口径与 mine 一致 */
   async unreadCount(userId: string): Promise<number> {
-    return this.messageUserRepo.count({ where: { userId, isRead: 0 } })
+    const tenantJoin = this.messageTenantJoin()
+    const qb = this.messageUserRepo
+      .createQueryBuilder('mu')
+      .innerJoin(SysMessageEntity, 'm', `m.id = mu.messageId${tenantJoin.clause}`)
+      .where('mu.userId = :userId', { userId })
+      .andWhere('mu.isRead = 0')
+    if (tenantJoin.params) qb.setParameters(tenantJoin.params)
+    return qb.getCount()
+  }
+
+  /**
+   * 「我的消息」的租户 join 条件片段
+   *
+   * 平台视角（null）不加条件；租户视角只放本租户 + 平台公告（tenant_id=0）；
+   * 没有租户归属（0）只看平台公告。
+   */
+  private messageTenantJoin(): { clause: string; params?: Record<string, number> } {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return { clause: '' }
+    if (tenantId === 0) return { clause: ' AND m.tenant_id = 0' }
+    return { clause: ' AND (m.tenant_id = :msgTenantId OR m.tenant_id = 0)', params: { msgTenantId: tenantId } }
   }
 
   /** 标记单条已读 */

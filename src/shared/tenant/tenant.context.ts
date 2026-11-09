@@ -16,7 +16,7 @@ export interface TenantStore {
   tenantId: number | null
   /** 当前登录用户（公开接口没有） */
   userId?: string
-  /** 是否超级管理员（admin / superadmin 角色） */
+  /** 是否平台管理员（= sys_user.is_platform_admin，**不是** 角色编码） */
   isSuper: boolean
 }
 

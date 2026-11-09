@@ -6,6 +6,7 @@ import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 import { MenuEntity } from './entities/menu.entity'
 import type { PermNodeDto } from './dto/perm-node.dto'
 
@@ -169,9 +170,14 @@ export class MenuService extends BaseService<MenuEntity> {
     return result
   }
 
-  /** 扁平列表转树（parent_id 为 null/'' 视为顶级） */
+  /**
+   * 扁平列表转树（parent_id 为 null/'' 视为顶级）
+   *
+   * 租户管理员看不到平台级菜单（scope='platform'）：菜单树同时供「菜单管理」和「角色授权」两页使用，
+   * 租户管理员在授权页勾了平台菜单也不会生效（PermsGuard 会拦），不如干脆不展示。
+   */
   async getTree(): Promise<MenuTreeItem[]> {
-    const all = await this.listAll()
+    const all = (await this.listAll()).filter(menu => TenantContext.isSuper() || menu.scope !== 'platform')
     return buildMenuTree(all, null)
   }
 

@@ -4,6 +4,7 @@ import { In, Repository, type EntityManager } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { isSuperRole } from '../../utils/super-role.util'
@@ -68,11 +69,14 @@ export class RoleService extends BaseService<RoleEntity> {
 
   /** 创建角色，支持 menuIds 绑定菜单权限（id 由 BaseService 自动生成 32 位） */
   async createRole(dto: CreateRoleDto): Promise<RoleEntity> {
-    // 超管编码是内置约定，不允许新建同名角色（否则会静默继承全部权限）
+    // 超管编码是内置约定，不允许新建同名角色（否则 @Roles() 与历史数据会产生歧义）
     if (isSuperRole(dto.roleCode)) {
       throw new BadRequestException(`「${dto.roleCode}」是内置超级管理员角色编码，不允许创建`)
     }
-    await this.assertCodeAvailable(dto.roleCode)
+    // 归属租户：必须显式打标 —— 实体默认 tenant_id=0（平台共享），
+    // 不打标的话租户管理员建的角色会变成「全平台共享角色」，出现在所有租户的角色列表里
+    const tenantId = TenantContext.filterTenantId() ?? 0
+    await this.assertCodeAvailable(dto.roleCode, tenantId)
     // 角色本体与授权关系同一个事务：避免「角色建好了但菜单一条没绑」的半成品
     const roleId = await this.roleRepository.manager.transaction(async manager => {
       const repo = manager.getRepository(RoleEntity)
@@ -85,6 +89,8 @@ export class RoleService extends BaseService<RoleEntity> {
           description: dto.description,
           dataScope: dto.dataScope ?? 1,
           status: dto.status ?? 1,
+          tenantId,
+          isBuiltin: 0,
           createTime: new Date()
         })
       )
@@ -96,20 +102,20 @@ export class RoleService extends BaseService<RoleEntity> {
     return this.findOneWithMenus(roleId)
   }
 
-  /** 更新角色基础信息，可同时传 menuIds 覆盖授权；内置超管角色的编码不允许修改 */
+  /** 更新角色基础信息，可同时传 menuIds 覆盖授权；内置角色的编码不允许修改 */
   async updateRole(id: string, dto: UpdateRoleDto): Promise<RoleEntity> {
     const role = await this.findOne(id)
     if (dto.roleCode && dto.roleCode !== role.roleCode) {
-      if (isSuperRole(role.roleCode)) {
+      if (role.isBuiltin === 1) {
         throw new BadRequestException('内置管理员角色的编码不允许修改')
       }
       if (isSuperRole(dto.roleCode)) {
         throw new BadRequestException(`「${dto.roleCode}」是内置超级管理员角色编码，不允许占用`)
       }
-      await this.assertCodeAvailable(dto.roleCode)
+      await this.assertCodeAvailable(dto.roleCode, role.tenantId)
     }
-    // 内置超管角色是权限体系的兜底，停用它会把所有管理员锁在门外
-    if (dto.status === 0 && isSuperRole(role.roleCode)) {
+    // 内置角色是权限体系的兜底，停用它会把所有管理员锁在门外
+    if (dto.status === 0 && role.isBuiltin === 1) {
       throw new BadRequestException('内置管理员角色不允许停用')
     }
     await this.roleRepository.manager.transaction(async manager => {
@@ -139,7 +145,7 @@ export class RoleService extends BaseService<RoleEntity> {
    */
   async deleteRole(id: string): Promise<void> {
     const role = await this.findOne(id)
-    if (isSuperRole(role.roleCode)) {
+    if (role.isBuiltin === 1) {
       throw new BadRequestException('内置管理员角色不允许删除')
     }
     const rows = (await this.roleRepository.query(
@@ -193,12 +199,20 @@ export class RoleService extends BaseService<RoleEntity> {
     if (!role) {
       throw new NotFoundException('角色不存在')
     }
-    if (isSuperRole(role.roleCode)) {
+    if (role.isBuiltin === 1) {
       throw new BadRequestException('内置超级管理员拥有全部权限，无需也不允许分配，修改不会生效')
     }
     const menus = await (manager ?? this.roleRepository.manager).getRepository(MenuEntity).find({ where: { id: In(menuIds) } })
     if (menus.length !== menuIds.length) {
       throw new NotFoundException('存在无效的菜单 ID')
+    }
+    // 平台级菜单（租户管理/菜单管理/运维监控）不能由租户管理员授权给自己：
+    // 即使权限码拿不到，也避免关联表里出现「看起来有、实际 403」的脏数据
+    if (!TenantContext.isSuper()) {
+      const platformNode = menus.find(menu => menu.scope === 'platform')
+      if (platformNode) {
+        throw new BadRequestException(`「${platformNode.name}」是平台级菜单，仅平台管理员可授权`)
+      }
     }
     const nextIds = new Set(menuIds)
     const current = await roleRepo.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).loadMany<MenuEntity>()
@@ -230,7 +244,7 @@ export class RoleService extends BaseService<RoleEntity> {
    */
   async getMenuIds(id: string): Promise<string[]> {
     const role = await this.findOne(id)
-    if (isSuperRole(role.roleCode)) {
+    if (role.isBuiltin === 1) {
       // 只回显未删除的菜单（与菜单树同源，已软删的节点在树上不存在，回显了也勾不上）
       const menus = await this.roleRepository.manager.getRepository(MenuEntity).find({ select: { id: true }, where: { delFlag: 0 } })
       return menus.map(menu => menu.id)
@@ -358,8 +372,14 @@ export class RoleService extends BaseService<RoleEntity> {
   }
 
   /** 校验角色编码未被占用（数据库有唯一索引，提前拦截给出可读报错） */
-  private async assertCodeAvailable(roleCode: string): Promise<void> {
-    const exists = await this.roleRepository.findOne({ where: { roleCode } })
+  /**
+   * 同一租户内角色编码唯一（数据库联合唯一键 `(tenant_id, role_code)` 兜底）
+   *
+   * 之前是全局查重 + 全局唯一索引：租户 B 永远建不了自己的 `operator` 编码。
+   * 现在按「这一行将要落到哪个租户」查重；软删的角色同样占唯一键，所以不带 del_flag 条件。
+   */
+  private async assertCodeAvailable(roleCode: string, tenantId: number): Promise<void> {
+    const exists = await this.roleRepository.findOne({ where: { roleCode, tenantId } })
     if (exists) {
       throw new BadRequestException(`角色编码「${roleCode}」已存在`)
     }

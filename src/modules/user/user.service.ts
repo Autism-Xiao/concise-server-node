@@ -10,9 +10,9 @@ import { paginate, type PaginateOptions, type Pagination } from '../../helper/pa
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../shared/rate-limit/login-fail.util'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 import { OnlineService } from '../ops/online/online.service'
 import { randomToken } from '../../utils/random-token.util'
-import { hasSuperRole } from '../../utils/super-role.util'
 import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
 import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
@@ -40,6 +40,9 @@ export const USER_EXPORT_MAX_ROWS = 5000
 /** 导入单文件上限：2000 行、5MB（与角色导入保持一致） */
 export const USER_IMPORT_MAX_ROWS = 2000
 export const USER_IMPORT_MAX_SIZE = 5 * 1024 * 1024
+
+/** 默认租户（平台运营兜底租户）：平台视角下新建的账号默认归属这里 */
+const DEFAULT_TENANT_ID = 1
 
 /** 批量查账号单次上限（选择器回显用，超出部分截断，避免超长 IN 查询） */
 export const USER_LOOKUP_MAX_IDS = 100
@@ -179,6 +182,8 @@ interface DataScopeActor {
   id: string
   roles?: RoleEntity[] | null
   departIds?: string | null
+  /** 平台管理员标志（sys_user.is_platform_admin）：不受数据范围收窄 */
+  isPlatformAdmin?: number
 }
 
 @Injectable()
@@ -246,9 +251,21 @@ export class UserService extends BaseService<UserEntity> {
       }
       // 界面设置行随账号一起落库：同一事务，不留「有用户没设置」的半成品
       await this.userSettingService.ensure(user.id, manager)
+      // 租户归属：租户管理员建的号自动加入本租户；平台视角建的号落到默认租户 1
+      // （不写这行的话新账号 tenantId 解析成 0，登录后什么都看不到 —— 与存量账号升级时的处理保持一致）
+      await manager.query('INSERT IGNORE INTO `sys_user_tenant` (`user_id`, `tenant_id`, `status`, `create_time`) VALUES (?, ?, 0, NOW())', [
+        user.id,
+        this.resolveJoinTenantId()
+      ])
       return user.id
     })
     return this.findOneDetail(id) as Promise<UserEntity>
+  }
+
+  /** 新账号默认归属的租户：当前租户上下文 > 默认租户（0/平台视角都落到 1） */
+  private resolveJoinTenantId(): number {
+    const tenantId = TenantContext.filterTenantId()
+    return tenantId !== null && tenantId > 0 ? tenantId : DEFAULT_TENANT_ID
   }
 
   /** 更新：携带密码则用 argon2id 重新哈希；携带 roleIds / deptIds / postIds 则重绑关联 */
@@ -458,8 +475,28 @@ export class UserService extends BaseService<UserEntity> {
    */
   private async scopedQuery(actor?: DataScopeActor): Promise<SelectQueryBuilder<UserEntity>> {
     const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 0')
+    this.applyTenantToUsers(qb)
     await this.applyDataScope(qb, actor)
     return qb
+  }
+
+  /**
+   * 用户表的租户收窄（sys_user 本身没有 tenant_id，归属靠 sys_user_tenant）
+   *
+   * 为什么用户表不隔离却要过滤：账号是全局身份（一人可属多租户，靠关系表表达归属），
+   * 但「用户管理」页在租户 A 下只该列 A 的用户 —— 否则租户管理员能翻到全平台手机号/邮箱。
+   * 平台视角（tenantId=null）不过滤；没有租户归属（0）一条都看不到。
+   */
+  private applyTenantToUsers(qb: SelectQueryBuilder<UserEntity>): void {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return
+    if (tenantId === 0) {
+      qb.andWhere('1 = 0')
+      return
+    }
+    qb.andWhere('EXISTS (SELECT 1 FROM `sys_user_tenant` ut WHERE ut.`user_id` = user.id AND ut.`tenant_id` = :scopeTenantId AND ut.`status` = 0)', {
+      scopeTenantId: tenantId
+    })
   }
 
   /**
@@ -520,7 +557,8 @@ export class UserService extends BaseService<UserEntity> {
    */
   private async applyDataScope(qb: SelectQueryBuilder<UserEntity>, actor?: DataScopeActor): Promise<void> {
     const roles = actor?.roles ?? []
-    if (!actor || hasSuperRole(roles)) {
+    // 平台管理员不受数据范围限制（按 is_platform_admin 判定，不看 role_code：角色是租户级的）
+    if (!actor || Number(actor.isPlatformAdmin ?? 0) === 1) {
       return
     }
     const scopes = roles.map(role => role.dataScope ?? DATA_SCOPE.ALL)
@@ -683,10 +721,14 @@ export class UserService extends BaseService<UserEntity> {
   async lookupBrief(ids: string[]): Promise<Array<{ id: string; username: string; realname?: string }>> {
     const clean = Array.from(new Set(ids.map(id => id.trim()).filter(Boolean))).slice(0, USER_LOOKUP_MAX_IDS)
     if (!clean.length) return []
-    const rows = await this.repository.find({
-      where: { id: In(clean), delFlag: 0 },
-      select: { id: true, username: true, realname: true }
-    })
+    // 选人控件也要按租户收窄，否则任务指派/站内信能选到别的租户的账号
+    const qb = this.repository
+      .createQueryBuilder('user')
+      .select(['user.id', 'user.username', 'user.realname'])
+      .where('user.id IN (:...ids)', { ids: clean })
+      .andWhere('user.del_flag = 0')
+    this.applyTenantToUsers(qb)
+    const rows = await qb.getMany()
     return rows.map(row => ({ id: row.id, username: row.username, realname: row.realname ?? undefined }))
   }
 
@@ -695,11 +737,18 @@ export class UserService extends BaseService<UserEntity> {
    *
    * 只回 id + 账号：批量接口只需要知道谁在执行范围内、跳过的是谁，
    * 不关心完整资料；也不做 100 条截断（批量上限由调用方的 DTO 控制）。
+   * 同样按租户收窄：别的租户的用户在这里等于「不存在」，批量操作会给出「用户不存在或已删除」。
    */
   async findExistingBriefs(ids: string[]): Promise<Array<{ id: string; username: string }>> {
     const clean = Array.from(new Set(ids.map(id => String(id ?? '').trim()).filter(Boolean)))
     if (!clean.length) return []
-    return this.repository.find({ where: { id: In(clean), delFlag: 0 }, select: { id: true, username: true } })
+    const qb = this.repository
+      .createQueryBuilder('user')
+      .select(['user.id', 'user.username'])
+      .where('user.id IN (:...ids)', { ids: clean })
+      .andWhere('user.del_flag = 0')
+    this.applyTenantToUsers(qb)
+    return qb.getMany()
   }
 
   /** 详情：带出角色 + 部门 + 岗位（过滤已软删，不存在抛 404） */
@@ -708,10 +757,23 @@ export class UserService extends BaseService<UserEntity> {
     if (!user) {
       throw new NotFoundException('用户不存在')
     }
+    // 跨租户按「不存在」处理，不泄漏账号是否存在
+    await this.assertUserVisible(id)
     this.applyDepts(user)
     await this.attachLevel([user])
     await this.attachWatermark([user])
     return user
+  }
+
+  /** 当前租户能否看到该用户（平台视角恒 true） */
+  private async assertUserVisible(id: string): Promise<void> {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return
+    const qb = this.repository.createQueryBuilder('user').where('user.id = :id', { id })
+    this.applyTenantToUsers(qb)
+    if ((await qb.getCount()) === 0) {
+      throw new NotFoundException('用户不存在')
+    }
   }
   /** 按 id 查找（含密码与盐，仅供认证场景使用；过滤已软删） */
   async findOneWithPassword(id: string): Promise<UserEntity | null> {
@@ -913,9 +975,10 @@ export class UserService extends BaseService<UserEntity> {
     return { avatar: value }
   }
 
-  /** 回收站列表：del_flag=1 的软删用户，keyword 前缀搜账号/姓名/电话 */
+  /** 回收站列表：del_flag=1 的软删用户，keyword 前缀搜账号/姓名/电话（同样按租户收窄） */
   async listRecycled(query: QueryUserDto): Promise<Pagination<UserEntity>> {
     const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 1').orderBy('user.update_time', 'DESC')
+    this.applyTenantToUsers(qb)
     if (query.keyword) {
       qb.andWhere(userKeywordClause('user', query.keyword), { keyword: userKeywordParam(query.keyword) })
     }
@@ -1385,10 +1448,14 @@ export class UserService extends BaseService<UserEntity> {
     if (!users.length) {
       return
     }
-    const [settingRow, rows] = await Promise.all([
-      this.watermarkSettingRepository.findOne({ where: { id: 1 } }),
+    // 策略已按租户拆分：本租户配置优先，没有则继承平台默认（tenant_id=0），都没有用兜底常量
+    const scopeTenantId = TenantContext.filterTenantId()
+    const [ownRow, platformRow, rows] = await Promise.all([
+      scopeTenantId !== null && scopeTenantId > 0 ? this.watermarkSettingRepository.findOne({ where: { tenantId: scopeTenantId } }) : Promise.resolve(null),
+      this.watermarkSettingRepository.findOne({ where: { tenantId: 0 } }),
       this.userWatermarkRepository.find({ where: { userId: In(users.map(user => user.id)) } })
     ])
+    const settingRow = ownRow ?? platformRow
     const setting = settingRow
       ? {
           enabled: Number(settingRow.enabled),

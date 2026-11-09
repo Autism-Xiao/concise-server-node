@@ -82,6 +82,17 @@ export class UserEntity {
   @Column({ type: 'tinyint', nullable: true, comment: '删除状态(0-正常,1-已删除)' })
   delFlag: number
 
+  /**
+   * 平台管理员标志（多租户身份分层的唯一依据）
+   *
+   * 为什么不看 role_code：sys_role 是**租户级**表，任何租户都能建出 admin/superadmin 编码的角色，
+   * 按编码判定等于把「租户管理员」直接提升成「平台超管」（可切任意租户、可看全库）。
+   * 这里用显式标志位，只有平台运营账号为 1。
+   */
+  @ApiProperty({ description: '是否平台管理员：1 是 / 0 否（跨租户视角与平台级权限的唯一依据）', example: 0, enum: [0, 1] })
+  @Column({ type: 'tinyint', default: 0, name: 'is_platform_admin', comment: '是否平台管理员(1是 0否)' })
+  isPlatformAdmin: number
+
   @ApiPropertyOptional({ description: '工号（唯一）', example: '00001', nullable: true })
   @Column({ length: 100, nullable: true, unique: true, comment: '工号，唯一键' })
   workNo?: string

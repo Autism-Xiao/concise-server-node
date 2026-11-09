@@ -14,6 +14,16 @@ export class SysLogEntity {
   @PrimaryColumn({ type: 'varchar', length: 32, comment: '主键id' })
   id: string
 
+  /**
+   * 租户 ID：>0 该操作发生在哪个租户；0 = 平台级操作（平台视角下做的），仅平台管理员可见
+   *
+   * 注意这里**不遵循**「0 = 所有租户共享」的通用约定：审计可见性和数据共享是两回事，
+   * 平台管理员的运维记录不该出现在租户的审计列表里。租户查询用严格相等，不带 OR 0。
+   */
+  @ApiProperty({ description: '租户 ID（0=平台级操作，仅平台管理员可见）', example: 1 })
+  @Column({ type: 'int', default: 1, name: 'tenant_id', comment: '租户ID(0=平台级操作)' })
+  tenantId: number
+
   @ApiPropertyOptional({ description: '定时任务 ID（对齐 JeecgBoot，本项目暂不用）', nullable: true })
   @Column({ type: 'varchar', length: 32, nullable: true, comment: '定时任务id' })
   jobId?: string

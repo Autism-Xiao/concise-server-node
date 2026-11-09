@@ -8,6 +8,7 @@ import { In, LessThan, Repository } from 'typeorm'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { storageProvider } from '../../../shared/storage'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { getExtname, sanitizeFileName } from '../../../utils/file.util'
 import { detectImageSignature } from '../../../utils/image-signature.util'
 import { FileEntity } from './entities/file.entity'
@@ -213,6 +214,8 @@ export class FileService {
         storageKey: '',
         hash: '',
         ownerId,
+        // 文件是租户资产：必须显式打标，否则落到列默认值 1，租户 2 上传的文件会出现在租户 1 里
+        tenantId: TenantContext.filterTenantId() ?? 0,
         deptId: 0,
         isStarred: 0,
         isDeleted: 0,
@@ -300,6 +303,8 @@ export class FileService {
           storageKey,
           hash,
           ownerId,
+          // 同上：文件必须归属当前租户（0 = 平台视角上传）
+          tenantId: TenantContext.filterTenantId() ?? 0,
           deptId: 0,
           isStarred: 0,
           isDeleted: 0,

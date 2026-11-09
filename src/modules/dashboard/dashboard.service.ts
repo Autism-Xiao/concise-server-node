@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { DataSource } from 'typeorm'
 
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
-import { hasSuperRole } from '../../utils/super-role.util'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 import { MonitorService } from '../ops/monitor/monitor.service'
 import { OnlineService } from '../ops/online/online.service'
 import { fileQuotaBytes } from '../tools/file/file.service'
@@ -134,23 +134,34 @@ export class DashboardService {
 
   /* ------------------------------ 权限 ------------------------------ */
 
-  /** 超管直接全放行；其余走按角色缓存的权限集合（与 PermsGuard 同源，改完授权立刻生效） */
+  /**
+   * 平台管理员直接全放行；其余走按角色缓存的权限集合（与 PermsGuard 同源，改完授权立刻生效）
+   *
+   * 非平台管理员的集合里要剔掉**平台级权限**（sys_permission.scope='platform'）：
+   * 角色授权表里可能挂着 system:monitor:server 这类平台权限，但租户管理员不该因此看到服务器状态 ——
+   * 与 PermsGuard 的拦截口径保持一致，否则「卡片显示、点进去 403」。
+   */
   private async ownedPerms(actor: DashboardActor): Promise<OwnedPerms> {
-    if (hasSuperRole(actor.roles)) return 'all'
+    if (Number(actor.isPlatformAdmin ?? 0) === 1) return 'all'
     const roleIds = (actor.roles ?? []).map(role => role.id)
     if (!roleIds.length) return new Set()
-    return this.permissionCache.getRolesPerms(roleIds)
+    const [owned, platform] = await Promise.all([this.permissionCache.getRolesPerms(roleIds), this.permissionCache.getPlatformPerms()])
+    if (!platform.size) return owned
+    return new Set([...owned].filter(perm => !platform.has(perm)))
   }
 
   /* ------------------------------ 各块 ------------------------------ */
 
   private async buildProfile(actor: DashboardActor): Promise<DashboardOverview['profile']> {
     // 登录日志里 operate_user_name 记录的是「尝试登录的账号」，按账号取最近一条成功记录
+    const params: unknown[] = [actor.username]
+    // 审计日志严格按租户隔离（0 = 平台级，不给租户看），见 LogService.applyLogTenantScope
+    const tenantFilter = this.tenantClause('tenant_id', params)
     const rows = await this.dataSource.query<Array<{ create_time: Date; ip: string; browser: string | null; location: string | null }>>(
       `SELECT create_time, ip, browser, location FROM sys_log
-       WHERE log_type = 0 AND status = 0 AND operate_user_name = ?
+       WHERE log_type = 0 AND status = 0 AND operate_user_name = ?${tenantFilter}
        ORDER BY create_time DESC LIMIT 1`,
-      [actor.username]
+      params
     )
     const last = rows[0]
     return {
@@ -178,9 +189,10 @@ export class DashboardService {
       selfFilter = ' AND operate_user_name = ?'
       params.push(actor.username)
     }
+    const tenantFilter = this.tenantClause('tenant_id', params)
     const rows = await this.dataSource.query<Array<{ ok: string | number; fail: string | number }>>(
       `SELECT COALESCE(SUM(status = 0), 0) AS ok, COALESCE(SUM(status = 1), 0) AS fail
-       FROM sys_log WHERE log_type = 0 AND create_time >= ?${selfFilter}`,
+       FROM sys_log WHERE log_type = 0 AND create_time >= ?${selfFilter}${tenantFilter}`,
       params
     )
     return { scope, success: Number(rows[0]?.ok ?? 0), fail: Number(rows[0]?.fail ?? 0) }
@@ -191,7 +203,10 @@ export class DashboardService {
   }
 
   private async roleTotal(): Promise<number> {
-    const rows = await this.dataSource.query<Array<{ total: string | number }>>('SELECT COUNT(1) AS total FROM sys_role')
+    // 角色是租户级数据（tenant_id=0 是平台共享角色），「角色数」必须按当前租户统计
+    const params: unknown[] = []
+    const tenantFilter = this.tenantClause('tenant_id', params, { shared: true })
+    const rows = await this.dataSource.query<Array<{ total: string | number }>>(`SELECT COUNT(1) AS total FROM sys_role WHERE 1 = 1${tenantFilter}`, params)
     return Number(rows[0]?.total ?? 0)
   }
 
@@ -205,11 +220,12 @@ export class DashboardService {
       selfFilter = ' AND operate_user_name = ?'
       params.push(actor.username)
     }
+    const tenantFilter = this.tenantClause('tenant_id', params)
     const rows = await this.dataSource.query<Array<{ d: string; ok: string | number; fail: string | number }>>(
       `SELECT DATE_FORMAT(create_time, '%Y-%m-%d') AS d,
               COALESCE(SUM(status = 0), 0) AS ok,
               COALESCE(SUM(status = 1), 0) AS fail
-       FROM sys_log WHERE log_type = 0 AND create_time >= ?${selfFilter}
+       FROM sys_log WHERE log_type = 0 AND create_time >= ?${selfFilter}${tenantFilter}
        GROUP BY d ORDER BY d`,
       params
     )
@@ -233,6 +249,7 @@ export class DashboardService {
       selfFilter = ' AND operate_user_id = ?'
       params.push(actor.id)
     }
+    const tenantFilter = this.tenantClause('tenant_id', params)
     const rows = await this.dataSource.query<
       Array<{
         id: string
@@ -246,7 +263,7 @@ export class DashboardService {
       }>
     >(
       `SELECT id, operate_user_name, log_content, operate_type, status, cost_time, ip, create_time
-       FROM sys_log WHERE log_type = 1${selfFilter}
+       FROM sys_log WHERE log_type = 1${selfFilter}${tenantFilter}
        ORDER BY create_time DESC LIMIT ${RECENT_LIMIT}`,
       params
     )
@@ -268,10 +285,13 @@ export class DashboardService {
   }
 
   private async myStorage(actor: DashboardActor): Promise<StorageBlock> {
+    // 文件是租户资产：同一用户在多个租户下各有各的用量，不能把别的租户的算进来
+    const params: unknown[] = [actor.id]
+    const tenantFilter = this.tenantClause('tenant_id', params)
     const rows = await this.dataSource.query<Array<{ cnt: string | number; bytes: string | number | null }>>(
       `SELECT COUNT(1) AS cnt, COALESCE(SUM(size), 0) AS bytes
-       FROM sys_file WHERE owner_id = ? AND is_folder = 0 AND is_deleted = 0`,
-      [actor.id]
+       FROM sys_file WHERE owner_id = ? AND is_folder = 0 AND is_deleted = 0${tenantFilter}`,
+      params
     )
     return {
       usedBytes: Number(rows[0]?.bytes ?? 0),
@@ -291,9 +311,10 @@ export class DashboardService {
       where = 'assignee_id = ?'
       params.push(actor.id)
     }
-
+    // 任务按租户隔离：同一用户在不同租户的待办必须分开算
+    const tenantFilter = this.tenantClause('tenant_id', params)
     const rows = await this.dataSource.query<Array<{ status: number; n: string | number }>>(
-      `SELECT status, COUNT(1) AS n FROM task WHERE ${where} GROUP BY status`,
+      `SELECT status, COUNT(1) AS n FROM task WHERE ${where}${tenantFilter} GROUP BY status`,
       params
     )
     const counts = { pending: 0, doing: 0, done: 0, cancelled: 0 }
@@ -307,11 +328,15 @@ export class DashboardService {
 
   private async notices(): Promise<NoticeRow[]> {
     // 注意：sys_announcement 的标题列在建表时拼成了 titile（JeecgBoot 历史拼写），不是 title
+    // 公告有 tenant_id（0 = 全平台公告），首页必须按租户过滤，否则租户能看到别家的公告
+    const params: unknown[] = []
+    const tenantFilter = this.tenantClause('tenant_id', params, { shared: true })
     const rows = await this.dataSource.query<
       Array<{ id: string; titile: string; priority: string | null; msg_category: string | null; send_time: Date | null }>
     >(
       `SELECT id, titile, priority, msg_category, send_time FROM sys_announcement
-       WHERE send_status = '1' ORDER BY send_time DESC LIMIT ${RECENT_LIMIT}`
+       WHERE send_status = '1'${tenantFilter} ORDER BY send_time DESC LIMIT ${RECENT_LIMIT}`,
+      params
     )
     return rows.map(row => ({
       id: row.id,
@@ -320,6 +345,26 @@ export class DashboardService {
       category: row.msg_category ?? '1',
       sendTime: toIso(row.send_time)
     }))
+  }
+
+  /**
+   * 裸 SQL 的租户条件片段（含前导 " AND "；不需要过滤时返回空串）
+   *
+   * 参数按占位符出现顺序 push 进 `params` —— 调用方必须按 SQL 拼接顺序调用本方法，
+   * 否则 `?` 与实参错位（这是裸 SQL 里最容易踩的坑）。
+   *
+   * @param column  列名，建议带表别名的形式不需要这里处理（本文件都是单表查询）
+   * @param shared  true 表示该表沿用「tenant_id=0 是共享数据」的通用语义；
+   *                false（默认）表示严格相等 —— 审计日志用这一档，平台级记录不给租户看
+   */
+  private tenantClause(column: string, params: unknown[], options: { shared?: boolean } = {}): string {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return ''
+    if (tenantId === 0) {
+      return options.shared ? ` AND ${column} = 0` : ' AND 1 = 0'
+    }
+    params.push(tenantId)
+    return options.shared ? ` AND (${column} = ? OR ${column} = 0)` : ` AND ${column} = ?`
   }
 
   private async serverState(): Promise<ServerStateBlock> {

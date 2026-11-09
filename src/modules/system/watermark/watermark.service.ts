@@ -5,6 +5,7 @@ import { In, Repository } from 'typeorm'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds } from '../../../helper/crud/batch-delete'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { hasSuperRole } from '../../../utils/super-role.util'
 import { normalizeWatermarkContent, renderWatermarkLines } from '../../../utils/watermark-template.util'
 import { UserService } from '../../user/user.service'
@@ -23,8 +24,8 @@ import {
   type WatermarkUserSnapshot
 } from './watermark.util'
 
-/** 全局配置单行主键 */
-const SETTING_ID = 1
+/** 平台默认策略的租户主键（所有租户继承） */
+const PLATFORM_SETTING_TENANT_ID = 0
 
 /** resolve 只依赖这几个用户字段，不直接依赖 UserEntity，避免模块间循环引用 */
 export interface WatermarkUserLike {
@@ -84,10 +85,20 @@ export class WatermarkService {
     private readonly userService: UserService
   ) {}
 
-  /** 全局策略（无配置行时用兜底值，保证接口不因缺数据而 500） */
+  /**
+   * 当前生效的策略：本租户配置 → 平台默认 → 兜底常量
+   *
+   * 多租户前这里是一张单行表（id=1），任何租户管理员改水印都等于改全平台。
+   * 现在每个租户各有一行（tenant_id 主键），没配过的租户继承 tenant_id=0 的平台默认。
+   */
   async getSetting(): Promise<WatermarkSettingSnapshot> {
-    const row = await this.settingRepository.findOne({ where: { id: SETTING_ID } })
-    return row ? this.toSettingSnapshot(row) : { ...FALLBACK_WATERMARK_SETTING }
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId !== null && tenantId > 0) {
+      const own = await this.settingRepository.findOne({ where: { tenantId } })
+      if (own) return this.toSettingSnapshot(own)
+    }
+    const platform = await this.settingRepository.findOne({ where: { tenantId: PLATFORM_SETTING_TENANT_ID } })
+    return platform ? this.toSettingSnapshot(platform) : { ...FALLBACK_WATERMARK_SETTING }
   }
 
   /** 解析某个用户最终的生效水印（前端进入后台时调用的就是这条链路） */
@@ -221,10 +232,15 @@ export class WatermarkService {
     return { mode, updated: existing.length, skipped }
   }
 
-  /** 管理员修改全局策略；enabled 与 mode 联动，避免出现「开着但全站关闭」的自相矛盾状态 */
+  /**
+   * 修改策略：写当前租户自己的那一行（平台视角下写 tenant_id=0，即平台默认）
+   *
+   * enabled 与 mode 联动，避免出现「开着但全站关闭」的自相矛盾状态
+   */
   async updateSetting(dto: UpdateWatermarkSettingDto, operator?: string | null): Promise<WatermarkSettingSnapshot> {
-    const current = await this.settingRepository.findOne({ where: { id: SETTING_ID } })
-    const entity = current ?? this.settingRepository.create({ id: SETTING_ID, ...FALLBACK_WATERMARK_SETTING })
+    const tenantId = TenantContext.filterTenantId() ?? PLATFORM_SETTING_TENANT_ID
+    const current = await this.settingRepository.findOne({ where: { tenantId } })
+    const entity = current ?? this.settingRepository.create({ tenantId, ...FALLBACK_WATERMARK_SETTING })
 
     if (dto.enabled !== undefined) {
       entity.enabled = dto.enabled ? 1 : 0

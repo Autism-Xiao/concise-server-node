@@ -51,6 +51,17 @@ export class MenuEntity {
   @Column({ length: 255, nullable: true, comment: '菜单权限编码' })
   perms?: string
 
+  /**
+   * 作用域：platform 平台级 / tenant 租户级
+   *
+   * platform 的含义是「光有权限码不够，还必须是平台管理员」：租户管理、菜单管理、运维监控、
+   * 存储配置这几类改的是全平台唯一的东西，不能让租户管理员自己授权给自己。
+   * 同时这类菜单不会出现在租户用户的导航树里（见 AuthService.getPermissions）。
+   */
+  @ApiPropertyOptional({ description: '作用域：platform 平台级 / tenant 租户级', example: 'tenant', enum: ['platform', 'tenant'] })
+  @Column({ type: 'varchar', length: 16, default: 'tenant', comment: '作用域(platform平台级 tenant租户级)' })
+  scope?: string
+
   @ApiPropertyOptional({ description: '权限策略：1 显示 / 2 禁用', example: '1', nullable: true })
   @Column({ length: 10, default: '0', comment: '权限策略1显示2禁用' })
   permsType?: string

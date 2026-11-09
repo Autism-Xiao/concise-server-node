@@ -9,6 +9,9 @@ const KEY_PREFIX = 'perm:role:'
 /** 缓存有效期（秒）：只是兜底，真正保证一致性的是写入侧主动失效 */
 const TTL_SECONDS = 300
 
+/** 平台级权限集合的进程内缓存时长（菜单改动后会主动清空） */
+const PLATFORM_TTL_MS = 60_000
+
 /**
  * 角色 → 按钮权限集合 缓存
  *
@@ -28,6 +31,8 @@ export class PermissionCacheService {
   private readonly logger = new Logger(PermissionCacheService.name)
   /** 降级日志只打一次，避免 Redis 抖动时刷屏 */
   private degradedLogged = false
+  /** 平台级权限集合的进程内缓存（菜单作用域改动后清空） */
+  private platformPerms: { at: number; set: Set<string> } | null = null
 
   constructor(
     private readonly redis: RedisService,
@@ -69,6 +74,33 @@ export class PermissionCacheService {
     return new Set(lists.flat())
   }
 
+  /**
+   * 平台级权限标识集合（sys_permission.scope='platform'）
+   *
+   * PermsGuard 用它做「作用域拦截」：命中的权限码要求 is_platform_admin=1，
+   * 避免租户管理员通过自建角色把「创建租户」「改菜单」这类平台能力授给自己。
+   *
+   * 只走进程内缓存（60s）+ 写侧清空：这是一份**全表小集合**（几十条），
+   * 没必要按角色分片，也没有多实例强一致要求（菜单改动后 60s 内生效可接受）。
+   */
+  async getPlatformPerms(): Promise<Set<string>> {
+    const now = Date.now()
+    if (this.platformPerms && now - this.platformPerms.at < PLATFORM_TTL_MS) {
+      return this.platformPerms.set
+    }
+    const rows = await this.dataSource
+      .createQueryBuilder()
+      .select('p.perms', 'perms')
+      .from('sys_permission', 'p')
+      .where("p.scope = 'platform'")
+      .andWhere("p.status = '1'")
+      .andWhere('p.del_flag = 0')
+      .getRawMany<{ perms: string | null }>()
+    const set = new Set(rows.map(row => row.perms).filter((perm): perm is string => !!perm))
+    this.platformPerms = { at: now, set }
+    return set
+  }
+
   /** 角色授权/改名/删除后调用：该角色的权限集合已变 */
   async invalidateRole(roleId: string): Promise<void> {
     const client = this.redis.client
@@ -80,8 +112,10 @@ export class PermissionCacheService {
     }
   }
 
-  /** 菜单权限标识/状态变化后调用：所有角色都可能受影响 */
+  /** 菜单权限标识/状态/作用域变化后调用：所有角色都可能受影响 */
   async invalidateAll(): Promise<void> {
+    // 进程内的平台权限集合也必须失效，否则改了 scope 要等 TTL 才生效
+    this.platformPerms = null
     const client = this.redis.client
     if (!client) return
     try {
