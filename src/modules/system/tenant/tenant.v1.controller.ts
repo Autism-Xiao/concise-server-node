@@ -6,6 +6,7 @@ import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { Pagination } from '../../../helper/paginate'
 import { AssignUsersDto, QueryTenantUserDto, SwitchTenantDto } from './dto/tenant-user.dto'
+import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto'
 import { CreateTenantDto } from './dto/create-tenant.dto'
 import { QueryTenantDto } from './dto/query-tenant.dto'
 import { UpdateTenantDto } from './dto/update-tenant.dto'
@@ -100,6 +101,17 @@ export class TenantV1Controller {
     // 先确认租户存在（软删的也要拦住），否则会往一个已删除的租户里插角色
     await this.tenantService.findOne(id)
     return this.provisionService.provision(id, req.user?.username)
+  }
+
+  @ApiOperation({
+    summary: '为租户建管理员账号',
+    description: '一步完成「建号 + 加入本租户 + 绑本租户 admin 角色」；用户名全局唯一，不能与已有账号重复。需 system:tenant:edit'
+  })
+  @Post(':id/admin')
+  @Perms('system:tenant:edit')
+  @OperLog('租户管理')
+  createAdmin(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateTenantAdminDto, @Req() req: AuthedRequest) {
+    return this.tenantService.createAdmin(id, dto, req.user?.username)
   }
 
   @ApiOperation({ summary: '租户下的用户（分页）', description: '需 system:tenant:user' })

@@ -308,21 +308,52 @@ export class UserService extends BaseService<UserEntity> {
     return this.findOneDetail(id) as Promise<UserEntity>
   }
 
-  /** 绑定角色（全量覆盖：多退少补） */
+  /** 绑定角色（全量覆盖：多退少补）；只能分配本租户的角色 */
   async assignRoles(id: string, roleIds: string[], manager?: EntityManager): Promise<void> {
     // 独立接口直接调用时校验用户存在；事务内调用时由调用方（create/update）负责校验
     if (!manager) {
       await this.findOne(id)
     }
-    const repo = this.repoOf(manager)
-    const roles = await this.roleRepository.findBy({ id: In(roleIds) })
-    const nextIds = new Set(roleIds)
-    const current = await repo.createQueryBuilder().relation(UserEntity, 'roles').of(id).loadMany<RoleEntity>()
-    const currentIds = new Set(current.map(role => role.id))
-    // 只新增差集、删除差集，避免重复插入关联行
+    const em = manager ?? this.repository.manager
+    const ids = [...new Set(roleIds.filter(Boolean))]
+    const roles = ids.length ? await em.getRepository(RoleEntity).findBy({ id: In(ids) }) : []
+    // 无效 id 必须报错：静默忽略会让人以为「授权成功了」，实际少给了一半
+    if (roles.length !== ids.length) {
+      const found = new Set(roles.map(role => role.id))
+      throw new BadRequestException(`角色不存在：${ids.filter(roleId => !found.has(roleId)).join(',')}`)
+    }
+    // 角色是租户级资产：租户 A 的账号不能绑租户 B 的 admin 角色 —— PermsGuard 是按 role_id
+    // 直接认权限的，绑上就等于跨租户拿到对方的全部按钮权限。平台视角（null）不受限，用于开通租户。
+    const currentTenant = TenantContext.filterTenantId()
+    if (currentTenant !== null) {
+      const illegal = roles.filter(role => {
+        const owner = Number(role.tenantId ?? 0)
+        return owner !== 0 && owner !== currentTenant
+      })
+      if (illegal.length) {
+        throw new BadRequestException(`角色「${illegal.map(role => role.roleName ?? role.roleCode).join('、')}」不属于当前租户，不能分配`)
+      }
+    }
+
+    // 用显式 SQL 而不是 relation API：关联表要写 tenant_id（记的是角色归属租户），
+    // relation API 只能写两列，让它留默认值 0 的话这张表就永远查不出真实归属
+    const currentRows = await em.query<Array<{ role_id: string }>>('SELECT role_id FROM sys_user_role WHERE user_id = ?', [id])
+    const currentIds = new Set(currentRows.map(row => row.role_id))
+    const toRemove = [...currentIds].filter(roleId => !ids.includes(roleId))
     const toAdd = roles.filter(role => !currentIds.has(role.id))
-    const toRemove = current.filter(role => !nextIds.has(role.id))
-    await repo.createQueryBuilder().relation(UserEntity, 'roles').of(id).addAndRemove(toAdd, toRemove)
+
+    if (toRemove.length) {
+      const placeholders = toRemove.map(() => '?').join(',')
+      await em.query(`DELETE FROM sys_user_role WHERE user_id = ? AND role_id IN (${placeholders})`, [id, ...toRemove])
+    }
+    for (const role of toAdd) {
+      await em.query('INSERT IGNORE INTO sys_user_role (id, user_id, role_id, tenant_id) VALUES (?, ?, ?, ?)', [
+        randomId32(),
+        id,
+        role.id,
+        Number(role.tenantId ?? 0)
+      ])
+    }
     // 角色变了，JwtStrategy 缓存的 roles 就过期了（RolesGuard 直接读它）
     this.authUserCache.invalidate(id)
   }

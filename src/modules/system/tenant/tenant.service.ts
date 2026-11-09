@@ -7,6 +7,9 @@ import { PermissionCacheService } from '../../../shared/permission-cache/permiss
 import { TenantAccessService } from '../../../shared/tenant/tenant-access.service'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { isDuplicateEntryError } from '../../../utils/db-error.util'
+import { UserService } from '../../user/user.service'
+import { UserEntity } from '../../user/entities/user.entity'
+import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto'
 import { CreateTenantDto } from './dto/create-tenant.dto'
 import { QueryTenantDto } from './dto/query-tenant.dto'
 import { QueryTenantUserDto } from './dto/tenant-user.dto'
@@ -35,7 +38,8 @@ export class TenantService {
     private readonly dataSource: DataSource,
     private readonly tenantAccess: TenantAccessService,
     private readonly provision: TenantProvisionService,
-    private readonly permissionCache: PermissionCacheService
+    private readonly permissionCache: PermissionCacheService,
+    private readonly userService: UserService
   ) {}
 
   /** 分页列表（租户是平台级数据，不参与租户隔离） */
@@ -165,7 +169,42 @@ export class TenantService {
   }
 
   /**
-   * 我所属的租户（含当前生效租户），登录即可访问
+   * 为租户建一个管理员账号
+   *
+   * 为什么需要单独一个接口：用户名**全局唯一**，不能每个租户都叫 admin；
+   * 而平台管理员在「用户管理」里建号时，平台视角会被 `resolveJoinTenantId()` 兜底到默认租户 1 ——
+   * 想建到别的租户必须先切租户，稍不注意就建错地方。这里把
+   * 「建号 + 加入本租户 + 绑本租户 admin 角色」做成一步。
+   *
+   * 角色固定绑 `role_code='admin'`，调用方不必传角色，也就没有传错角色的口子。
+   */
+  async createAdmin(tenantId: number, dto: CreateTenantAdminDto, operator?: string): Promise<UserEntity> {
+    await this.findOne(tenantId)
+    const rows = await this.dataSource.query<Array<{ id: string }>>('SELECT id FROM sys_role WHERE tenant_id = ? AND role_code = ? LIMIT 1', [
+      tenantId,
+      'admin'
+    ])
+    const adminRoleId = rows[0]?.id
+    if (!adminRoleId) {
+      throw new BadRequestException('该租户还没有内置 admin 角色，请先执行「同步全部角色」')
+    }
+    // 用租户上下文包一层：UserService.create 会把新账号加入「当前租户」，
+    // 否则平台视角下建号会落到默认租户 1
+    return TenantContext.withTenant(tenantId, () =>
+      this.userService.create(
+        {
+          username: dto.username,
+          realname: dto.realname,
+          password: dto.password,
+          status: dto.status ?? 1,
+          roleIds: [adminRoleId]
+        },
+        operator
+      )
+    )
+  }
+
+  /**
    *
    * 超管走平台视角，可以看到全部租户并随意切进去排查问题；
    * 普通用户只列自己 sys_user_tenant 里的那些。

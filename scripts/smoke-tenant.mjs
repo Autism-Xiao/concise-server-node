@@ -59,7 +59,18 @@ async function login(username, password = 'admin123') {
 }
 
 async function cleanup() {
+  // 角色必须手动删：sys_role 无 del_flag，直接删 sys_tenant 会留下指向不存在租户的孤儿角色，
+  // 还会一直占着 (tenant_id, role_code) 唯一键
+  const [tenantRows] = await conn.query('SELECT id FROM sys_tenant WHERE code IN (?, ?)', [CODE_A, CODE_B])
+  const tenantIds = tenantRows.map(row => row.id)
+  if (tenantIds.length) {
+    const placeholders = tenantIds.map(() => '?').join(',')
+    await conn.query(`DELETE FROM sys_role_permission WHERE role_id IN (SELECT id FROM sys_role WHERE tenant_id IN (${placeholders}))`, tenantIds)
+    await conn.query(`DELETE FROM sys_role WHERE tenant_id IN (${placeholders})`, tenantIds)
+  }
   await conn.query('DELETE FROM sys_user_tenant WHERE user_id = ? OR tenant_id IN (SELECT id FROM sys_tenant WHERE code IN (?, ?))', [PROBE_ID, CODE_A, CODE_B])
+  await conn.query("DELETE FROM sys_user_role WHERE user_id = ?", [PROBE_ID])
+  await conn.query("DELETE FROM sys_user_setting WHERE user_id = ?", [PROBE_ID])
   await conn.query('UPDATE sys_user SET del_flag = 1 WHERE id = ?', [PROBE_ID])
   await conn.query('DELETE FROM sys_tenant WHERE code IN (?, ?)', [CODE_A, CODE_B])
   await conn.query("DELETE FROM sys_dict WHERE dict_code LIKE 'smk_tnt_%'")

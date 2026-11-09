@@ -9,6 +9,7 @@ import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { RateLimitService } from '../../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../../shared/rate-limit/login-fail.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
 import { MenuService, buildMenuTree, type MenuTreeItem } from '../../menu/menu.service'
@@ -214,7 +215,15 @@ export class AuthService {
     }
 
     // 停用角色不参与权限计算（角色管理里可停用；内置平台管理员角色禁止停用，这里不会把内置角色滤掉）
-    const enabledRoles = (user.roles ?? []).filter(role => role.status !== 0)
+    // 同时按当前租户收窄：角色是租户级资产，历史脏数据里可能残留「A 租户账号绑了 B 租户角色」，
+    // 到了 B 的视角下就不该再算数（tenantId=0 的平台共享角色始终有效；平台视角 null 不过滤）
+    const currentTenant = TenantContext.filterTenantId()
+    const enabledRoles = (user.roles ?? []).filter(role => {
+      if (role.status === 0) return false
+      if (currentTenant === null) return true
+      const owner = Number(role.tenantId ?? 0)
+      return owner === 0 || owner === currentTenant
+    })
     const roles = enabledRoles.map(role => role.roleCode).filter(Boolean)
     // 平台管理员：账号属性（sys_user.is_platform_admin），不是角色编码 —— 见 UserEntity 注释
     const isAdmin = Number(user.isPlatformAdmin ?? 0) === 1
