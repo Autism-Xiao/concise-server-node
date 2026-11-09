@@ -80,7 +80,9 @@ try {
     telephone: null,
     del_flag: 0,
     status: 1,
-    login_tenant_id: null
+    login_tenant_id: null,
+    // 不能让临时账号继承 admin 的平台管理员标记（整行复制会带过来），否则越权断言全部失真
+    is_platform_admin: 0
   }
   const cols = Object.keys(row)
   await conn.query(`INSERT INTO sys_user (${cols.map(c => `\`${c}\``).join(',')}) VALUES (${cols.map(() => '?').join(',')})`, cols.map(c => row[c]))

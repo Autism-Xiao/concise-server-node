@@ -18,6 +18,7 @@ import { HealthModule } from './modules/health/health.module'
 import { DatabaseModule } from './shared/database/database.module'
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module'
 import { PermissionCacheModule } from './shared/permission-cache/permission-cache.module'
+import { AuthCacheModule } from './shared/auth-cache/auth-cache.module'
 import { UserModule } from './modules/user/user.module'
 import { AuthModule } from './modules/auth/auth.module'
 import { RoleModule } from './modules/role/role.module'
@@ -65,6 +66,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     RateLimitModule,
     // 权限集合缓存（按角色，Redis 优先，写侧主动失效），全局模块
     PermissionCacheModule,
+    // 鉴权用户短缓存（JwtStrategy 读、账号写路径主动失效），全局模块
+    AuthCacheModule,
     // 多租户上下文（AsyncLocalStorage + 归属解析），全局模块
     TenantContextModule,
     // 业务模块

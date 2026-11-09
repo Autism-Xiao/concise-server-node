@@ -19,6 +19,7 @@ import { RestoreUserDto } from './dto/restore-user.dto'
 import { UpdateUserDto } from './dto/update-user.dto'
 import { UpdateUserStatusDto } from './dto/update-user-status.dto'
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto'
+import { UpdatePlatformAdminDto } from './dto/update-platform-admin.dto'
 import { UserEntity } from './entities/user.entity'
 import { USER_IMPORT_DEFAULT_PASSWORD, USER_IMPORT_MAX_SIZE, UserService } from './user.service'
 
@@ -302,6 +303,23 @@ export class UserV1Controller {
   @Put(':id/status')
   setStatus(@Param('id') id: string, @Body() dto: UpdateUserStatusDto) {
     return this.userService.setStatus(id, dto.status)
+  }
+
+  @ApiOperation({
+    summary: '授予/取消平台管理员（v1）',
+    description:
+      '平台管理员 = 可跨租户视角、可访问 scope=platform 的权限点。权限点自身是 platform 级：只有平台管理员能调用本接口。不能取消自己、不能取消系统最后一个平台管理员；最多 30 秒生效'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:platform')
+  @Put(':id/platform-admin')
+  async setPlatformAdmin(
+    @Param('id') id: string,
+    @Body() dto: UpdatePlatformAdminDto,
+    @Request() req: { user: { id: string; username?: string; isPlatformAdmin?: number } }
+  ) {
+    const user = await this.userService.setPlatformAdmin(id, dto.isPlatformAdmin, req.user)
+    return this.userService.stripPassword(user)
   }
 
   @ApiOperation({ summary: '强制下线（v1，按用户）', description: '踢掉该用户全部在线会话（用户级拉黑 + 删会话），返回踢掉的会话数；需 system:online:kick' })

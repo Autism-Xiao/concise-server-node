@@ -66,7 +66,12 @@ try {
 
   // ---------- 2. 未设置过 ----------
   const empty = await api(PATH, { token })
-  check('未设置 → settings 为 null', empty.status === 200 && empty.data.settings === null, JSON.stringify(empty.body).slice(0, 160))
+  // C 方案后：库里没有行也下发后端默认值（8 项齐全），不再返回 null
+  check(
+    '未设置 → 下发默认值（direction=ltr / themeColor=default）',
+    empty.status === 200 && empty.data.settings?.direction === 'ltr' && empty.data.settings?.themeColor === 'default',
+    JSON.stringify(empty.body).slice(0, 200)
+  )
   check('未设置 → updatedAt 为 null', empty.data.updatedAt === null)
 
   // ---------- 3. 首次写入 + 白名单裁剪 ----------
@@ -81,7 +86,8 @@ try {
   check('合法键落库 themeColor', s1.themeColor === 'blue')
   check('布尔键落库 grayscale', s1.grayscale === true)
   check('未知键被丢弃', !('hackKey' in s1))
-  check('非法枚举值被丢弃（direction=bad）', !('direction' in s1))
+  // 非法值丢弃后下发时回落到后端默认值 ltr，而不是把 bad 带出去
+  check('非法枚举值被丢弃（direction 回落 ltr）', s1.direction === 'ltr', s1.direction)
   check('返回 updatedAt 为数字', typeof first.data.updatedAt === 'number')
 
   // ---------- 4. 合并语义：只传一项不冲掉其它 ----------

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Not, Repository, SelectQueryBuilder, type EntityManager, type FindOptionsWhere, type QueryDeepPartialEntity } from 'typeorm'
 
@@ -8,6 +8,7 @@ import { BaseService } from '../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
+import { AuthUserCacheService } from '../../shared/auth-cache/auth-user-cache.service'
 import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../shared/rate-limit/login-fail.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
@@ -206,7 +207,8 @@ export class UserService extends BaseService<UserEntity> {
     private readonly rateLimitService: RateLimitService,
     private readonly onlineService: OnlineService,
     private readonly permissionCacheService: PermissionCacheService,
-    private readonly userSettingService: UserSettingService
+    private readonly userSettingService: UserSettingService,
+    private readonly authUserCache: AuthUserCacheService
   ) {
     super(repository, '用户')
   }
@@ -321,6 +323,8 @@ export class UserService extends BaseService<UserEntity> {
     const toAdd = roles.filter(role => !currentIds.has(role.id))
     const toRemove = current.filter(role => !nextIds.has(role.id))
     await repo.createQueryBuilder().relation(UserEntity, 'roles').of(id).addAndRemove(toAdd, toRemove)
+    // 角色变了，JwtStrategy 缓存的 roles 就过期了（RolesGuard 直接读它）
+    this.authUserCache.invalidate(id)
   }
 
   /**
@@ -821,6 +825,8 @@ export class UserService extends BaseService<UserEntity> {
       // 回收站里多留一行不影响任何按主键的查询，真正的清理交给将来的「回收站到期物理删除」。
       await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null })
     })
+    // 删号即失效：缓存里若还留着这个人，鉴权会继续放行到下次过期
+    this.authUserCache.invalidate(id)
   }
 
   /** 批量删除用户：逐条走 delete，保留「内置管理员不可删」的保护并收集原因 */
@@ -887,8 +893,46 @@ export class UserService extends BaseService<UserEntity> {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '状态只允许 1（正常）或 2（冻结）')
     }
     await this.repository.update(id, { status, updateTime: new Date() })
+    // 冻结要立刻挡住：不清缓存的话，被冻结账号在 30s 内还能用旧缓存通过鉴权
+    this.authUserCache.invalidate(id)
     const kicked = status === USER_STATUS.FROZEN ? await this.onlineService.kickUser(id) : 0
     return { status, kicked }
+  }
+
+  /**
+   * 授予 / 取消平台管理员
+   *
+   * 为什么必须单独一个端点、且不能并进通用更新：`is_platform_admin` 是「租户层 / 平台层」的唯一分界，
+   * 一旦能被普通资料更新写入，任何持有 `system:user:update` 的租户管理员都能把自己提成平台超管。
+   *
+   * 三重门：① 权限点 `system:user:platform` 的 scope=platform，由 PermsGuard 先要求 is_platform_admin；
+   * ② 这里再核一次 actor（防止别的 service 内部调用绕开守卫）；
+   * ③ 不能取消自己、不能取消最后一个（否则平台层没人能管，且没有自助恢复的入口）。
+   *
+   * 生效时延：JwtStrategy 对鉴权用户有 30s 内存缓存，改完最多 30s 生效（与角色变更同语义）。
+   */
+  async setPlatformAdmin(id: string, enabled: boolean, actor: { id: string; username?: string; isPlatformAdmin?: number }): Promise<UserEntity> {
+    if (Number(actor.isPlatformAdmin) !== 1) {
+      throw new ForbiddenException('只有平台管理员可以调整平台管理员权限')
+    }
+    const user = await this.findOne(id)
+    if ((Number(user.isPlatformAdmin) === 1) === enabled) {
+      // 幂等：重复授予/重复取消直接返回，不写库也不产生日志噪音
+      return this.findOneDetail(id)
+    }
+    if (!enabled) {
+      if (id === actor.id) {
+        throw new BadRequestException('不能取消自己的平台管理员权限，请由其他平台管理员操作')
+      }
+      const remaining = await this.repository.count({ where: { isPlatformAdmin: 1, delFlag: 0 } })
+      if (remaining <= 1) {
+        throw new BadRequestException('系统至少需要保留一个平台管理员')
+      }
+    }
+    await this.repository.update(id, { isPlatformAdmin: enabled ? 1 : 0, updateBy: actor.username, updateTime: new Date() })
+    // 降权必须立刻生效：清掉 JwtStrategy 的用户态缓存，否则 30s 内旧值仍被当作平台管理员
+    this.authUserCache.invalidate(id)
+    return this.findOneDetail(id)
   }
 
   /** 管理员强制下线：踢掉该用户全部在线会话（自助改密走 AuthService，带 keepToken，不在这里） */
@@ -1351,6 +1395,8 @@ export class UserService extends BaseService<UserEntity> {
     delete data.orgCode
     delete data.posts
     delete data.level
+    // 平台管理员标记只能走 setPlatformAdmin：混进通用更新接口等于把「租户→平台」的提权口子开给所有能改用户的人
+    delete data.isPlatformAdmin
   }
 
   /**

@@ -59,6 +59,7 @@
 | 2026-11-04 | [验证码去除内存降级](./2026-11-04-验证码去除内存降级.md) | `f2d5e6b` | 验证码改 Redis 单一模式，未启用时 fail-loud 抛业务错误 |
 | 2026-11-09 | [多租户隔离盘点](./2026-11-09-多租户隔离盘点.md) | 本轮 | 26 张表逐表判定（11 隔离 / 9 合理不隔离 / 5 有漏洞）；四条 P0：isSuper 按 role_code 判、role_code 全局唯一、首页裸 SQL、用户列表 PII |
 | 2026-11-09 | [多租户隔离落地](./2026-11-09-多租户隔离落地.md) | 本轮 | P0/P1 全修：is_platform_admin 身份分层、角色唯一键按租户、权限 scope 分层、首页/日志/水印/站内信/用户列表补隔离；冒烟 23 项全过 |
+| 2026-11-09 | [平台管理员开关与鉴权缓存](./2026-11-09-平台管理员开关与鉴权缓存.md) | 本轮 | ① `PUT /users/:id/platform-admin` + 权限点 `system:user:platform`（scope=platform），三道门：守卫 scope、service 复查 actor、不能取消自己/最后一个；字段显式 `stripUnwritableFields`，通用更新接口写不进去；② 鉴权用户缓存从 JwtStrategy 私有 Map 抽成 `AuthUserCacheService`（@Global），`setPlatformAdmin/setStatus/assignRoles/delete` 主动失效 —— 修掉「取消平台管理员 30s 内仍有效」；③ 前端账号列「平台」徽标 + 操作项；④ 修 `smoke-tenant` 临时账号继承 `is_platform_admin=1` 导致 4 项越权断言失真、`smoke-user-setting` 2 条 C 方案前旧断言 |
 
 ## 快速导航
 

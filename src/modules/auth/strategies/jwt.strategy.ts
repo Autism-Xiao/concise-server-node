@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 
 import { jwtConfig, type JwtConfig } from '../../../config'
+import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
 import { UserService } from '../../user/user.service'
 import { OnlineService, type SessionRequest } from '../../ops/online/online.service'
 import type { JwtPayload } from '../services/auth.service'
@@ -35,7 +36,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     @Inject(jwtConfig.KEY) jwt: JwtConfig,
     private readonly userService: UserService,
-    private readonly onlineService: OnlineService
+    private readonly onlineService: OnlineService,
+    private readonly authUserCache: AuthUserCacheService
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -71,26 +73,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   /**
    * 用户态短缓存：validate 在**每个鉴权请求**都会执行，findOneWithRoles（users+user_roles+roles 三表 join）
    * 是热路径最大的单笔开销。30s 内存缓存后，绝大多数请求免去这次查库。
-   * 一致性边界：冻结/删除/改角色最多延迟 30s 生效（安全上可接受——密码错误锁定、
-   * 强制下线走上面的 Redis 黑名单，不受缓存影响、即时生效）；角色授权变更后需要立即生效的场景，
-   * 已有的 PermissionCacheService 同样是缓存语义，前端重新登录或调权限缓存清理接口即可。
+   *
+   * 一致性边界：账号状态 / 角色绑定 / 平台管理员标记变更时，写路径会调
+   * `AuthUserCacheService.invalidate(userId)` 立即失效（见 UserService.setStatus / assignRoles /
+   * setPlatformAdmin / delete），因此这类降权是即时的；只有直接改库才需要等 30s。
+   * 密码错误锁定、强制下线走 Redis 黑名单，不受缓存影响。
    */
-  private static readonly USER_CACHE_TTL_MS = 30_000
-  private readonly userCache = new Map<string, { value: Awaited<ReturnType<UserService['findOneWithRoles']>> | null; expiresAt: number }>()
-
   private async findUserCached(userId: string) {
-    const cached = this.userCache.get(userId)
-    if (cached && cached.expiresAt > Date.now()) return cached.value
+    const cached = this.authUserCache.get<Awaited<ReturnType<UserService['findOneWithRoles']>>>(userId)
+    if (cached !== undefined) return cached
 
     const user = await this.userService.findOneWithRoles(userId)
-    // 顺手清理：缓存条目数超 2 倍常见在线用户量时清一遍过期项，防长期驻留泄漏
-    if (this.userCache.size > 2000) {
-      const now = Date.now()
-      for (const [key, entry] of this.userCache) {
-        if (entry.expiresAt <= now) this.userCache.delete(key)
-      }
-    }
-    this.userCache.set(userId, { value: user, expiresAt: Date.now() + JwtStrategy.USER_CACHE_TTL_MS })
+    this.authUserCache.set(userId, user)
     return user
   }
 }
