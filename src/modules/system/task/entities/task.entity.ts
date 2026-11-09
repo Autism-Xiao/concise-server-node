@@ -31,6 +31,10 @@ export class TaskEntity {
   @Column({ length: 32, default: '0', comment: '负责人用户ID，0为未指派' })
   assigneeId: string
 
+  /** 负责人姓名（列表接口按 assigneeId 批量翻译后附带，非表字段；未指派或用户已删时为 undefined） */
+  @ApiPropertyOptional({ description: '负责人姓名（接口附带，非表字段）', example: '张三' })
+  assigneeName?: string
+
   @ApiPropertyOptional({ description: '截止时间', example: '2026-12-01T00:00:00.000Z', nullable: true })
   @Column({ name: 'due_date', type: 'datetime', nullable: true, comment: '截止时间' })
   dueDate?: Date | null
