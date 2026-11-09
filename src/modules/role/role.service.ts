@@ -6,6 +6,7 @@ import { BaseService } from '../../helper/crud/base.service'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
+import { AuthUserCacheService } from '../../shared/auth-cache/auth-user-cache.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
 import { isSuperRole } from '../../utils/super-role.util'
 import { randomId32 } from '../../utils/password.util'
@@ -39,7 +40,8 @@ export class RoleService extends BaseService<RoleEntity> {
   constructor(
     @InjectRepository(RoleEntity)
     private readonly roleRepository: Repository<RoleEntity>,
-    private readonly permissionCache: PermissionCacheService
+    private readonly permissionCache: PermissionCacheService,
+    private readonly authUserCache: AuthUserCacheService
   ) {
     super(roleRepository, '角色')
   }
@@ -132,6 +134,11 @@ export class RoleService extends BaseService<RoleEntity> {
         await this.assignMenus(id, dto.menuIds, manager)
       }
     })
+    // 状态 / 数据范围都在「鉴权用户缓存」的 roles 里（validate 会用 status 过滤有效角色、dataScope 决定可见范围），
+    // 这两项一变必须全局失效；名称/描述这类字段不影响鉴权，不动缓存
+    if (dto.status !== undefined || dto.dataScope !== undefined) {
+      this.authUserCache.invalidateAll()
+    }
     return this.findOneWithMenus(id)
   }
 
@@ -171,6 +178,8 @@ export class RoleService extends BaseService<RoleEntity> {
       await repo.delete(id)
     })
     await this.permissionCache.invalidateRole(id)
+    // 持有者缓存里的 roles 还留着这个已删角色（RolesGuard 直接读它）
+    this.authUserCache.invalidateAll()
   }
 
   /** 批量删除角色：逐条走 deleteRole，保留「内置角色 / 有用户不可删」的保护并收集原因 */
