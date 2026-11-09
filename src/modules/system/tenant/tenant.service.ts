@@ -12,6 +12,7 @@ import { QueryTenantUserDto } from './dto/tenant-user.dto'
 import { UpdateTenantDto } from './dto/update-tenant.dto'
 import { TenantEntity } from './entities/tenant.entity'
 import { UserTenantEntity } from './entities/user-tenant.entity'
+import { TenantProvisionService } from './tenant-provision.service'
 
 /** 租户下的用户（只暴露安全字段，密码/盐不出现在这里） */
 export interface TenantUserItem {
@@ -31,7 +32,8 @@ export class TenantService {
     private readonly userTenantRepository: Repository<UserTenantEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
-    private readonly tenantAccess: TenantAccessService
+    private readonly tenantAccess: TenantAccessService,
+    private readonly provision: TenantProvisionService
   ) {}
 
   /** 分页列表（租户是平台级数据，不参与租户隔离） */
@@ -72,6 +74,12 @@ export class TenantService {
     return tenant
   }
 
+  /**
+   * 新建租户
+   *
+   * 租户落库与「默认角色初始化」放在同一个事务：只建出 sys_tenant 而没建角色的空壳租户，
+   * 管理员进去会发现侧边栏一片空白、每个按钮都 403，排查成本远高于直接让创建失败。
+   */
   async create(dto: CreateTenantDto, operator?: string): Promise<TenantEntity> {
     await this.assertCodeAvailable(dto.code)
     const entity = this.repository.create({
@@ -86,7 +94,11 @@ export class TenantService {
       createTime: new Date()
     })
     try {
-      return await this.repository.save(entity)
+      return await this.dataSource.transaction(async manager => {
+        const tenant = await manager.getRepository(TenantEntity).save(entity)
+        await this.provision.provisionIn(manager, tenant.id, operator)
+        return tenant
+      })
     } catch (error) {
       if (isDuplicateEntryError(error)) {
         throw new BadRequestException(`租户编码「${dto.code}」已存在`)

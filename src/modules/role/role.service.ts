@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository, type EntityManager } from 'typeorm'
+import { In, Not, Repository, type EntityManager } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
@@ -254,8 +254,13 @@ export class RoleService extends BaseService<RoleEntity> {
   async getMenuIds(id: string): Promise<string[]> {
     const role = await this.findOne(id)
     if (role.isBuiltin === 1) {
-      // 只回显未删除的菜单（与菜单树同源，已软删的节点在树上不存在，回显了也勾不上）
-      const menus = await this.roleRepository.manager.getRepository(MenuEntity).find({ select: { id: true }, where: { delFlag: 0 } })
+      // 只回显未删除的菜单（与菜单树同源，已软删的节点在树上不存在，回显了也勾不上）；
+      // 租户视角还要滤掉 platform 级菜单 —— 那些页面对租户本来就不可见（AuthService.getPermissions），
+      // 回显成全勾会让管理员以为「我能改菜单」，点进去却是 403。
+      const menus = await this.roleRepository.manager.getRepository(MenuEntity).find({
+        select: { id: true },
+        where: { delFlag: 0, ...(TenantContext.isSuper() ? {} : { scope: Not('platform') }) }
+      })
       return menus.map(menu => menu.id)
     }
     const detail = await this.findOneWithMenus(id)

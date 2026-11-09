@@ -62,6 +62,7 @@
 | 2026-11-09 | [平台管理员开关与鉴权缓存](./2026-11-09-平台管理员开关与鉴权缓存.md) | 本轮 | ① `PUT /users/:id/platform-admin` + 权限点 `system:user:platform`（scope=platform），三道门：守卫 scope、service 复查 actor、不能取消自己/最后一个；字段显式 `stripUnwritableFields`，通用更新接口写不进去；② 鉴权用户缓存从 JwtStrategy 私有 Map 抽成 `AuthUserCacheService`（@Global），`setPlatformAdmin/setStatus/assignRoles/delete` 主动失效 —— 修掉「取消平台管理员 30s 内仍有效」，角色停用/删除也补了 `invalidateAll`；③ 前端账号列「平台」徽标 + 操作项；④ 修 `smoke-tenant` 临时账号继承 `is_platform_admin=1` 导致 4 项越权断言失真、`smoke-user-setting` 2 条 C 方案前旧断言 |
 | 2026-11-09 | [前端设置同步去时钟依赖](./2026-11-09-前端设置同步去时钟依赖.md) | 本轮（concise-admin） | 设置加载不再比较「本地 `Date.now()` vs 服务端 `updatedAt`」——两个时钟不可比，机器偏快会让云端更新被永久忽略；改成 `dirty` 标记（本地有未推送改动才以本地为准），推送成功后 `markSynced` 清标记并带内容比对（防异步回调把用户新改动标成已同步）；老快照无 `dirty` 按已同步处理 |
 | 2026-11-09 | [批量导入导出核验与部门表窄屏适配](./2026-11-09-批量导入导出核验与部门表窄屏适配.md) | 本轮 | ① 核验 #57~#62：能力早在 `7a49496` 已落地，补 `scripts/smoke-batch-io.mjs` 31 项断言（导出/模板/导入行级错误/批量删部分成功与业务保护/字典双工作表/在线批量强退），后端业务零改动；② 部门表操作列改纯图标（`w-44`→`w-28`），1280 视口横向溢出由 2px 归零，1180 仍有 10px（内容最小宽 836px 物理下限）；③ 脚本坑：POST 默认 201、列表返回 Pagination、`batch-kick` 字段是 `ids` |
+| 2026-11-09 | [租户默认角色模板](./2026-11-09-租户默认角色模板.md) | 本轮 | 建租户同事务生成 admin/editor/viewer 三套角色并授权：admin 拿全部 78 个租户级菜单（`is_builtin=1`）、editor 排除删除/重置密码/恢复、viewer 只读（`list/query/detail/export/download` 白名单）；`POST /tenants/:id/provision` + `/tenants/provision-all` 幂等补齐存量空壳租户与新上线菜单；前端行内「初始化」+ 页头「同步全部角色」；顺带把联系人/电话合并、ID 与备注默认隐藏，1280 视口表格内滚 31px→0。坑：统一响应是 `result` 不是 `data`、列表是 `Pagination`、`assignMenus` 拒绝内置角色 |
 
 ## 快速导航
 

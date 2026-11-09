@@ -10,6 +10,7 @@ import { CreateTenantDto } from './dto/create-tenant.dto'
 import { QueryTenantDto } from './dto/query-tenant.dto'
 import { UpdateTenantDto } from './dto/update-tenant.dto'
 import { TenantEntity } from './entities/tenant.entity'
+import { TenantProvisionService } from './tenant-provision.service'
 import { TenantService } from './tenant.service'
 
 interface AuthedRequest extends Request {
@@ -26,7 +27,10 @@ interface AuthedRequest extends Request {
 @ApiBearerAuth('jwt')
 @Controller('v1/tenants')
 export class TenantV1Controller {
-  constructor(private readonly tenantService: TenantService) {}
+  constructor(
+    private readonly tenantService: TenantService,
+    private readonly provisionService: TenantProvisionService
+  ) {}
 
   @ApiOperation({ summary: '租户列表（分页）', description: 'keyword 模糊匹配名称/编码/联系人；需 system:tenant:list' })
   @ApiOkResponse({ type: Pagination })
@@ -46,6 +50,14 @@ export class TenantV1Controller {
   @Post('switch')
   switch(@Req() req: AuthedRequest, @Body() dto: SwitchTenantDto) {
     return this.tenantService.switch(req.user!.id, dto.tenantId)
+  }
+
+  @ApiOperation({ summary: '初始化全部租户的默认角色', description: '幂等：补建缺失的 admin/editor/viewer 角色，并补齐新增菜单的授权；需 system:tenant:edit' })
+  @Post('provision-all')
+  @Perms('system:tenant:edit')
+  @OperLog('租户管理')
+  provisionAll(@Req() req: AuthedRequest) {
+    return this.provisionService.provisionAll(req.user?.username)
   }
 
   @ApiOperation({ summary: '租户详情', description: '需 system:tenant:list' })
@@ -78,6 +90,16 @@ export class TenantV1Controller {
   async remove(@Param('id', ParseIntPipe) id: number): Promise<{ id: number }> {
     await this.tenantService.remove(id)
     return { id }
+  }
+
+  @ApiOperation({ summary: '初始化指定租户的默认角色', description: '幂等：空壳租户补建角色 / 新菜单上线后补齐授权；需 system:tenant:edit' })
+  @Post(':id/provision')
+  @Perms('system:tenant:edit')
+  @OperLog('租户管理')
+  async provision(@Param('id', ParseIntPipe) id: number, @Req() req: AuthedRequest) {
+    // 先确认租户存在（软删的也要拦住），否则会往一个已删除的租户里插角色
+    await this.tenantService.findOne(id)
+    return this.provisionService.provision(id, req.user?.username)
   }
 
   @ApiOperation({ summary: '租户下的用户（分页）', description: '需 system:tenant:user' })
