@@ -102,7 +102,7 @@ export class DashboardService {
     const loginScope: DashboardScope = can(PERM.loginLog) ? 'all' : 'self'
     const operScope: DashboardScope = can(PERM.operLog) ? 'all' : 'self'
 
-    // 全部并行：getServerInfo 内部有 200ms CPU 采样，串行会把它叠加到首屏
+    // 全部并行：11 个块互不依赖，串行执行会把首屏拖成它们之和（CPU 使用率已在 MonitorService 后台采样，不再阻塞）
     const [profile, userTotal, todayLogin, onlineCount, roleTotal, loginTrend, recentOpers, myStorage, myTasks, notices, serverState] = await Promise.all([
       this.buildProfile(actor),
       can(PERM.userList) ? this.userTotal(actor) : Promise.resolve(null),

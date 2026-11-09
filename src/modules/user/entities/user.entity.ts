@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { Column, Entity, JoinTable, ManyToMany, PrimaryColumn } from 'typeorm'
+import { Column, Entity, Index, JoinTable, ManyToMany, PrimaryColumn } from 'typeorm'
 import { RoleEntity } from '../../role/entities/role.entity'
 import { DeptEntity } from '../../system/dept/entities/dept.entity'
 import { PostEntity } from '../../system/post/entities/post.entity'
@@ -13,8 +13,12 @@ import { LevelEntity } from '../../system/level/entities/level.entity'
  * - 全局 SnakeNamingStrategy 下驼峰属性自动映射下划线列名
  * - 部门：多对多走 sys_user_depart（对齐 JeecgBoot，一个用户可挂多个部门）；
  *   主部门 = depart_ids 的第一个 id，其机构编码冗余到 org_code 供数据权限过滤
+ * - 索引（迁移 PerfIndexes1794230000000 建的，这里声明一遍是为了 migration:generate 不会把它们当孤儿删掉）：
+ *   (del_flag, create_time) —— 列表默认排序； (del_flag, realname) —— 姓名前缀搜索
  */
 @Entity('sys_user')
+@Index('idx_user_del_create', ['delFlag', 'createTime'])
+@Index('idx_user_del_realname', ['delFlag', 'realname'])
 export class UserEntity {
   @ApiProperty({ description: '主键ID（32位字符串）', example: 'e9ca23d68d884d4ebb19d07889727dae' })
   @PrimaryColumn({ type: 'varchar', length: 32, comment: '主键id' })

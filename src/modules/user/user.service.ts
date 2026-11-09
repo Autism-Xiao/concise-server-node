@@ -25,6 +25,7 @@ import { UserEntity } from './entities/user.entity'
 import { RoleEntity } from '../role/entities/role.entity'
 import type { QueryUserDto } from './dto/query-user.dto'
 import type { UpdateMyProfileDto } from './dto/update-my-profile.dto'
+import { userKeywordClause, userKeywordParam } from './user-search.util'
 
 /** 用户状态（对齐 sys_user）：1 正常 / 2 冻结 */
 export const USER_STATUS = { NORMAL: 1, FROZEN: 2 } as const
@@ -417,9 +418,14 @@ export class UserService extends BaseService<UserEntity> {
     }
   }
 
-  /** 分页列表：支持 keyword 模糊搜索账号/真实姓名/电话、status 精确过滤、部门过滤；过滤已软删；按数据范围收窄 */
+  /**
+   * 分页列表：支持 keyword 前缀搜索账号/真实姓名/电话、status 精确过滤、部门过滤；过滤已软删；按数据范围收窄
+   *
+   * skipCount=true 时跳过 COUNT(*)：千万行表上它是全索引扫描（实测 17.8 秒），
+   * 而列表页只需要「还有没有下一页」，多取 1 条就能判断。
+   */
   async listByQuery(query: QueryUserDto, actor?: DataScopeActor): Promise<Pagination<UserEntity>> {
-    const options: PaginateOptions = { page: query.page, pageSize: query.pageSize }
+    const options: PaginateOptions = { page: query.page, pageSize: query.pageSize, count: query.skipCount !== 'true' }
     const result = await paginate(await this.buildListQuery(query, actor), options)
     await this.attachDepts(result.records)
     await this.attachRoles(result.records)
@@ -478,9 +484,7 @@ export class UserService extends BaseService<UserEntity> {
     const qb = (await this.scopedQuery(actor)).orderBy('user.create_time', 'DESC')
 
     if (query.keyword) {
-      qb.andWhere('(user.username LIKE :keyword OR user.realname LIKE :keyword OR user.phone LIKE :keyword)', {
-        keyword: `%${query.keyword}%`
-      })
+      qb.andWhere(userKeywordClause('user', query.keyword), { keyword: userKeywordParam(query.keyword) })
     }
     if (query.status !== undefined && query.status !== '') {
       qb.andWhere('user.status = :status', { status: Number(query.status) })
@@ -902,15 +906,13 @@ export class UserService extends BaseService<UserEntity> {
     return { avatar: value }
   }
 
-  /** 回收站列表：del_flag=1 的软删用户，keyword 模糊搜账号/姓名/电话 */
+  /** 回收站列表：del_flag=1 的软删用户，keyword 前缀搜账号/姓名/电话 */
   async listRecycled(query: QueryUserDto): Promise<Pagination<UserEntity>> {
     const qb = this.repository.createQueryBuilder('user').where('user.del_flag = 1').orderBy('user.update_time', 'DESC')
     if (query.keyword) {
-      qb.andWhere('(user.username LIKE :keyword OR user.realname LIKE :keyword OR user.phone LIKE :keyword)', {
-        keyword: `%${query.keyword}%`
-      })
+      qb.andWhere(userKeywordClause('user', query.keyword), { keyword: userKeywordParam(query.keyword) })
     }
-    return paginate(qb, { page: query.page, pageSize: query.pageSize })
+    return paginate(qb, { page: query.page, pageSize: query.pageSize, count: query.skipCount !== 'true' })
   }
 
   /**

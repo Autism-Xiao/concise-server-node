@@ -1,11 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger'
-import { IsOptional, IsString, MaxLength } from 'class-validator'
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator'
 
 import { PagerDto } from '../../../common/dto/pager.dto'
 
 /** 用户列表查询参数 */
 export class QueryUserDto extends PagerDto {
-  @ApiPropertyOptional({ description: '关键字：模糊匹配用户名/真实姓名/手机号', example: '张' })
+  @ApiPropertyOptional({ description: '关键字：前缀匹配用户名/真实姓名/手机号', example: '张' })
   @IsOptional()
   @IsString()
   @MaxLength(32)
@@ -25,4 +25,13 @@ export class QueryUserDto extends PagerDto {
   @IsOptional()
   @IsString()
   deptIds?: string
+
+  @ApiPropertyOptional({
+    description: '跳过总数统计（快路径）：total/pages 返回 -1，改由 hasNext 判断能否翻页；千万行表上 COUNT(*) 是全索引扫描，实测 17.8 秒',
+    example: 'true',
+    enum: ['true', 'false']
+  })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  skipCount?: string
 }

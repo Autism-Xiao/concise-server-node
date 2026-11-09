@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common'
 import { statfs } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import * as os from 'node:os'
@@ -47,15 +47,52 @@ const PREFIX_DESCRIPTIONS: Record<string, string> = {
   'job:': '定时任务运行态'
 }
 
+/** CPU 采样窗口：太短抖动大，太长则首页显示的是几秒前的值 */
+const CPU_SAMPLE_WINDOW_MS = 200
+/** CPU 后台采样间隔（可用 MONITOR_CPU_SAMPLE_MS 覆盖） */
+const CPU_SAMPLE_INTERVAL_MS = 5000
+
+/**
+ * 取正整数环境变量，非法值回落到默认
+ */
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback
+}
+
 /**
  * 运维监控（JeecgBoot 这两个页面都没有表：服务监控走系统 API 实时采集，缓存监控走 Redis INFO）
  * 本项目保持一致：不落库，全部实时读取。
+ *
+ * CPU 使用率改成**后台定时采样 + 读缓存**：原来每次 getServerInfo 都 `await 200ms` 做两次
+ * os.cpus() 差值，首页概览每个请求都要多等 200ms（p50 216ms 里几乎全是它）。
+ * 现在进程内每 5 秒采一次，接口直接返回最近一次的值（误差 ≤ 5 秒，监控场景完全够用）。
  */
 @Injectable()
-export class MonitorService {
+export class MonitorService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MonitorService.name)
 
+  /** 最近一次采样得到的 CPU 使用率（%，1 位小数）；进程刚启动、还没采到值时为 0 */
+  private cpuUsage = 0
+  private cpuTimer?: NodeJS.Timeout
+  private cpuSampling = false
+
   constructor(private readonly redis: RedisService) {}
+
+  onModuleInit(): void {
+    // 立即采一次，避免启动后前几秒首页显示 0%
+    void this.sampleCpuUsage()
+    this.cpuTimer = setInterval(() => void this.sampleCpuUsage(), positiveInt(process.env.MONITOR_CPU_SAMPLE_MS, CPU_SAMPLE_INTERVAL_MS))
+    // unref：定时器不该拖住进程退出（测试/脚本里 import 了这个 service 也一样）
+    this.cpuTimer.unref?.()
+  }
+
+  onModuleDestroy(): void {
+    if (this.cpuTimer) {
+      clearInterval(this.cpuTimer)
+      this.cpuTimer = undefined
+    }
+  }
 
   /** 服务监控：主机 / CPU / 内存 / Node 进程 / 磁盘 */
   async getServerInfo(): Promise<ServerInfo> {
@@ -75,7 +112,8 @@ export class MonitorService {
       cpu: {
         model: cpuList[0]?.model?.trim() ?? '未知',
         cores: cpuList.length,
-        usage: await this.sampleCpuUsage()
+        // 读后台采样的缓存值：不再在这里等 200ms
+        usage: this.cpuUsage
       },
       memory: {
         total: this.toMb(totalMemory),
@@ -219,15 +257,29 @@ export class MonitorService {
     return '127.0.0.1'
   }
 
-  /** CPU 使用率：两次采样 os.cpus() 计算空闲差（本机瞬时值，非平均值） */
-  private async sampleCpuUsage(): Promise<number> {
-    const start = this.cpuTimes()
-    await new Promise(resolve => setTimeout(resolve, 200))
-    const end = this.cpuTimes()
-    const total = end.total - start.total
-    const idle = end.idle - start.idle
-    if (total <= 0) return 0
-    return Math.round((1 - idle / total) * 1000) / 10
+  /**
+   * CPU 使用率采样：两次 os.cpus() 取空闲差（本机瞬时值，非平均值）
+   *
+   * 由后台定时器调用，结果写进 cpuUsage 供接口读取；并发保护用 cpuSampling 标记，
+   * 避免采样间隔被调得很短时同时挂多个 200ms 窗口。
+   */
+  private async sampleCpuUsage(): Promise<void> {
+    if (this.cpuSampling) {
+      return
+    }
+    this.cpuSampling = true
+    try {
+      const start = this.cpuTimes()
+      await new Promise(resolve => setTimeout(resolve, CPU_SAMPLE_WINDOW_MS))
+      const end = this.cpuTimes()
+      const total = end.total - start.total
+      const idle = end.idle - start.idle
+      if (total > 0) {
+        this.cpuUsage = Math.round((1 - idle / total) * 1000) / 10
+      }
+    } finally {
+      this.cpuSampling = false
+    }
   }
 
   private cpuTimes(): { idle: number; total: number } {
