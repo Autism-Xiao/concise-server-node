@@ -754,8 +754,9 @@ export class UserService extends BaseService<UserEntity> {
       await manager.query('DELETE FROM sys_user_post WHERE user_id = ?', [id])
       // 水印个性化配置同样按 user_id 主键，不清会在表里越积越多
       await manager.query('DELETE FROM sys_user_watermark WHERE user_id = ?', [id])
-      // 界面设置同理：恢复时 ensure() 会重建空行，没必要留着上一个占位账号的偏好
-      await manager.query('DELETE FROM sys_user_setting WHERE user_id = ?', [id])
+      // 界面设置**刻意不清**：软删是可恢复的，回复后就是同一个人，主题/字号丢了不可逆；
+      // 而且它只是个人偏好，不像角色/水印那样有「恢复后必须重新确认」的安全含义。
+      // 回收站里多留一行不影响任何按主键的查询，真正的清理交给将来的「回收站到期物理删除」。
       await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null })
     })
   }
@@ -944,7 +945,8 @@ export class UserService extends BaseService<UserEntity> {
       if (deptIds) {
         await this.assignDepts(id, deptIds, manager)
       }
-      // 软删时设置行一并清掉了，恢复要重新建，否则恢复出来的账号仍是「有用户没设置」的半成品
+      // 软删不清设置行，这里通常是「已有行 → 幂等跳过」；只有改造前就进了回收站的老账号
+      // 才会真的建一行空设置，所以这步不能省
       await this.userSettingService.ensure(id, manager)
     })
     // 回收站里的行是裸查出来的（无关联），重查一次补齐角色/部门

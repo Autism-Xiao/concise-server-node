@@ -23,6 +23,58 @@ const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i
 
 export type UserSettings = Record<string, string | boolean>
 
+/**
+ * 默认设置（服务端权威）
+ *
+ * 库里只存「差异」（用户真正改过的键），下发给前端时用 `withDefaults()` 补成完整对象。
+ * 这样新增设置项时，老用户不需要迁移就能自动拿到新项的默认值。
+ *
+ * 与前端 `lib/settings.ts` 的 `DEFAULT_SETTINGS` 逐项一致，两份的分工是：
+ *  - 本文件：连得上服务端时以它为准（接口永远返回完整对象，前端直接渲染）；
+ *  - 前端那份：只在「未登录 / 接口挂了 / 首帧渲染」时兜底，属于离线降级。
+ * 因此**加新设置项的改动顺序是：本文件 → 前端 `AppSettings` → 前端 `DEFAULT_SETTINGS`**，
+ * `user-setting.util.spec.ts` 里有一条断言保证这里的每个键都合法（漏改白名单会被测出来）。
+ */
+export const DEFAULT_USER_SETTINGS: UserSettings = {
+  fontSize: 'default',
+  themeColor: 'default',
+  customColor: '#2563eb',
+  grayscale: false,
+  colorWeak: false,
+  sidebarVariant: 'sidebar',
+  layout: 'default',
+  direction: 'ltr'
+}
+
+/**
+ * 用默认值补齐差异，返回可直接下发的完整对象
+ *
+ * `stored` 优先：用户改过的键不会被默认值覆盖。
+ * 内部再过一次 `normalizeSettings`：即使调用方传进来的是未经裁剪的原始 JSON，
+ * 废弃键 / 非法值也不会漏到响应里（安全兜底，比要求调用方必须记得先 normalize 更可靠）。
+ */
+export function withDefaults(stored: unknown): UserSettings {
+  return { ...DEFAULT_USER_SETTINGS, ...normalizeSettings(stored) }
+}
+
+/**
+ * 剔除与默认值相同的键（写库前的最后一道）
+ *
+ * 为什么必须有：前端保存时推的是**完整** `AppSettings`（8 项全带），如果不剔除，
+ * 用户改一次主题就会把当时那份默认值整包固化进库 —— 将来默认值改版，这些人再也不跟随，
+ * 「读时补齐」就白做了。
+ *
+ * 语义上也站得住：某个键的值本来就等于默认，等于「没有自定义」，
+ * 用户把某项改回默认时，等价于删除这条差异。
+ */
+export function stripDefaultSettings(settings: UserSettings): UserSettings {
+  const result: UserSettings = {}
+  for (const [key, value] of Object.entries(settings)) {
+    if (DEFAULT_USER_SETTINGS[key] !== value) result[key] = value
+  }
+  return result
+}
+
 const pickEnum = (value: unknown, allowed: readonly string[]): string | undefined => (typeof value === 'string' && allowed.includes(value) ? value : undefined)
 
 /**

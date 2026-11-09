@@ -24,9 +24,10 @@ export class UserSettingController {
 
   @ApiOperation({
     summary: '读取当前用户的界面设置',
-    description: '未设置过时 settings 为 null，前端回落到本地默认值；登录即可访问，不需要按钮权限'
+    description:
+      '始终返回**完整**设置对象（服务端默认值 + 用户差异合并后的结果），前端可直接渲染；updatedAt 为 null 表示该账号从未修改过。登录即可访问，不需要按钮权限'
   })
-  @ApiOkResponse({ description: '{ settings: {...} | null, updatedAt: 时间戳(ms) | null }' })
+  @ApiOkResponse({ description: '{ settings: {…8 项完整}, updatedAt: 时间戳(ms) | null }' })
   @Get()
   get(@Request() req: AuthedSettingRequest) {
     return this.userSettingService.get(req.user.id)
