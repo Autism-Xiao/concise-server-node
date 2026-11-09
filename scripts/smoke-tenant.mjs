@@ -185,6 +185,9 @@ try {
   check('切换后被记住（login_tenant_id）', Number(prefRows[0]?.login_tenant_id) === tenantA)
 
   // ---------- 7. 删除保护 ----------
+  const [rolesBefore] = await conn.query('SELECT COUNT(*) c FROM sys_role WHERE tenant_id = ?', [tenantA])
+  check('删除前租户 A 已有默认角色（建租户自动初始化）', Number(rolesBefore[0]?.c) === 3, JSON.stringify(rolesBefore))
+
   const delBusy = await api(`/tenants/${tenantA}`, { method: 'DELETE', token: adminToken })
   check('租户下有用户时禁止删除', delBusy.status === 400 || delBusy.body?.code === 400, JSON.stringify(delBusy.body).slice(0, 160))
 
@@ -196,6 +199,15 @@ try {
   check('清空租户 A 的成员', okStatus(assignNone.status) && assignNone.data?.removed === 1, JSON.stringify(assignNone.body).slice(0, 160))
   const delOk = await api(`/tenants/${tenantA}`, { method: 'DELETE', token: adminToken })
   check('成员清空后删除租户成功', okStatus(delOk.status), JSON.stringify(delOk.body).slice(0, 160))
+
+  // sys_role 没有 del_flag：租户删了角色不删会变成孤儿行，还会一直占住 (tenant_id, role_code) 唯一键
+  const [rolesAfter] = await conn.query('SELECT COUNT(*) c FROM sys_role WHERE tenant_id = ?', [tenantA])
+  check('删除租户时角色被级联清掉', Number(rolesAfter[0]?.c) === 0, JSON.stringify(rolesAfter))
+  const [rpAfter] = await conn.query(
+    'SELECT COUNT(*) c FROM sys_role_permission rp JOIN sys_role r ON r.id = rp.role_id WHERE r.tenant_id = ?',
+    [tenantA]
+  )
+  check('删除租户时角色授权被级联清掉', Number(rpAfter[0]?.c) === 0, JSON.stringify(rpAfter))
 } finally {
   await cleanup()
   await conn.end()

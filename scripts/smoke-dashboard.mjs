@@ -7,7 +7,8 @@
  *
  * 覆盖四类账号（后两类由脚本临时创建、跑完删除）：
  *   admin    超管       → 全部 10 块，口径 all
- *   ceshi    viewer     → 无用户/在线/监控权限，趋势与操作降级为 self
+ *   ceshi    viewer     → 有列表类只读权限（用户/角色/字典），无在线/监控权限，趋势与操作降级为 self
+ *                          （租户默认角色模板给 viewer 授了 xxx:list，所以「用户总数」是数字而不是 null）
  *   auditor  审计员     → 有日志权限（all），无角色/在线/监控权限
  *   无角色              → 只剩「我的」数据，其余全 null
  *
@@ -128,7 +129,13 @@ try {
   /* ---------------- viewer：大量降级 ---------------- */
   const viewerToken = await login(VIEWER_USER, VIEWER_PASSWORD)
   const viewer = (await overview(viewerToken)).json?.result
-  check('viewer 用户总数为 null（无 system:user:list）', viewer?.userTotal === null, JSON.stringify(viewer?.userTotal))
+  // 租户角色模板给 viewer 授了 system:user:list，所以用户总数可见（按 data_scope 裁剪），不再是 null。
+  // 注意 userTotal 是对象 { scope, total, active, frozen }，不是数字
+  check(
+    'viewer 用户总数可见（有 system:user:list，按 data_scope 裁剪）',
+    typeof viewer?.userTotal === 'object' && typeof viewer?.userTotal?.total === 'number',
+    `userTotal=${JSON.stringify(viewer?.userTotal)}`
+  )
   check('viewer 在线人数为 null', viewer?.onlineCount === null)
   check('viewer 服务器状态为 null', viewer?.serverState === null)
   check('viewer 角色总数可见（有 system:role:list）', typeof viewer?.roleTotal === 'number', `roles=${viewer?.roleTotal}`)

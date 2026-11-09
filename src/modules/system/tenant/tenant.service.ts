@@ -3,6 +3,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm'
 import { Brackets, DataSource, Repository } from 'typeorm'
 
 import { Pagination } from '../../../helper/paginate/pagination'
+import { PermissionCacheService } from '../../../shared/permission-cache/permission-cache.service'
 import { TenantAccessService } from '../../../shared/tenant/tenant-access.service'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { isDuplicateEntryError } from '../../../utils/db-error.util'
@@ -33,7 +34,8 @@ export class TenantService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly tenantAccess: TenantAccessService,
-    private readonly provision: TenantProvisionService
+    private readonly provision: TenantProvisionService,
+    private readonly permissionCache: PermissionCacheService
   ) {}
 
   /** 分页列表（租户是平台级数据，不参与租户隔离） */
@@ -129,7 +131,13 @@ export class TenantService {
     return this.findOne(id)
   }
 
-  /** 删除：软删。租户下还有用户时拒绝，避免一键让整租户的账号没有归属 */
+  /**
+   * 删除：软删租户 + 物理删该租户的角色
+   *
+   * 租户下还有用户时拒绝，避免一键让整租户的账号没有归属。
+   * 角色必须跟着删干净：sys_role 没有 del_flag，留着不只是垃圾行，
+   * 还会一直占着 (tenant_id, role_code) 唯一键，日后同 id 重建租户就插不进去。
+   */
   async remove(id: number): Promise<void> {
     if (id === 1) {
       throw new BadRequestException('默认租户不允许删除')
@@ -139,7 +147,20 @@ export class TenantService {
     if (userCount > 0) {
       throw new BadRequestException(`该租户下还有 ${userCount} 个用户，请先在「分配用户」里移除后再删除`)
     }
-    await this.repository.update(id, { delFlag: 1, updateTime: new Date() })
+    await this.dataSource.transaction(async manager => {
+      await manager.update(TenantEntity, id, { delFlag: 1, updateTime: new Date() })
+      // 先删授权再删角色（role_permission 无外键，顺序反了不会报错但会留孤儿授权）
+      const roles = await manager.query<Array<{ id: string }>>('SELECT id FROM sys_role WHERE tenant_id = ?', [id])
+      if (roles.length > 0) {
+        const ids = roles.map(role => role.id)
+        const placeholders = ids.map(() => '?').join(',')
+        await manager.query(`DELETE FROM sys_role_permission WHERE role_id IN (${placeholders})`, ids)
+        await manager.query(`DELETE FROM sys_role WHERE id IN (${placeholders})`, ids)
+      }
+      await manager.query('DELETE FROM sys_user_tenant WHERE tenant_id = ?', [id])
+    })
+    // 角色授权变了，权限集合缓存必须整体失效
+    this.permissionCache.invalidateAll()
     this.tenantAccess.invalidate()
   }
 
