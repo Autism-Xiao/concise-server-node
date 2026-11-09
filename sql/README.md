@@ -26,7 +26,13 @@ MYSQL="C:/Program Files/MySQL/MySQL Server 8.4/bin/mysql.exe"
 
 # 2) 导入快照
 "$MYSQL" -uroot --default-character-set=utf8mb4 concise_server < sql/concise_server_full_2026-11-07.sql
+
+# 3) 补齐快照之后的 schema 变更（必须做，否则登录会 500：Unknown column 'user.bio'）
+npm run build; npx typeorm migration:run -d dist/shared/database/data-source.js
 ```
+
+- **快照是 2026-11-07 的，不含之后新增的列、表和索引**（`sys_user.bio`、`sys_message`、`sys_tenant` 相关列、
+  以及 `PerfIndexes1794230000000` 建的三个性能索引）。第 3 步不能省，迁移是幂等的，重复执行安全。
 
 - 全库快照含 `sys_user` 的密码哈希、租户数据等敏感内容，**仓库若公开需先评估**，或改放私有备份存储
 - 恢复后 `.env` 的 `JWT_SECRET` 若与快照生成时不同，所有已签发 token 失效（重新登录即可）
