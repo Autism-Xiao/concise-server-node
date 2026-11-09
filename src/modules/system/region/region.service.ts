@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { Repository, type DeepPartial } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
-import { toPagination, type Pagination } from '../../../helper/paginate'
+import { Pagination, toPagination } from '../../../helper/paginate'
 import { isDuplicateEntryError } from '../../../utils/db-error.util'
 import { RegionEntity } from './entities/region.entity'
 import { REGION_LEVEL_TEXTS } from './dto/create-region.dto'
@@ -29,8 +29,14 @@ export class RegionService extends BaseService<RegionEntity> {
     super(repository, '行政区划')
   }
 
-  /** 分页列表：keyword 模糊匹配 名称/简称/拼音/区划代码，level / parentCode 精确过滤 */
-  async listByQuery(query: { keyword?: string; level?: number; parentCode?: string }): Promise<Pagination<RegionEntity>> {
+  /**
+   * 列表查询：keyword 模糊匹配 名称/简称/拼音/区划代码，level / parentCode 精确过滤
+   *
+   * limit 存在时只回前 limit 条（total 仍是真实命中数，hasNext 表示被截断）——
+   * 区划管理页搜索「东」能命中上千条，之前是全量 getMany 后在前端 slice，
+   * 白传了几 MB JSON；截断下推到 SQL 用 take 才是正常做法。
+   */
+  async listByQuery(query: { keyword?: string; level?: number; parentCode?: string; limit?: number }): Promise<Pagination<RegionEntity>> {
     const qb = this.repository.createQueryBuilder('region').orderBy('region.areaCode', 'ASC')
     const keyword = query.keyword?.trim()
     if (keyword) {
@@ -41,6 +47,11 @@ export class RegionService extends BaseService<RegionEntity> {
     }
     if (query.parentCode !== undefined && query.parentCode !== null && query.parentCode !== '') {
       qb.andWhere('region.parentCode = :parentCode', { parentCode: query.parentCode })
+    }
+    const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0 ? Math.floor(query.limit as number) : 0
+    if (limit > 0) {
+      const [rows, total] = await qb.take(limit).getManyAndCount()
+      return new Pagination(rows, total, 1, limit, total > rows.length)
     }
     const all = await qb.getMany()
     return toPagination(all)

@@ -10,6 +10,9 @@ import { UpdateRegionDto } from './dto/update-region.dto'
 import { RegionEntity } from './entities/region.entity'
 import { RegionService } from './region.service'
 
+/** 区划列表单次返回上限：再大前端也渲染不动，不如让用户细化关键字 */
+const REGION_LIST_MAX_LIMIT = 2000
+
 /**
  * 行政区划接口 V1：/api/v1/regions/**
  *
@@ -17,6 +20,7 @@ import { RegionService } from './region.service'
  * tree / children / code 属登录可用的元数据（前端级联选择器到处用，不校验按钮权限）；
  * 增删改/导入需在菜单管理里给角色勾选 system:region:* 权限。
  */
+
 @ApiTags('行政区划 V1')
 @ApiBearerAuth('jwt')
 @Controller('v1/regions')
@@ -37,16 +41,23 @@ export class RegionV1Controller {
     return this.regionService.stats()
   }
 
-  @ApiOperation({ summary: '区划列表（v1，分页）', description: 'keyword 模糊匹配名称/简称/拼音/区划代码；level、parentCode 精确过滤；需 system:region:list' })
+  @ApiOperation({
+    summary: '区划列表（v1，分页）',
+    description: 'keyword 模糊匹配名称/简称/拼音/区划代码；level、parentCode 精确过滤；limit 截断返回条数（total 仍为真实命中数）；需 system:region:list'
+  })
   @ApiOkResponse({ description: '区划分页列表', type: Pagination })
   @Perms('system:region:list')
   @Get()
-  async list(@Query() query: { keyword?: string; level?: string; parentCode?: string }): Promise<Pagination<RegionEntity>> {
+  async list(@Query() query: { keyword?: string; level?: string; parentCode?: string; limit?: string }): Promise<Pagination<RegionEntity>> {
     const level = query.level === undefined || query.level === '' ? undefined : Number(query.level)
+    const rawLimit = query.limit === undefined || query.limit === '' ? Number.NaN : Number(query.limit)
+    // 上限 2000：再大前端也渲染不动，还不如让用户细化关键字
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), REGION_LIST_MAX_LIMIT) : undefined
     return this.regionService.listByQuery({
       keyword: query.keyword,
       level: level !== undefined && Number.isFinite(level) ? level : undefined,
-      parentCode: query.parentCode
+      parentCode: query.parentCode,
+      limit
     })
   }
 
