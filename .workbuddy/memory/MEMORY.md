@@ -14,7 +14,7 @@
 - NestJS 12 CJS + Jest + oxlint；TypeORM 1.1 + MySQL 8.4（本机服务 `MySQL84`，root/123456，库 `concise_server`）
 - 参照 E:\project\demo\nest-admin 演进为中后台架构
 - 工程链：ESLint 9 flat config（正确性）+ Prettier（`.prettierrc.js`，用户指定风格：**单引号/无分号/160 列/无尾逗号/arrowParens avoid**）+ oxlint（lint:ox 二道）+ husky pre-commit → lint-staged（staged .ts 跑 eslint --fix + prettier --write）。commit 前不要手动跑 format，钩子会处理。
-- 统一响应 `{ code, data, message }`；业务异常 HTTP 200 + code 区分；全局 ValidationPipe（transform + whitelist）
+- 统一响应 `{ code, message, result, success, timestamp }`（**是 `result` 不是 `data`**，早期笔记记错过，写冒烟脚本时按 `data` 取会全 undefined）；业务异常也是 HTTP 200/4xx 靠 `code` 区分；全局 ValidationPipe（transform + whitelist）
 - 泛型需 `extends ObjectLiteral`；query 参数 DTO 加 `@Type(() => Number)`；运行命令需 `PATH="/d/projram/nodejs:$PATH"`（Node 24）
 - 3000 端口被外部进程占用，本地测试用 `PORT=3457`
 - Swagger 文档（912b3ed）：`/api/docs` 在线 UI、`/api/docs-json` OpenAPI JSON。约定：新模块 DTO 加 @ApiProperty、Controller 加 @ApiTags + @ApiOperation；Bearer 方案名 'jwt'。文档规则：每轮改动在 docs/ 生成变更 .md（见下方强规则）。
@@ -66,6 +66,14 @@
 - 前端：顶栏 `TenantSwitcher` 写 localStorage `concise-tenant` → `http.ts` 自动带 `X-Tenant-Id`，切换后整页 reload
 - 坑：`@Column({ length })` 可空会被推断成 `Object`（必须显式 `type:'varchar'`）；新表 `COLLATE=utf8mb4_unicode_ci`；`Pagination` 无链式方法
 - 冒烟：`scripts/smoke-tenant.mjs`（26 项，需 `PORT=3461 CAPTCHA_ENABLED=false` 实例）
+
+## 租户默认角色模板（2026-11-09，4d383b6）
+
+- 建租户自动生成 admin/editor/viewer 三套角色并授权（同事务），不再出现「空壳租户里管理员也 403」
+- 模板在 `modules/system/tenant/tenant-role-template.ts`：admin=`all`+`is_builtin=1`；editor=排除 `delete/batch-delete/clean/reset-password/restore`；viewer 只读白名单 `list/query/detail/export/download`。**判定只看 perms 后缀，无 perms 的页面节点一律给**（只决定可见性）
+- `POST /v1/tenants/:id/provision` / `/provision-all` 幂等补齐。**权限落库不跟随菜单演进**：平台新增租户级菜单后必须跑一次 provision-all
+- 不能复用 `RoleService.assignMenus`（对 `is_builtin=1` 直接抛错，防止租户改内置角色授权）；初始化直接 `INSERT IGNORE sys_role_permission`
+- 冒烟：`scripts/smoke-tenant-provision.mjs`（27 项）
 
 ## 界面设置上云（2026-11-07，9549938 / 前端 a7da194）
 
