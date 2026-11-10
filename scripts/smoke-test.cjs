@@ -67,7 +67,7 @@ async function call(method, path, options = {}) {
     body: form ?? (body === undefined ? undefined : JSON.stringify(body))
   })
   const contentType = res.headers.get('content-type') ?? ''
-  let json = null
+  let json
   let buf = null
   if (contentType.includes('json')) {
     json = await res.json().catch(() => null)
@@ -258,7 +258,7 @@ async function main() {
   const created = { users: [], roles: [], depts: [], menus: [], dicts: [], dictItems: [], levels: [], posts: [], notices: [], jobs: [] }
 
   // 5.1 部门
-  let deptId = null
+  let deptId
   {
     const r = await expectOk('POST', '/v1/depts', { token: adminToken, body: { departName: `smoke_部门_${STAMP}`, departOrder: 99, orgCategory: '2' } }, 'POST /v1/depts 新增部门')
     deptId = r.json?.result?.id ?? null
@@ -269,7 +269,7 @@ async function main() {
   }
 
   // 5.2 角色
-  let roleId2 = null
+  let roleId2
   {
     const r = await expectOk('POST', '/v1/roles', { token: adminToken, body: { roleName: `smoke_角色_${STAMP}`, roleCode: `smoke_role_${STAMP}` } }, 'POST /v1/roles 新增角色')
     roleId2 = r.json?.result?.id ?? null
@@ -281,9 +281,8 @@ async function main() {
   }
 
   // 5.3 用户（含角色、部门绑定 + 登录链路验证）
-  let userId = null
-  let userPassword = null
-  let smokeUserToken = null
+  let userId
+  let userPassword
   {
     userPassword = crypto.randomBytes(9).toString('base64url')
     const r = await expectOk(
@@ -331,7 +330,6 @@ async function main() {
         // 旧路由写操作同样要有权限（否则旧路由成了绕过新权限的后门）
         const legacyWrite = await call('PUT', `/users/${userId}`, { token: t, body: { realname: 'hacked-by-legacy' } })
         record(legacyWrite.status === 404, '旧路由 PUT /api/users/:id 已下线', `status=${legacyWrite.status}`)
-        smokeUserToken = t
       } else {
         record(true, '登录链路（验证码开启，预期被拦）', `status=${login.status} msg=${login.json?.message ?? ''}`)
       }
@@ -350,7 +348,7 @@ async function main() {
 
   // 5.5 字典 + 字典项
   let dictCode = `smoke_dict_${STAMP}`
-  let dictId = null
+  let dictId
   {
     const r = await expectOk('POST', '/v1/dicts', { token: adminToken, body: { dictName: `smoke_字典_${STAMP}`, dictCode } }, 'POST /v1/dicts 新增字典')
     dictId = r.json?.result?.id

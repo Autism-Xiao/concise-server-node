@@ -44,7 +44,7 @@ async function request(path, { token, ...init } = {}) {
     }
   })
   const text = await res.text()
-  let json = null
+  let json
   try {
     json = JSON.parse(text)
   } catch {

@@ -78,7 +78,7 @@ async function upload(path, token, filename, buffer) {
   form.append('file', new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename)
   const res = await fetch(`${API}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form })
   const text = await res.text()
-  let json = null
+  let json
   try {
     json = text ? JSON.parse(text) : null
   } catch {

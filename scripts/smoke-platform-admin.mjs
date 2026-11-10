@@ -26,7 +26,7 @@ async function api(path, { method = 'GET', token, body } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body)
   })
   const text = await res.text()
-  let json = null
+  let json
   try {
     json = text ? JSON.parse(text) : null
   } catch {

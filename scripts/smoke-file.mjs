@@ -46,7 +46,7 @@ async function api(path, init = {}) {
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init.headers || {}) }
   })
   const text = await res.text()
-  let json = null
+  let json
   try {
     json = JSON.parse(text)
   } catch {

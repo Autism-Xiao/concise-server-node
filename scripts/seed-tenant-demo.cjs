@@ -105,7 +105,6 @@
     content: '平台将于每周日 02:00-04:00 进行例行维护，期间服务可能短暂不可用。'
   }
 
-  const stamp = () => new Date()
 
   /* ---------- 1. 清理：联调残留租户（无用户无业务数据才物理删） ---------- */
   const staleTenants = await ds.query("SELECT id, name, code FROM sys_tenant WHERE code LIKE 'fe\\_probe%' OR code LIKE 'probe\\_%' OR code LIKE 'smoke\\_%'")

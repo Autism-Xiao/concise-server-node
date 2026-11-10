@@ -42,7 +42,7 @@ async function api(path, { method = 'GET', token, tenant, body } = {}) {
     headers,
     body: body === undefined ? undefined : JSON.stringify(body)
   })
-  let json = null
+  let json
   try {
     json = await res.json()
   } catch {

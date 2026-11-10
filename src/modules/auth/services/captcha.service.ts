@@ -16,8 +16,13 @@ const PIECE_SIZE = 50
 const KNOB_RADIUS = 10
 /** 校验容差（像素）：拖动落点与答案的偏差范围内视为通过 */
 const TOLERANCE = 5
-/** 拼图答案 x 的取值范围：太靠左拖一下就中，太靠右拖不到头（右界预留 10px，避免拼图贴边） */
-const X_MIN = 40
+/**
+ * 拼图答案 x 的取值范围
+ * - 左界必须大于拼图块的初始显示宽度（PIECE_WIDTH=60），否则初始位置就和缺口重叠，
+ *   画面上会同时出现「凹槽」和「拼图块」两个深色形状叠在一起，看着像重影
+ * - 右界预留 10px，避免缺口贴边
+ */
+const X_MIN = PIECE_WIDTH + 50
 const X_MAX = BG_WIDTH - PIECE_WIDTH - 10
 /** 拼图 y 的取值范围：上下各留 20px，保证凸起不越界 */
 const Y_MIN = 20
@@ -43,18 +48,34 @@ function insidePiece(lx: number, ly: number): boolean {
   return (inRect || topKnob) && !rightSlot
 }
 
+/**
+ * 形状覆盖率（4x4 超采样）
+ * 逐像素硬判定 insidePiece 会在凸起和凹槽的弧线上留下明显台阶，放大后很毛糙；
+ * 这里按像素面积求覆盖率（0..1），用作 alpha / 混合系数，边缘就平滑了。
+ */
+function pieceCoverage(lx: number, ly: number): number {
+  const N = 4
+  let hit = 0
+  for (let sy = 0; sy < N; sy++) {
+    const py = ly - 0.5 + (sy + 0.5) / N
+    for (let sx = 0; sx < N; sx++) {
+      const px = lx - 0.5 + (sx + 0.5) / N
+      if (insidePiece(px, py)) hit++
+    }
+  }
+  return hit / (N * N)
+}
+
 /** 局部坐标是否落在形状边界上（四邻域有形状外的点），用于描边 */
 function onPieceEdge(lx: number, ly: number): boolean {
   return !insidePiece(lx - 1, ly) || !insidePiece(lx + 1, ly) || !insidePiece(lx, ly - 1) || !insidePiece(lx, ly + 1)
 }
 
-/** 柔和随机色（HSL 转 RGB），用于程序化生成背景渐变 */
-function pastel(): { r: number; g: number; b: number } {
-  const h = Math.random() * 360
-  const s = 0.3 + Math.random() * 0.25
-  const l = 0.62 + Math.random() * 0.2
+/** HSL 转 RGB：同一色系出图，避免随机撞色（粉+绿）导致画面很脏 */
+function hsl(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  const hue = ((h % 360) + 360) % 360
   const c = (1 - Math.abs(2 * l - 1)) * s
-  const hp = h / 60
+  const hp = hue / 60
   const x = c * (1 - Math.abs((hp % 2) - 1))
   const [r1, g1, b1] = hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x] : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x]
   const m = l - c / 2
@@ -88,10 +109,10 @@ export class CaptchaService {
     const x = X_MIN + Math.floor(Math.random() * (X_MAX - X_MIN + 1))
     const y = Y_MIN + Math.floor(Math.random() * (Y_MAX - Y_MIN + 1))
 
-    // 背景挖拼图缺口：形状内压暗、边缘加深，视觉上形成「待填补的凹槽」
-    this.carveNotch(bg, x, y)
-    // 拼图块：通高透明底图，块体从原背景取色（与缺口纹理一一对应），边缘描白增强辨识
+    // 顺序很重要：先从干净背景抠出拼图块（原色、明亮），再挖缺口（压暗的凹槽）。
+    // 反过来的话拼图块会取到被压暗的像素，块和坑一样暗，既显脏也分不清有没有对上。
     const puzzle = this.buildPiece(bg, x, y)
+    this.carveNotch(bg, x, y)
 
     const [bgUrl, puzzleUrl] = await Promise.all([bg.getBase64Async(Jimp.MIME_PNG), puzzle.getBase64Async(Jimp.MIME_PNG)])
     const captchaId = randomUUID()
@@ -144,67 +165,97 @@ export class CaptchaService {
     }
   }
 
-  /** 程序化生成背景：竖向渐变 + 随机半透明圆形纹理（无外部图片依赖） */
+  /**
+   * 程序化生成背景：同色系斜向渐变 + 柔和暗角
+   *
+   * 之前叠过随机圆形色块做「干扰纹理」，结果画面上到处是圆弧边，既显脏又抢注意力，
+   * 缺口反而不好找。改成连续渐变（没有可辨识的图形边界）后画面干净，
+   * 缺口是画面上唯一有明确形状的区域，一眼就能定位。
+   */
   private generateBackground(): Jimp {
-    const from = pastel()
-    const to = pastel()
+    const hue = Math.random() * 360
+    const from = hsl(hue, 0.34 + Math.random() * 0.12, 0.79)
+    const to = hsl(hue + 18 + Math.random() * 28, 0.4 + Math.random() * 0.12, 0.62)
     const bg = new Jimp(BG_WIDTH, BG_HEIGHT, 0xffffffff)
-    bg.scan(0, 0, BG_WIDTH, BG_HEIGHT, function (this: Jimp, _x, y, idx) {
-      const t = y / (BG_HEIGHT - 1)
-      this.bitmap.data[idx] = Math.round(from.r + (to.r - from.r) * t)
-      this.bitmap.data[idx + 1] = Math.round(from.g + (to.g - from.g) * t)
-      this.bitmap.data[idx + 2] = Math.round(from.b + (to.b - from.b) * t)
+    const cx = BG_WIDTH / 2
+    const cy = BG_HEIGHT * 0.4
+    const maxD = Math.hypot(BG_WIDTH / 2, BG_HEIGHT / 2)
+    bg.scan(0, 0, BG_WIDTH, BG_HEIGHT, function (this: Jimp, x, y, idx) {
+      // 斜向过渡（下-右为主），避免纯竖向渐变把画面切成上下两块
+      const u = Math.min(1, (y / (BG_HEIGHT - 1)) * 0.8 + (x / (BG_WIDTH - 1)) * 0.2)
+      // 暗角：距离中心越远越暗，平方曲线保证边缘过渡没有可见边界
+      const d = Math.hypot(x - cx, y - cy) / maxD
+      const k = 1 - 0.15 * d * d
+      this.bitmap.data[idx] = Math.round((from.r + (to.r - from.r) * u) * k)
+      this.bitmap.data[idx + 1] = Math.round((from.g + (to.g - from.g) * u) * k)
+      this.bitmap.data[idx + 2] = Math.round((from.b + (to.b - from.b) * u) * k)
       this.bitmap.data[idx + 3] = 255
     })
-    // 随机圆形纹理：8 个半透明色块，让缺口位置无法靠「找纯色区域」猜测
-    for (let i = 0; i < 8; i++) {
-      this.drawCircle(bg, Math.random() * BG_WIDTH, Math.random() * BG_HEIGHT, 20 + Math.random() * 50, pastel(), 0.25 + Math.random() * 0.2)
-    }
     return bg
   }
 
-  /** 在图上画实心圆（带透明度） */
-  private drawCircle(img: Jimp, cx: number, cy: number, r: number, color: { r: number; g: number; b: number }, alpha: number): void {
-    const x0 = Math.max(0, Math.floor(cx - r))
-    const y0 = Math.max(0, Math.floor(cy - r))
-    const w = Math.min(img.bitmap.width - x0, Math.ceil(r * 2) + 1)
-    const h = Math.min(img.bitmap.height - y0, Math.ceil(r * 2) + 1)
-    if (w <= 0 || h <= 0) return
-    img.scan(x0, y0, w, h, function (this: Jimp, x, y, idx) {
-      const dx = x - cx
-      const dy = y - cy
-      if (dx * dx + dy * dy > r * r) return
-      const d = this.bitmap.data
-      d[idx] = Math.round(d[idx] * (1 - alpha) + color.r * alpha)
-      d[idx + 1] = Math.round(d[idx + 1] * (1 - alpha) + color.g * alpha)
-      d[idx + 2] = Math.round(d[idx + 2] * (1 - alpha) + color.b * alpha)
-    })
-  }
-
-  /** 背景挖拼图缺口：形状内像素压暗（边缘更深），模拟凹槽 */
+  /** 背景挖拼图缺口：形状内压暗，边缘再压深一档形成凹槽侧壁；覆盖率参与混合，轮廓平滑无锯齿 */
   private carveNotch(bg: Jimp, x: number, y: number): void {
-    bg.scan(x, y - KNOB_RADIUS, PIECE_WIDTH, PIECE_SIZE + 2 * KNOB_RADIUS, function (this: Jimp, gx, gy, idx) {
+    const x0 = Math.max(0, x - 1)
+    const y0 = Math.max(0, y - KNOB_RADIUS - 1)
+    const x1 = Math.min(BG_WIDTH, x + PIECE_WIDTH + 1)
+    const y1 = Math.min(BG_HEIGHT, y + PIECE_SIZE + KNOB_RADIUS + 1)
+    const w = x1 - x0
+    const h = y1 - y0
+    if (w <= 0 || h <= 0) return
+    bg.scan(x0, y0, w, h, function (this: Jimp, gx, gy, idx) {
       const lx = gx - x
       const ly = gy - y
-      if (!insidePiece(lx, ly)) return
+      const cov = pieceCoverage(lx, ly)
+      if (cov <= 0) return
+      // 凹槽深度：整体压暗，顶部略深、底部略亮（模拟光从上方来），边缘再压一档形成侧壁
+      const vertical = (ly + KNOB_RADIUS) / (PIECE_SIZE + KNOB_RADIUS)
+      const base = 0.5 - 0.08 * (1 - vertical)
+      const target = onPieceEdge(lx, ly) ? base - 0.2 : base
+      const k = 1 - (1 - target) * cov
       const d = this.bitmap.data
-      const f = onPieceEdge(lx, ly) ? 0.35 : 0.6
-      d[idx] = Math.round(d[idx] * f)
-      d[idx + 1] = Math.round(d[idx + 1] * f)
-      d[idx + 2] = Math.round(d[idx + 2] * f)
+      d[idx] = Math.round(d[idx] * k)
+      d[idx + 1] = Math.round(d[idx + 1] * k)
+      d[idx + 2] = Math.round(d[idx + 2] * k)
     })
   }
 
-  /** 生成拼图块透明底图：形状内从背景取色，边缘描白；拼块画在 (x, y)，验证答案仍是 x */
+  /**
+   * 生成拼图块透明底图（必须在 carveNotch 之前调用，这样才能取到未被压暗的原色）
+   * - 块体：背景原色略提亮，看起来是「浮在画面上的块」
+   * - 描边：1px 半透明白，既能和背景分离又不刺眼
+   * - 右下 1px 阴影：给块一点厚度感
+   */
   private buildPiece(bg: Jimp, x: number, y: number): Jimp {
     const puzzle = new Jimp(PIECE_WIDTH, BG_HEIGHT, 0x00000000)
-    for (let ly = -KNOB_RADIUS; ly < PIECE_SIZE; ly++) {
+    for (let ly = -KNOB_RADIUS - 1; ly < PIECE_SIZE + 1; ly++) {
       for (let lx = 0; lx < PIECE_WIDTH; lx++) {
-        if (!insidePiece(lx, ly)) continue
-        const sx = x + lx
         const sy = y + ly
+        const sx = x + lx
         if (sx < 0 || sx >= BG_WIDTH || sy < 0 || sy >= BG_HEIGHT) continue
-        puzzle.setPixelColor(onPieceEdge(lx, ly) ? 0xffffffff : bg.getPixelColor(sx, sy), lx, sy)
+        const cov = pieceCoverage(lx, ly)
+        if (cov <= 0) {
+          // 形状外：紧贴形状的左上侧压一圈淡阴影，块才有厚度
+          if (pieceCoverage(lx - 1, ly - 1) > 0.5) puzzle.setPixelColor(0x0000003a, lx, sy)
+          continue
+        }
+        const base = bg.getPixelColor(sx, sy)
+        let r = (base >>> 24) & 0xff
+        let g = (base >>> 16) & 0xff
+        let b = (base >>> 8) & 0xff
+        if (onPieceEdge(lx, ly)) {
+          // 白色描边（88%）：轮廓清楚，但不至于在深色画面上变成一圈刺眼的白线
+          r = Math.round(r * 0.12 + 255 * 0.88)
+          g = Math.round(g * 0.12 + 255 * 0.88)
+          b = Math.round(b * 0.12 + 255 * 0.88)
+        } else {
+          // 原色叠一点点白：像一块从画面上浮起的实体，同时保留背景纹理
+          r = Math.round(r * 0.92 + 255 * 0.08)
+          g = Math.round(g * 0.92 + 255 * 0.08)
+          b = Math.round(b * 0.92 + 255 * 0.08)
+        }
+        // alpha 用覆盖率，边缘因此是渐隐的，不是硬切
+        puzzle.setPixelColor(((r << 24) | (g << 16) | (b << 8) | Math.round(cov * 255)) >>> 0, lx, sy)
       }
     }
     return puzzle

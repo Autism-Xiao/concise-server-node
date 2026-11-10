@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable */
 /**
  * 代码生成器：一个业务表 → 后端五件套 + 迁移 + 前端页面骨架
  *
