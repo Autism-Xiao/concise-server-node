@@ -6,51 +6,41 @@
 
 | 文件 | 大小 | 说明 |
 | --- | --- | --- |
-| `concise_server_full_2026-11-07.sql` | 7.7 MB | 全库快照（2026-11-07 19:36 导出）：**28 张表结构 + 50,368 行数据**，含区划 44,983 / 用户 194 / 权限 134 / 操作日志 4,750 / 租户 3 / 用户水印配置 4 / 公告 48 / 日程与提醒 15 |
+| `concise_server_full_2026-11-10.sql` | 6.5 MB | **最新全库快照**（2026-11-10 19:50 导出）：31 张表结构 + 45,962 行数据，含区划 44,983 / 权限 149 / 角色授权 521 / 操作日志 91 / 迁移记录 51 / 文件 35 / 部门 21 |
+| `concise_server_full_2026-11-07.sql` | 7.7 MB | 历史快照（2026-11-07 19:36 导出，28 张表 / 50,368 行）：留档对比用，**恢复请用最新文件** |
+
+与 11-07 相比新增 3 张表：`supplier`、`sys_message`、`sys_message_user`。
 
 ## 快照包含什么
 
 - 全部表的 `CREATE TABLE` 与全量数据（`--single-transaction --quick`，导出期间不锁表）
-- 存储过程 / 函数 / 触发器 / 事件（`--routines --events --triggers`）
+- 存储过程 / 函数 / 触发器 / 事件（`--routines --events --triggers`；当前库没有存储过程，加了也不会多内容）
 - 二进制字段按十六进制输出（`--hex-blob`），避免还原时乱码
 - **不含** `CREATE DATABASE`，恢复前需先手工建库
+- 2026-11-10 快照**已包含全部已执行迁移**（`migrations` 51 条）：`sys_user.bio`、`sys_message` / `sys_message_user`、`supplier` 等都在内，恢复后不用再补 schema
 
 ## 恢复方式（整库覆盖，慎用）
 
 ```bash
-export MYSQL_PWD=你的密码
-MYSQL="C:/Program Files/MySQL/MySQL Server 8.4/bin/mysql.exe"
-
 # 1) 重建库（会清空现有全部数据）
-"$MYSQL" -uroot --default-character-set=utf8mb4 -e "DROP DATABASE IF EXISTS concise_server; CREATE DATABASE concise_server DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -uroot -p -e "DROP DATABASE IF EXISTS concise_server; CREATE DATABASE concise_server COLLATE utf8mb4_unicode_ci;"
 
-# 2) 导入快照
-"$MYSQL" -uroot --default-character-set=utf8mb4 concise_server < sql/concise_server_full_2026-11-07.sql
-
-# 3) 补齐快照之后的 schema 变更（必须做，否则登录会 500：Unknown column 'user.bio'）
-npm run build; npx typeorm migration:run -d dist/shared/database/data-source.js
+# 2) 导入快照（全量，含迁移结果，无需再补 schema）
+mysql -uroot -p --default-character-set=utf8mb4 concise_server < sql/concise_server_full_2026-11-10.sql
 ```
-
-- **快照是 2026-11-07 的，不含之后新增的列、表和索引**（`sys_user.bio`、`sys_message`、`sys_tenant` 相关列、
-  以及 `PerfIndexes1794230000000` 建的三个性能索引）。第 3 步不能省，迁移是幂等的，重复执行安全。
-
-- 全库快照含 `sys_user` 的密码哈希、租户数据等敏感内容，**仓库若公开需先评估**，或改放私有备份存储
-- 恢复后 `.env` 的 `JWT_SECRET` 若与快照生成时不同，所有已签发 token 失效（重新登录即可）
-- 快照文件名带日期，恢复前确认用的是最新那份
 
 ## 重新导出快照（结构或数据有较大变更后）
 
 ```bash
-cd E:/oneself/concise/concise-server-node
-DB_PWD=$(grep '^DB_PASSWORD=' .env | cut -d= -f2-)
-MYSQL_PWD="$DB_PWD" "C:/Program Files/MySQL/MySQL Server 8.4/bin/mysqldump.exe" \
-  -h127.0.0.1 -P3306 -uroot \
-  --default-character-set=utf8mb4 --single-transaction --quick --no-tablespaces \
-  --set-gtid-purged=OFF --routines --events --triggers --hex-blob \
-  concise_server > sql/concise_server_full_$(date +%F).sql
+node scripts/dump-sql.mjs                    # 全量 → sql/concise_server_full_YYYY-MM-DD.sql
+node scripts/dump-sql.mjs --schema-only      # 只导结构 → sql/concise_server_schema_YYYY-MM-DD.sql
+node scripts/dump-sql.mjs --date=2026-11-10  # 指定文件名里的日期
 ```
 
-导出后建议先导入一个临时库（如 `concise_server_verify`）逐表比对行数，确认能还原再提交，然后 `DROP DATABASE concise_server_verify`。
+- 连接信息从 `.env` 读（`DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD/DB_DATABASE`），密码通过 `MYSQL_PWD` 传给 mysqldump，**不出现在命令行**
+- mysqldump 路径默认 `C:/Program Files/MySQL/MySQL Server 8.4/bin/mysqldump.exe`，可用环境变量 `MYSQLDUMP_PATH` 覆盖
+- 导完建议按「恢复方式」在临时库里导一遍验证（表数应与源库一致，2026-11-10 实测 31 张）
+
 
 ## 区划数据说明
 
