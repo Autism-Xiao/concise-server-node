@@ -27,6 +27,19 @@ const X_MAX = BG_WIDTH - PIECE_WIDTH - 10
 /** 拼图 y 的取值范围：上下各留 20px，保证凸起不越界 */
 const Y_MIN = 20
 const Y_MAX = BG_HEIGHT - PIECE_SIZE - Y_MIN
+/** 干扰缺口数量范围：每次随机 1~2 个，位置与数量都随刷新变化，防「多刷几次排除法」 */
+const DECOY_MIN = 1
+const DECOY_MAX = 2
+/** 缺口之间的最小水平间距：远大于容差 5px，拖到假坑必须明确失败，不能出现「感觉拖对了却说错」 */
+const NOTCH_MIN_GAP = 50
+/** 缺口包围盒尺寸（含凸起与余量）：两两不重叠用 */
+const NOTCH_BOX_W = PIECE_WIDTH + 4
+const NOTCH_BOX_H = PIECE_SIZE + KNOB_RADIUS + 4
+/** 缺口深度的随机噪声幅度：真坑假坑都落在同一个噪声带里，「挑最暗的」这个策略失效 */
+const NOTCH_DEPTH_NOISE = 0.08
+/** 描边自适应的亮度过渡带：区域平均亮度 < 0.45 按深底（白描边），> 0.65 按浅底（黑描边），中间线性混合 */
+const LUM_BAND_LOW = 0.45
+const LUM_BAND_HIGH = 0.65
 /** 挑战数据 Redis key 前缀（存答案 x），TTL 5 分钟一次性 */
 const CHALLENGE_PREFIX = 'captcha:'
 /** 滑块验证通过 ticket 的 Redis key 前缀，TTL 2 分钟一次性 */
@@ -71,6 +84,36 @@ function onPieceEdge(lx: number, ly: number): boolean {
   return !insidePiece(lx - 1, ly) || !insidePiece(lx + 1, ly) || !insidePiece(lx, ly - 1) || !insidePiece(lx, ly + 1)
 }
 
+/**
+ * 挑干扰缺口的位置：与已有缺口两两水平间距 ≥ NOTCH_MIN_GAP（假坑绝不能落在真坑 ±5px 容差带附近），
+ * 且包围盒不重叠（水平不够就垂直错开）；每次随机 1~2 个，20 次尝试拿不满就少放一个，不硬挤。
+ */
+function pickDecoyPositions(realX: number, realY: number): Array<[number, number]> {
+  const count = DECOY_MIN + Math.floor(Math.random() * (DECOY_MAX - DECOY_MIN + 1))
+  const placed: Array<[number, number]> = [[realX, realY]]
+  const decoys: Array<[number, number]> = []
+  for (let i = 0; i < count; i++) {
+    for (let tries = 0; tries < 20; tries++) {
+      const dx = X_MIN + Math.floor(Math.random() * (X_MAX - X_MIN + 1))
+      const dy = Y_MIN + Math.floor(Math.random() * (Y_MAX - Y_MIN + 1))
+      const clear = placed.every(([px, py]) => {
+        const gapX = Math.abs(px - dx)
+        // 水平间距必须无条件 ≥ 50px：假坑绝不能落进真坑 ±5px 容差带附近，
+        // 否则「对准假坑」和「对准真坑」在校验上等价，视觉与判定会打架
+        if (gapX < NOTCH_MIN_GAP) return false
+        // 包围盒还不重叠：水平够宽就行，不够就垂直错开
+        return gapX >= NOTCH_BOX_W || Math.abs(py - dy) >= NOTCH_BOX_H
+      })
+      if (clear) {
+        placed.push([dx, dy])
+        decoys.push([dx, dy])
+        break
+      }
+    }
+  }
+  return decoys
+}
+
 /** HSL 转 RGB：同一色系出图，避免随机撞色（粉+绿）导致画面很脏 */
 function hsl(h: number, s: number, l: number): { r: number; g: number; b: number } {
   const hue = ((h % 360) + 360) % 360
@@ -90,7 +133,7 @@ function hsl(h: number, s: number, l: number): { r: number; g: number; b: number
  * 登录时 assertTicket(ticket) 原子消费。challenge 与 ticket 都是一次性（MULTI GET+DEL），
  * 只走 Redis（EX 自动过期），支持多实例部署；未启用 Redis 或故障时直接抛业务错误，不做内存降级。
  *
- * 图片用 jimp 程序化生成（渐变 + 随机圆形纹理），不依赖外部图片资源；
+ * 图片用 jimp 程序化生成（同色系渐变背景 + 真假缺口 + 描边随背景亮度自适应），不依赖外部图片资源；
  * jimp 锁 0.22（纯 JS、CJS 兼容；1.x 起转 ESM，与本项目 CJS 构建冲突）。
  */
 @Injectable()
@@ -112,7 +155,11 @@ export class CaptchaService {
     // 顺序很重要：先从干净背景抠出拼图块（原色、明亮），再挖缺口（压暗的凹槽）。
     // 反过来的话拼图块会取到被压暗的像素，块和坑一样暗，既显脏也分不清有没有对上。
     const puzzle = this.buildPiece(bg, x, y)
-    this.carveNotch(bg, x, y)
+    // 真坑与假坑都带随机深度噪声（同一噪声带），「挑最暗的那个」的排除策略失效
+    this.carveNotch(bg, x, y, Math.random() * NOTCH_DEPTH_NOISE)
+    for (const [dx, dy] of pickDecoyPositions(x, y)) {
+      this.carveNotch(bg, dx, dy, Math.random() * NOTCH_DEPTH_NOISE)
+    }
 
     const [bgUrl, puzzleUrl] = await Promise.all([bg.getBase64Async(Jimp.MIME_PNG), puzzle.getBase64Async(Jimp.MIME_PNG)])
     const captchaId = randomUUID()
@@ -194,8 +241,9 @@ export class CaptchaService {
     return bg
   }
 
-  /** 背景挖拼图缺口：形状内压暗，边缘再压深一档形成凹槽侧壁；覆盖率参与混合，轮廓平滑无锯齿 */
-  private carveNotch(bg: Jimp, x: number, y: number): void {
+  /** 背景挖拼图缺口：形状内压暗，边缘再压深一档形成凹槽侧壁；覆盖率参与混合，轮廓平滑无锯齿。
+   * depthNoise 是本次缺口的整体加深量（真坑假坑共用同一随机带），让「挑最暗」的排除法失效 */
+  private carveNotch(bg: Jimp, x: number, y: number, depthNoise = 0): void {
     const x0 = Math.max(0, x - 1)
     const y0 = Math.max(0, y - KNOB_RADIUS - 1)
     const x1 = Math.min(BG_WIDTH, x + PIECE_WIDTH + 1)
@@ -208,9 +256,10 @@ export class CaptchaService {
       const ly = gy - y
       const cov = pieceCoverage(lx, ly)
       if (cov <= 0) return
-      // 凹槽深度：整体压暗，顶部略深、底部略亮（模拟光从上方来），边缘再压一档形成侧壁
+      // 凹槽深度：整体压暗，顶部略深、底部略亮（模拟光从上方来），边缘再压一档形成侧壁；
+      // depthNoise 让同一张图上的真坑假坑深浅落在同一随机带里
       const vertical = (ly + KNOB_RADIUS) / (PIECE_SIZE + KNOB_RADIUS)
-      const base = 0.5 - 0.08 * (1 - vertical)
+      const base = 0.5 - 0.08 * (1 - vertical) - depthNoise
       const target = onPieceEdge(lx, ly) ? base - 0.2 : base
       const k = 1 - (1 - target) * cov
       const d = this.bitmap.data
@@ -222,11 +271,27 @@ export class CaptchaService {
 
   /**
    * 生成拼图块透明底图（必须在 carveNotch 之前调用，这样才能取到未被压暗的原色）
-   * - 块体：背景原色略提亮，看起来是「浮在画面上的块」
-   * - 描边：1px 半透明白，既能和背景分离又不刺眼
-   * - 右下 1px 阴影：给块一点厚度感
+   * - 块体：深底略提亮 / 浅底略压暗，块在任意背景上都「浮」得出来
+   * - 描边：随背景亮度自适应——深底白描边、浅底黑描边，中间线性过渡。
+   *   固定 88% 白描边在中等亮度背景上就是一圈白框（2026-11-10 截图反馈的「白边」），
+   *   自适应后白线只在深底出现，浅底改用暗描边，观感像自然阴影
+   * - 形状外左上侧 1px 阴影：给块一点厚度感
    */
   private buildPiece(bg: Jimp, x: number, y: number): Jimp {
+    // 先量拼图块区域的平均亮度（隔行采样足够），决定描边与块体的明暗方向
+    let lumSum = 0
+    let lumN = 0
+    for (let sy = Math.max(0, y - KNOB_RADIUS); sy < Math.min(BG_HEIGHT, y + PIECE_SIZE); sy += 2) {
+      for (let sx = Math.max(0, x); sx < Math.min(BG_WIDTH, x + PIECE_SIZE); sx += 2) {
+        const c = bg.getPixelColor(sx, sy)
+        lumSum += (0.2126 * ((c >>> 24) & 0xff) + 0.7152 * ((c >>> 16) & 0xff) + 0.0722 * ((c >>> 8) & 0xff)) / 255
+        lumN++
+      }
+    }
+    const lum = lumN > 0 ? lumSum / lumN : 0.5
+    // 0 = 深底（白描边 / 提亮块体）→ 1 = 浅底（黑描边 / 压暗块体），过渡带内线性混合
+    const lightness = Math.min(1, Math.max(0, (lum - LUM_BAND_LOW) / (LUM_BAND_HIGH - LUM_BAND_LOW)))
+
     const puzzle = new Jimp(PIECE_WIDTH, BG_HEIGHT, 0x00000000)
     for (let ly = -KNOB_RADIUS - 1; ly < PIECE_SIZE + 1; ly++) {
       for (let lx = 0; lx < PIECE_WIDTH; lx++) {
@@ -240,22 +305,22 @@ export class CaptchaService {
           continue
         }
         const base = bg.getPixelColor(sx, sy)
-        let r = (base >>> 24) & 0xff
-        let g = (base >>> 16) & 0xff
-        let b = (base >>> 8) & 0xff
-        if (onPieceEdge(lx, ly)) {
-          // 白色描边（88%）：轮廓清楚，但不至于在深色画面上变成一圈刺眼的白线
-          r = Math.round(r * 0.12 + 255 * 0.88)
-          g = Math.round(g * 0.12 + 255 * 0.88)
-          b = Math.round(b * 0.12 + 255 * 0.88)
-        } else {
-          // 原色叠一点点白：像一块从画面上浮起的实体，同时保留背景纹理
-          r = Math.round(r * 0.92 + 255 * 0.08)
-          g = Math.round(g * 0.92 + 255 * 0.08)
-          b = Math.round(b * 0.92 + 255 * 0.08)
-        }
+        const r = (base >>> 24) & 0xff
+        const g = (base >>> 16) & 0xff
+        const b = (base >>> 8) & 0xff
+        // 块体：深底 +8% 白（玻璃感），浅底 -10%（略暗于背景）；描边：白 88% ↔ 黑 60% 按亮度混合
+        const bodyR = (r * 0.92 + 255 * 0.08) * (1 - lightness) + r * 0.9 * lightness
+        const bodyG = (g * 0.92 + 255 * 0.08) * (1 - lightness) + g * 0.9 * lightness
+        const bodyB = (b * 0.92 + 255 * 0.08) * (1 - lightness) + b * 0.9 * lightness
+        const edgeR = (r * 0.12 + 255 * 0.88) * (1 - lightness) + r * 0.4 * lightness
+        const edgeG = (g * 0.12 + 255 * 0.88) * (1 - lightness) + g * 0.4 * lightness
+        const edgeB = (b * 0.12 + 255 * 0.88) * (1 - lightness) + b * 0.4 * lightness
+        const onEdge = onPieceEdge(lx, ly)
+        const fr = Math.round(onEdge ? edgeR : bodyR)
+        const fg = Math.round(onEdge ? edgeG : bodyG)
+        const fb = Math.round(onEdge ? edgeB : bodyB)
         // alpha 用覆盖率，边缘因此是渐隐的，不是硬切
-        puzzle.setPixelColor(((r << 24) | (g << 16) | (b << 8) | Math.round(cov * 255)) >>> 0, lx, sy)
+        puzzle.setPixelColor(((fr << 24) | (fg << 16) | (fb << 8) | Math.round(cov * 255)) >>> 0, lx, sy)
       }
     }
     return puzzle
