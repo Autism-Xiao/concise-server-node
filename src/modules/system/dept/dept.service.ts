@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, HttpStatus } from '@nestjs/common'
+import { Injectable, BadRequestException, HttpStatus, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository, type DeepPartial } from 'typeorm'
 
@@ -29,11 +29,26 @@ export class DeptService extends BaseService<DeptEntity> {
     super(repository, '部门')
   }
 
+  /**
+   * 父级部门必须存在：转成专用码 4101，而不是通用 1002「部门不存在」。
+   * 用户看到的「部门不存在」分不清是自己要改的部门还是选的父级，前端也没法据此定位到父级选择器。
+   */
+  private async assertParentExists(parentId: string): Promise<DeptEntity> {
+    try {
+      return await this.findOne(parentId)
+    } catch (err) {
+      if (err instanceof NotFoundException) {
+        throw new BizException(BizErrorCode.DEPT_PARENT_NOT_FOUND, '父级部门不存在', HttpStatus.BAD_REQUEST)
+      }
+      throw err
+    }
+  }
+
   /** 创建：校验父级存在、自动生成 orgCode */
   async create(dto: CreateDeptDto): Promise<DeptEntity> {
     const parentId = dto.parentId || null
     if (parentId) {
-      await this.findOne(parentId)
+      await this.assertParentExists(parentId)
     }
     const orgCode = dto.orgCode || (await this.generateOrgCode(parentId))
     // 手工指定编码时前置查重（org_code 唯一索引，撞了会 500，这里转 400 人话）
@@ -64,7 +79,7 @@ export class DeptService extends BaseService<DeptEntity> {
         throw new BizException(BizErrorCode.DEPT_CYCLE, '父级部门不能是自身', HttpStatus.BAD_REQUEST)
       }
       if (parentId) {
-        await this.findOne(parentId)
+        await this.assertParentExists(parentId)
         const all = await this.repository.find()
         const descendantIds = this.collectDescendantIds(all, id)
         if (descendantIds.has(parentId)) {
@@ -177,10 +192,7 @@ export class DeptService extends BaseService<DeptEntity> {
     const siblings = await siblingsQb.getMany()
     let prefix = 'A'
     if (parentId) {
-      const parent = await this.repository.findOne({ where: { id: parentId } })
-      if (!parent) {
-        throw new BizException(BizErrorCode.DEPT_PARENT_NOT_FOUND, '父级部门不存在', HttpStatus.BAD_REQUEST)
-      }
+      const parent = await this.assertParentExists(parentId)
       prefix = parent.orgCode
     }
     let index = siblings.length + 1
