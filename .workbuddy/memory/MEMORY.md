@@ -46,7 +46,7 @@
 - **加码铁律：一码一消费者**——新增前必须写明谁在用它分支（前端 UI / 监控聚合 / 重试策略）；同类细节靠 message 区分（导入缺哪列都算 6103），否则就是造死码（414/415/416 就是这么来的，已删）
 - 抛业务错用 `BizException(BizErrorCode.X, '人话文案', 可选HttpStatus)`；**能按 code 分支就别解析 message 文本**（文案随时会改）
 - 过滤器规则：BizException 用枚举码 / 已知 HttpException 查映射表 / **未映射 4xx 用 status 本身** / 仅 5xx 回落 1006
-- 前端 `ApiError` 已有 `code?: number`，`http.ts` 已透传 `json.code`；**401 的 body code 恒为 1003/1007，永远不是 401**（旧 `json.code === 401` 死分支已删，别再写回来）
+- 前端 `ApiError` 已有 `code?: number`，`http.ts` 已透传 `json.code`；401 有两道判定：`res.status === 401`（必须在 `parseJsonBody` 之前，401 响应体可能不是 JSON）+ `json.code === 401`（**被 `tests/http-unauthorized.test.cjs` 锁定的兼容分支，HTTP 200 + code 401 的网关场景，别删**）
 - `/v1/files/purge` 的 `ids` 必须是**字符串数组**（传 number 报 1001）；冒烟脚本调用后必须检查 `code`，否则静默失败
 
 ## 页面水印（2026-11-06 三期）
