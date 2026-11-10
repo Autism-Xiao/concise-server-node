@@ -271,14 +271,14 @@ export class CaptchaService {
 
   /**
    * 生成拼图块透明底图（必须在 carveNotch 之前调用，这样才能取到未被压暗的原色）
-   * - 块体：深底略提亮 / 浅底略压暗，块在任意背景上都「浮」得出来
-   * - 描边：随背景亮度自适应——深底白描边、浅底黑描边，中间线性过渡。
-   *   固定 88% 白描边在中等亮度背景上就是一圈白框（2026-11-10 截图反馈的「白边」），
-   *   自适应后白线只在深底出现，浅底改用暗描边，观感像自然阴影
-   * - 形状外左上侧 1px 阴影：给块一点厚度感
+   * - 块体：深底略提亮 / 浅底略压暗，靠柔和的明暗差与背景分离
+   * - **没有描边**：白描边是「白框」（2026-11-10 第一轮反馈），自适应黑描边又成了「黑框」（第二轮反馈），
+   *   任何 1px 实线在滑块这种尺寸下都显得生硬。轮廓完全交给覆盖率的半透明边缘（4×4 超采样，天然抗锯齿），
+   *   存在感由块体明暗差 + 投影提供
+   * - 形状外右下侧 1px 淡阴影：给块一点厚度感
    */
   private buildPiece(bg: Jimp, x: number, y: number): Jimp {
-    // 先量拼图块区域的平均亮度（隔行采样足够），决定描边与块体的明暗方向
+    // 先量拼图块区域的平均亮度（隔行采样足够），决定块体的明暗方向
     let lumSum = 0
     let lumN = 0
     for (let sy = Math.max(0, y - KNOB_RADIUS); sy < Math.min(BG_HEIGHT, y + PIECE_SIZE); sy += 2) {
@@ -289,7 +289,7 @@ export class CaptchaService {
       }
     }
     const lum = lumN > 0 ? lumSum / lumN : 0.5
-    // 0 = 深底（白描边 / 提亮块体）→ 1 = 浅底（黑描边 / 压暗块体），过渡带内线性混合
+    // 0 = 深底（块体提亮）→ 1 = 浅底（块体压暗），过渡带内线性混合
     const lightness = Math.min(1, Math.max(0, (lum - LUM_BAND_LOW) / (LUM_BAND_HIGH - LUM_BAND_LOW)))
 
     const puzzle = new Jimp(PIECE_WIDTH, BG_HEIGHT, 0x00000000)
@@ -300,25 +300,19 @@ export class CaptchaService {
         if (sx < 0 || sx >= BG_WIDTH || sy < 0 || sy >= BG_HEIGHT) continue
         const cov = pieceCoverage(lx, ly)
         if (cov <= 0) {
-          // 形状外：紧贴形状的左上侧压一圈淡阴影，块才有厚度
-          if (pieceCoverage(lx - 1, ly - 1) > 0.5) puzzle.setPixelColor(0x0000003a, lx, sy)
+          // 形状外：紧贴形状的两圈渐变阴影（19% → 9%），柔和不显脏，块才有「浮起」的厚度
+          if (pieceCoverage(lx - 1, ly - 1) > 0.5) puzzle.setPixelColor(0x00000030, lx, sy)
+          else if (pieceCoverage(lx - 2, ly - 2) > 0.5) puzzle.setPixelColor(0x00000017, lx, sy)
           continue
         }
         const base = bg.getPixelColor(sx, sy)
         const r = (base >>> 24) & 0xff
         const g = (base >>> 16) & 0xff
         const b = (base >>> 8) & 0xff
-        // 块体：深底 +8% 白（玻璃感），浅底 -10%（略暗于背景）；描边：白 88% ↔ 黑 60% 按亮度混合
-        const bodyR = (r * 0.92 + 255 * 0.08) * (1 - lightness) + r * 0.9 * lightness
-        const bodyG = (g * 0.92 + 255 * 0.08) * (1 - lightness) + g * 0.9 * lightness
-        const bodyB = (b * 0.92 + 255 * 0.08) * (1 - lightness) + b * 0.9 * lightness
-        const edgeR = (r * 0.12 + 255 * 0.88) * (1 - lightness) + r * 0.4 * lightness
-        const edgeG = (g * 0.12 + 255 * 0.88) * (1 - lightness) + g * 0.4 * lightness
-        const edgeB = (b * 0.12 + 255 * 0.88) * (1 - lightness) + b * 0.4 * lightness
-        const onEdge = onPieceEdge(lx, ly)
-        const fr = Math.round(onEdge ? edgeR : bodyR)
-        const fg = Math.round(onEdge ? edgeG : bodyG)
-        const fb = Math.round(onEdge ? edgeB : bodyB)
+        // 块体：深底 +8% 白（玻璃感），浅底 -18%（明显略暗于背景，但仍是同色系，不出现边线）
+        const fr = Math.round((r * 0.92 + 255 * 0.08) * (1 - lightness) + r * 0.82 * lightness)
+        const fg = Math.round((g * 0.92 + 255 * 0.08) * (1 - lightness) + g * 0.82 * lightness)
+        const fb = Math.round((b * 0.92 + 255 * 0.08) * (1 - lightness) + b * 0.82 * lightness)
         // alpha 用覆盖率，边缘因此是渐隐的，不是硬切
         puzzle.setPixelColor(((fr << 24) | (fg << 16) | (fb << 8) | Math.round(cov * 255)) >>> 0, lx, sy)
       }
