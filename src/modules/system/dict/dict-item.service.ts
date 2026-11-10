@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { paginate, type Pagination } from '../../../helper/paginate'
@@ -148,7 +150,7 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
       qb.andWhere('item.id <> :excludeId', { excludeId })
     }
     if (await qb.getExists()) {
-      throw new BadRequestException(`该字典下已存在值为「${itemValue}」的字典项`)
+      throw new BizException(BizErrorCode.DICT_ITEM_VALUE_CONFLICT, `该字典下已存在值为「${itemValue}」的字典项`, HttpStatus.BAD_REQUEST)
     }
   }
 

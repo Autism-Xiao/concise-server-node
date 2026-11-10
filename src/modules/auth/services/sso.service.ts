@@ -3,6 +3,8 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { DataSource, In } from 'typeorm'
 
 import { jwtConfig, oidcConfig, type JwtConfig, type OidcConfig } from '../../../config'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { RoleEntity } from '../../role/entities/role.entity'
 import { UserEntity } from '../../user/entities/user.entity'
 import { UserService, USER_STATUS } from '../../user/user.service'
@@ -105,7 +107,7 @@ export class SsoService {
   /** 回调处理：验证 state → code 换 token → 拉 userinfo → 解析出本地用户 */
   async handleCallback(code: string, state: string, redirectUri: string): Promise<UserEntity> {
     if (!this.verifyState(state)) {
-      throw new BadRequestException('SSO state 校验失败或已过期，请返回登录页重新发起登录')
+      throw new BizException(BizErrorCode.SSO_CREDENTIAL_INVALID, 'SSO state 校验失败或已过期，请返回登录页重新发起登录')
     }
     const discovery = await this.discover()
 

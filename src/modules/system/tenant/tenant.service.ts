@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm'
 import { Brackets, DataSource, Repository } from 'typeorm'
 
 import { Pagination } from '../../../helper/paginate/pagination'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { PermissionCacheService } from '../../../shared/permission-cache/permission-cache.service'
 import { TenantAccessService } from '../../../shared/tenant/tenant-access.service'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
@@ -107,7 +109,7 @@ export class TenantService {
       })
     } catch (error) {
       if (isDuplicateEntryError(error)) {
-        throw new BadRequestException(`租户编码「${dto.code}」已存在`)
+        throw new BizException(BizErrorCode.TENANT_CODE_CONFLICT, `租户编码「${dto.code}」已存在`, HttpStatus.BAD_REQUEST)
       }
       throw error
     }
@@ -126,7 +128,7 @@ export class TenantService {
       await this.repository.createQueryBuilder().update(TenantEntity).set(patch).where('id = :id', { id }).execute()
     } catch (error) {
       if (isDuplicateEntryError(error)) {
-        throw new BadRequestException(`租户编码「${dto.code}」已存在`)
+        throw new BizException(BizErrorCode.TENANT_CODE_CONFLICT, `租户编码「${dto.code}」已存在`, HttpStatus.BAD_REQUEST)
       }
       throw error
     }
@@ -186,7 +188,7 @@ export class TenantService {
     ])
     const adminRoleId = rows[0]?.id
     if (!adminRoleId) {
-      throw new BadRequestException('该租户还没有内置 admin 角色，请先执行「同步全部角色」')
+      throw new BizException(BizErrorCode.TENANT_NO_ADMIN_TEMPLATE, '该租户还没有内置 admin 角色，请先执行「同步全部角色」', HttpStatus.BAD_REQUEST)
     }
     // 用租户上下文包一层：UserService.create 会把新账号加入「当前租户」，
     // 否则平台视角下建号会落到默认租户 1
@@ -354,7 +356,7 @@ export class TenantService {
     const qb = this.repository.createQueryBuilder('t').where('t.code = :code', { code })
     if (excludeId) qb.andWhere('t.id <> :excludeId', { excludeId })
     if (await qb.getExists()) {
-      throw new BadRequestException(`租户编码「${code}」已存在`)
+      throw new BizException(BizErrorCode.TENANT_CODE_CONFLICT, `租户编码「${code}」已存在`, HttpStatus.BAD_REQUEST)
     }
   }
 }

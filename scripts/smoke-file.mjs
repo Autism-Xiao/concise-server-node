@@ -63,6 +63,24 @@ const login = await fetch(`${BASE}/v1/auth/login`, {
 token = login.result.accessToken
 check('登录', !!token)
 
+// 前置清理：上一次运行若被中途打断（典型场景是命令接了 `| head`，管道读满后 node 收到 SIGPIPE 提前退出，
+// 结尾的 purge 根本没执行），已经「移动到根目录」的冒烟文件会以同名留在根目录，
+// 这一次「移动到根目录」就会撞上「当前目录下已存在」的 400。只按冒烟专用命名清，不碰真实文件。
+const RESIDUE_NAME = /^(冒烟文件夹-\d+|改名后\.md|中文报告\.txt)$/
+const rootList = await api('/v1/files?parentId=0&size=200')
+// purge 的 DTO 要求 ids 为字符串数组（传数字会 400「每个 id 必须是字符串」），这里必须 map(String)
+const residueIds = ((rootList.json?.result?.records ?? []).filter(it => RESIDUE_NAME.test(it.name))).map(it => String(it.id))
+if (residueIds.length) {
+  const purged = await api('/v1/files/purge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: residueIds })
+  })
+  console.log(
+    purged.json?.code === 0 ? `前置清理：删掉上次运行残留 ${purged.json.result.purged} 项` : `前置清理失败：${purged.json?.code} ${purged.json?.message}`
+  )
+}
+
 const FOLDER_NAME = `冒烟文件夹-${Date.now()}`
 const folderRes = await api('/v1/files/folders', {
   method: 'POST',
@@ -119,7 +137,11 @@ const moved = await api(`/v1/files/${fileNode.id}`, {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ parentId: 0 })
 })
-check('移动到根目录', moved.json?.result?.parentId === 0)
+check(
+  '移动到根目录',
+  moved.json?.result?.parentId === 0,
+  moved.json?.code === 0 ? `parentId=${JSON.stringify(moved.json?.result?.parentId)}` : `${moved.json?.code} ${moved.json?.message}`
+)
 
 const subRes = await api('/v1/files/folders', {
   method: 'POST',

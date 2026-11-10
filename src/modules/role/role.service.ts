@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Not, Repository, type EntityManager } from 'typeorm'
 
 import { BaseService } from '../../helper/crud/base.service'
+import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
+import { BizException } from '../../common/exceptions/biz.exception'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
@@ -73,7 +75,7 @@ export class RoleService extends BaseService<RoleEntity> {
   async createRole(dto: CreateRoleDto): Promise<RoleEntity> {
     // 超管编码是内置约定，不允许新建同名角色（否则 @Roles() 与历史数据会产生歧义）
     if (isSuperRole(dto.roleCode)) {
-      throw new BadRequestException(`「${dto.roleCode}」是内置超级管理员角色编码，不允许创建`)
+      throw new BizException(BizErrorCode.BUILTIN_ROLE_PROTECTED, `「${dto.roleCode}」是内置超级管理员角色编码，不允许创建`, HttpStatus.BAD_REQUEST)
     }
     // 归属租户：必须显式打标 —— 实体默认 tenant_id=0（平台共享），
     // 不打标的话租户管理员建的角色会变成「全平台共享角色」，出现在所有租户的角色列表里
@@ -109,16 +111,16 @@ export class RoleService extends BaseService<RoleEntity> {
     const role = await this.findOne(id)
     if (dto.roleCode && dto.roleCode !== role.roleCode) {
       if (role.isBuiltin === 1) {
-        throw new BadRequestException('内置管理员角色的编码不允许修改')
+        throw new BizException(BizErrorCode.BUILTIN_ROLE_PROTECTED, '内置管理员角色的编码不允许修改', HttpStatus.BAD_REQUEST)
       }
       if (isSuperRole(dto.roleCode)) {
-        throw new BadRequestException(`「${dto.roleCode}」是内置超级管理员角色编码，不允许占用`)
+        throw new BizException(BizErrorCode.BUILTIN_ROLE_PROTECTED, `「${dto.roleCode}」是内置超级管理员角色编码，不允许占用`, HttpStatus.BAD_REQUEST)
       }
       await this.assertCodeAvailable(dto.roleCode, role.tenantId)
     }
     // 内置角色是权限体系的兜底，停用它会把所有管理员锁在门外
     if (dto.status === 0 && role.isBuiltin === 1) {
-      throw new BadRequestException('内置管理员角色不允许停用')
+      throw new BizException(BizErrorCode.BUILTIN_ROLE_PROTECTED, '内置管理员角色不允许停用', HttpStatus.BAD_REQUEST)
     }
     await this.roleRepository.manager.transaction(async manager => {
       await manager.getRepository(RoleEntity).update(id, {
@@ -153,7 +155,7 @@ export class RoleService extends BaseService<RoleEntity> {
   async deleteRole(id: string): Promise<void> {
     const role = await this.findOne(id)
     if (role.isBuiltin === 1) {
-      throw new BadRequestException('内置管理员角色不允许删除')
+      throw new BizException(BizErrorCode.BUILTIN_ROLE_PROTECTED, '内置管理员角色不允许删除', HttpStatus.BAD_REQUEST)
     }
     const rows = (await this.roleRepository.query(
       'SELECT COUNT(*) AS total FROM sys_user_role ur INNER JOIN sys_user u ON u.id = ur.user_id WHERE ur.role_id = ? AND u.del_flag = 0',
@@ -213,7 +215,7 @@ export class RoleService extends BaseService<RoleEntity> {
     }
     const menus = await (manager ?? this.roleRepository.manager).getRepository(MenuEntity).find({ where: { id: In(menuIds) } })
     if (menus.length !== menuIds.length) {
-      throw new NotFoundException('存在无效的菜单 ID')
+      throw new BizException(BizErrorCode.MENU_IDS_INVALID, '存在无效的菜单 ID', HttpStatus.NOT_FOUND)
     }
     // 平台级菜单（租户管理/菜单管理/运维监控）不能由租户管理员授权给自己：
     // 即使权限码拿不到，也避免关联表里出现「看起来有、实际 403」的脏数据
@@ -291,7 +293,7 @@ export class RoleService extends BaseService<RoleEntity> {
 
     const { columns, dataRows } = this.resolveImportColumns(rows, headerRowNumber)
     if (!columns.roleCode) {
-      throw new BadRequestException('未找到「角色编码」列，请使用导入模板的表头')
+      throw new BizException(BizErrorCode.IMPORT_HEADER_MISMATCH, '未找到「角色编码」列，请使用导入模板的表头', HttpStatus.BAD_REQUEST)
     }
     if (!dataRows.length) {
       throw new BadRequestException('表头下方没有数据行，请填写后再导入')
@@ -395,7 +397,7 @@ export class RoleService extends BaseService<RoleEntity> {
   private async assertCodeAvailable(roleCode: string, tenantId: number): Promise<void> {
     const exists = await this.roleRepository.findOne({ where: { roleCode, tenantId } })
     if (exists) {
-      throw new BadRequestException(`角色编码「${roleCode}」已存在`)
+      throw new BizException(BizErrorCode.ROLE_CODE_CONFLICT, `角色编码「${roleCode}」已存在`, HttpStatus.BAD_REQUEST)
     }
   }
 }

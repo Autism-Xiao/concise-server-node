@@ -1,8 +1,10 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Inject, Logger, Post, Query, Request, Res } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Logger, Post, Query, Request, Res } from '@nestjs/common'
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { Response } from 'express'
 
 import { appConfig, oidcConfig, type AppConfig, type OidcConfig } from '../../../config'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { AuthService, type LoginResult } from '../services/auth.service'
@@ -102,7 +104,7 @@ export class SsoV1Controller {
     const userId = this.ssoService.consumeSsoCode(dto.code)
     const user = userId ? await this.ssoService.loadUserById(userId) : null
     if (!user) {
-      throw new BadRequestException('SSO 登录凭证无效或已过期，请重新发起登录')
+      throw new BizException(BizErrorCode.SSO_CREDENTIAL_INVALID, 'SSO 登录凭证无效或已过期，请重新发起登录', HttpStatus.BAD_REQUEST)
     }
     const userAgent = req.headers['user-agent']
     return this.authService.ssoLogin(user, { ip: req.ip ?? '', userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent })

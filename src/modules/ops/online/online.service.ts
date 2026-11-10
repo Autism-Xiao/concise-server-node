@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, Logger } from '@nestjs/common'
 import { createHash } from 'node:crypto'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { Pagination } from '../../../helper/paginate'
 import { RealtimeService, WS_EVENTS } from '../../../shared/realtime/realtime.service'
 import { RedisService } from '../../../shared/redis/redis.service'
@@ -244,13 +246,13 @@ export class OnlineService {
   async kick(sessionId: string): Promise<void> {
     const client = this.client()
     if (!client) {
-      throw new NotFoundException('在线会话不存在或已过期')
+      throw new BizException(BizErrorCode.SESSION_EXPIRED, '在线会话不存在或已过期', HttpStatus.NOT_FOUND)
     }
     const key = SESSION_PREFIX + sessionId
     const raw = await client.get(key)
     const session = raw ? this.parse<OnlineSession>(raw) : null
     if (!session) {
-      throw new NotFoundException('在线会话不存在或已过期')
+      throw new BizException(BizErrorCode.SESSION_EXPIRED, '在线会话不存在或已过期', HttpStatus.NOT_FOUND)
     }
     const ttl = Math.max(Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000), 60)
     // sessionId 本身就是 token 哈希，这里直接拼 key（不能再走 markRevoked，那会二次哈希）

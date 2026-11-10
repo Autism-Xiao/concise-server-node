@@ -1,5 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { StorageEntity } from '../storage/storage.entity'
 import { StorageService } from '../storage/storage.service'
 import { fileRename, getCurrentDate, getFilePath, getFileType, getSize, saveLocalFile } from '../../../utils/file.util'
@@ -27,7 +29,7 @@ export class UploadService {
     // 文件头复核：声明 image/png 但内容其实是 HTML 的，在这里被拦下
     const signature = detectImageSignature(file.buffer)
     if (!signature) {
-      throw new BadRequestException('文件内容不是有效的图片，仅支持 PNG / JPEG / GIF / WEBP / BMP')
+      throw new BizException(BizErrorCode.UPLOAD_SIGNATURE_MISMATCH, '文件内容不是有效的图片，仅支持 PNG / JPEG / GIF / WEBP / BMP', HttpStatus.BAD_REQUEST)
     }
 
     const fileName = file.originalname

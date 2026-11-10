@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository, type SelectQueryBuilder } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
@@ -216,7 +218,7 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
   async publish(id: string, operator?: string): Promise<SysAnnouncementEntity> {
     const before = await this.findOneActive(id)
     if (before.sendStatus === '1') {
-      throw new BadRequestException('该公告已发布，无需重复发布')
+      throw new BizException(BizErrorCode.NOTICE_STATUS_CONFLICT, '该公告已发布，无需重复发布', HttpStatus.BAD_REQUEST)
     }
     await this.patchById(id, {
       sendStatus: '1',
@@ -233,7 +235,7 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
   async revoke(id: string, operator?: string): Promise<SysAnnouncementEntity> {
     const before = await this.findOneActive(id)
     if (before.sendStatus !== '1') {
-      throw new BadRequestException('只有已发布的公告才能撤销')
+      throw new BizException(BizErrorCode.NOTICE_STATUS_CONFLICT, '只有已发布的公告才能撤销', HttpStatus.BAD_REQUEST)
     }
     await this.patchById(id, {
       sendStatus: '2',
@@ -248,7 +250,7 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
   override async delete(id: string): Promise<void> {
     const before = await this.findOneActive(id)
     if (before.sendStatus === '1') {
-      throw new BadRequestException('已发布的公告不能直接删除，请先撤销')
+      throw new BizException(BizErrorCode.NOTICE_STATUS_CONFLICT, '已发布的公告不能直接删除，请先撤销', HttpStatus.BAD_REQUEST)
     }
     await this.patchById(id, { delFlag: '1', updateTime: new Date() })
   }
@@ -281,7 +283,7 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
     }
     const { columns, dataRows } = this.resolveImportColumns(rows, headerRowNumber)
     if (columns.title === undefined) {
-      throw new BadRequestException('未找到「标题」列，请使用导入模板的表头')
+      throw new BizException(BizErrorCode.IMPORT_HEADER_MISMATCH, '未找到「标题」列，请使用导入模板的表头', HttpStatus.BAD_REQUEST)
     }
     if (!dataRows.length) {
       throw new BadRequestException('表头下方没有数据行，请填写后再导入')

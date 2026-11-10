@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { paginate, Pagination } from '../../../helper/paginate'
 import { randomId32 } from '../../../utils/password.util'
 import { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
@@ -134,7 +136,7 @@ export class JobService {
   async resume(id: string, operator?: string): Promise<JobView> {
     const job = await this.findActive(id)
     if (!job.cronExpression) {
-      throw new BadRequestException('任务未配置 cron 表达式，无法启动')
+      throw new BizException(BizErrorCode.JOB_CRON_INVALID, '任务未配置 cron 表达式，无法启动', HttpStatus.BAD_REQUEST)
     }
     JobScheduler.assertCron(job.cronExpression)
     this.assertHandlerExists(job.jobClassName ?? '')

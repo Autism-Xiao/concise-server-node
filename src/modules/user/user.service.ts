@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Not, Repository, SelectQueryBuilder, type EntityManager, type FindOptionsWhere, type QueryDeepPartialEntity } from 'typeorm'
 
@@ -331,7 +331,11 @@ export class UserService extends BaseService<UserEntity> {
         return owner !== 0 && owner !== currentTenant
       })
       if (illegal.length) {
-        throw new BadRequestException(`角色「${illegal.map(role => role.roleName ?? role.roleCode).join('、')}」不属于当前租户，不能分配`)
+        throw new BizException(
+          BizErrorCode.TENANT_ROLE_BOUNDARY,
+          `角色「${illegal.map(role => role.roleName ?? role.roleCode).join('、')}」不属于当前租户，不能分配`,
+          HttpStatus.BAD_REQUEST
+        )
       }
     }
 
@@ -1150,7 +1154,7 @@ export class UserService extends BaseService<UserEntity> {
     }
     const { columns, dataRows } = this.resolveImportColumns(rows, headerRowNumber)
     if (columns.username === undefined) {
-      throw new BadRequestException('未找到「登录账号」列，请使用导入模板的表头')
+      throw new BizException(BizErrorCode.IMPORT_HEADER_MISMATCH, '未找到「登录账号」列，请使用导入模板的表头', HttpStatus.BAD_REQUEST)
     }
     if (dataRows.length > USER_IMPORT_MAX_ROWS) {
       throw new BadRequestException(`单次最多导入 ${USER_IMPORT_MAX_ROWS} 行，当前 ${dataRows.length} 行，请拆分后重试`)

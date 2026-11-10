@@ -278,7 +278,7 @@ export class AuthService {
         secret: this.jwt.refreshSecret
       })
     } catch {
-      throw new BizException(BizErrorCode.UNAUTHORIZED, 'refreshToken 无效或已过期', HttpStatus.UNAUTHORIZED)
+      throw new BizException(BizErrorCode.REFRESH_TOKEN_INVALID, 'refreshToken 无效或已过期', HttpStatus.UNAUTHORIZED)
     }
 
     // 与登录返回保持同构：带角色与部门（depts / dept / deptId）
@@ -289,7 +289,7 @@ export class AuthService {
         await this.onlineService.revokeUser(String(payload.id), this.parseExpiresIn(this.jwt.refreshExpiresIn))
         this.logger.warn(`检测到 refreshToken 重放（用户 ${payload.username}），已强制下线该账号全部会话`)
       }
-      throw new BizException(BizErrorCode.UNAUTHORIZED, '登录状态已失效，请重新登录', HttpStatus.UNAUTHORIZED)
+      throw new BizException(BizErrorCode.REFRESH_TOKEN_INVALID, '登录状态已失效，请重新登录', HttpStatus.UNAUTHORIZED)
     }
 
     const user = await this.userService.findOneDetail(String(payload.id))
@@ -330,7 +330,7 @@ export class AuthService {
       throw new BizException(BizErrorCode.UNAUTHORIZED, '账号不存在', HttpStatus.UNAUTHORIZED)
     }
     if (!(await this.userService.verifyPassword(user, dto.oldPassword))) {
-      throw new BizException(BizErrorCode.LOGIN_FAILED, '原密码不正确', HttpStatus.BAD_REQUEST)
+      throw new BizException(BizErrorCode.OLD_PASSWORD_INVALID, '原密码不正确', HttpStatus.BAD_REQUEST)
     }
     if (dto.oldPassword === dto.newPassword) {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '新密码不能与原密码相同', HttpStatus.BAD_REQUEST)

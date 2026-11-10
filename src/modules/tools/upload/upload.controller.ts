@@ -1,7 +1,9 @@
-import { BadRequestException, Controller, Post, Request, UploadedFile, UseInterceptors } from '@nestjs/common'
+import { Controller, HttpStatus, Post, Request, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiExcludeController, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { FileUploadDto } from './upload.dto'
@@ -25,7 +27,14 @@ export const UPLOAD_MIMETYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/
 export function imageFileFilter(_request: unknown, file: Express.Multer.File, callback: (error: Error | null, acceptFile: boolean) => void): void {
   const declared = (file.mimetype ?? '').toLowerCase()
   if (!UPLOAD_MIMETYPES.includes(declared)) {
-    callback(new BadRequestException(`仅支持上传 PNG / JPEG / GIF / WEBP / BMP 图片，当前文件类型为「${declared || '未知'}」`), false)
+    callback(
+      new BizException(
+        BizErrorCode.UPLOAD_TYPE_REJECTED,
+        `仅支持上传 PNG / JPEG / GIF / WEBP / BMP 图片，当前文件类型为「${declared || '未知'}」`,
+        HttpStatus.BAD_REQUEST
+      ),
+      false
+    )
     return
   }
   callback(null, true)

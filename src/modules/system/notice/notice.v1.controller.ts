@@ -20,6 +20,8 @@ import { IsIn, IsOptional } from 'class-validator'
 import type { Response } from 'express'
 
 import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { PagerDto } from '../../../common/dto/pager.dto'
@@ -136,7 +138,7 @@ export class NoticeV1Controller {
     if (/\.csv$/i.test(filename)) {
       const text = file.buffer.toString('utf8')
       if (text.includes('\uFFFD')) {
-        throw new BadRequestException('CSV 文件编码不是 UTF-8，请改用 .xlsx 导入，或另存为「CSV UTF-8（逗号分隔）」')
+        throw new BizException(BizErrorCode.IMPORT_CSV_ENCODING, 'CSV 文件编码不是 UTF-8，请改用 .xlsx 导入，或另存为「CSV UTF-8（逗号分隔）」')
       }
       return this.noticeService.importNotices(parseCsv(text), 1, operator)
     }

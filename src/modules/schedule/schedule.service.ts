@@ -1,7 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { DataSource, Repository } from 'typeorm'
 
+import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
+import { BizException } from '../../common/exceptions/biz.exception'
 import { Pagination } from '../../helper/paginate'
 import { BaseCalendarEntity } from './entities/base-calendar.entity'
 import { BaseScheduleEventEntity } from './entities/base-schedule-event.entity'
@@ -111,7 +113,7 @@ export class ScheduleService {
     const calendar = await this.calendarRepo.findOne({ where: { id: event.calendarId } })
     if (!calendar) throw new NotFoundException('所属日历不存在')
     if (calendar.ownerId !== userId && !calendar.isPublic) {
-      throw new ForbiddenException('无权查看该日程')
+      throw new BizException(BizErrorCode.SCHEDULE_OWNERSHIP, '无权查看该日程', HttpStatus.FORBIDDEN)
     }
     return event
   }
@@ -119,7 +121,7 @@ export class ScheduleService {
   async createEvent(userId: string, dto: CreateScheduleEventDto): Promise<BaseScheduleEventEntity> {
     const calendar = await this.calendarRepo.findOne({ where: { id: dto.calendarId } })
     if (!calendar) throw new NotFoundException('所属日历不存在')
-    if (calendar.ownerId !== userId) throw new ForbiddenException('只能在自己的日历下创建日程')
+    if (calendar.ownerId !== userId) throw new BizException(BizErrorCode.SCHEDULE_OWNERSHIP, '只能在自己的日历下创建日程', HttpStatus.FORBIDDEN)
 
     const start = new Date(dto.startTime)
     const end = new Date(dto.endTime)
@@ -232,7 +234,7 @@ export class ScheduleService {
   /* ---------------- 私有 ---------------- */
 
   private assertOwner(calendar: BaseCalendarEntity, userId: string, label: string): void {
-    if (calendar.ownerId !== userId) throw new ForbiddenException(`只能操作自己的${label}`)
+    if (calendar.ownerId !== userId) throw new BizException(BizErrorCode.SCHEDULE_OWNERSHIP, `只能操作自己的${label}`, HttpStatus.FORBIDDEN)
   }
 
   private endOfDay(d: Date): Date {

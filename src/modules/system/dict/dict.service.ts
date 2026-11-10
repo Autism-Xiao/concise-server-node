@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import {
   assertImportLimit,
@@ -139,7 +141,7 @@ export class DictService extends BaseService<SysDictEntity> {
     await this.findActive(id)
     const itemCount = await this.dictRepository.manager.count(SysDictItemEntity, { where: { dictId: id } })
     if (itemCount > 0) {
-      throw new BadRequestException(`该字典下存在 ${itemCount} 个字典项，请先删除字典项`)
+      throw new BizException(BizErrorCode.DICT_HAS_ITEMS, `该字典下存在 ${itemCount} 个字典项，请先删除字典项`, HttpStatus.BAD_REQUEST)
     }
     await this.dictRepository.createQueryBuilder().update(SysDictEntity).set({ delFlag: 1, updateTime: new Date() }).where('id = :id', { id }).execute()
   }
@@ -160,7 +162,7 @@ export class DictService extends BaseService<SysDictEntity> {
       qb.andWhere('dict.id <> :excludeId', { excludeId })
     }
     if (await qb.getExists()) {
-      throw new BadRequestException(`字典编码「${dictCode}」已存在`)
+      throw new BizException(BizErrorCode.DICT_CODE_CONFLICT, `字典编码「${dictCode}」已存在`, HttpStatus.BAD_REQUEST)
     }
   }
 
@@ -202,7 +204,7 @@ export class DictService extends BaseService<SysDictEntity> {
     if (typeRows.length) {
       const { columns, dataRows } = resolveImportLayout<DictTypeImportField>(typeRows, typeHeaderRow, DICT_TYPE_IMPORT_ALIASES)
       if (columns.dictCode === undefined) {
-        throw new BadRequestException('「字典类型」工作表未找到「字典编码」列，请使用导入模板')
+        throw new BizException(BizErrorCode.IMPORT_HEADER_MISMATCH, '「字典类型」工作表未找到「字典编码」列，请使用导入模板', HttpStatus.BAD_REQUEST)
       }
       assertImportLimit(dataRows)
       result.total += dataRows.length
@@ -276,7 +278,11 @@ export class DictService extends BaseService<SysDictEntity> {
     if (itemRows.length) {
       const { columns, dataRows } = resolveImportLayout<DictItemImportField>(itemRows, itemHeaderRow, DICT_ITEM_IMPORT_ALIASES)
       if (columns.dictCode === undefined || columns.itemText === undefined || columns.itemValue === undefined) {
-        throw new BadRequestException('「字典项」工作表缺少「字典编码 / 字典项文本 / 字典项值」列，请使用导入模板')
+        throw new BizException(
+          BizErrorCode.IMPORT_HEADER_MISMATCH,
+          '「字典项」工作表缺少「字典编码 / 字典项文本 / 字典项值」列，请使用导入模板',
+          HttpStatus.BAD_REQUEST
+        )
       }
       assertImportLimit(dataRows)
       result.total += dataRows.length

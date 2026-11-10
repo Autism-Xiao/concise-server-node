@@ -1,10 +1,12 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, LessThan, Repository } from 'typeorm'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { storageProvider } from '../../../shared/storage'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
@@ -338,7 +340,7 @@ export class FileService {
       throw new NotFoundException('该文件没有物理存储记录')
     }
     if (!(await storageProvider().exists(item.storageKey))) {
-      throw new NotFoundException('文件已丢失（可能被手动清理过存储目录）')
+      throw new BizException(BizErrorCode.FILE_MISSING, '文件已丢失（可能被手动清理过存储目录）', HttpStatus.NOT_FOUND)
     }
     return { storageKey: item.storageKey, name: item.name, mime: item.mime || 'application/octet-stream', size: item.size }
   }
@@ -359,7 +361,7 @@ export class FileService {
     }
     const provider = storageProvider()
     if (!(await provider.exists(item.storageKey))) {
-      throw new NotFoundException('文件已丢失（可能被手动清理过存储目录）')
+      throw new BizException(BizErrorCode.FILE_MISSING, '文件已丢失（可能被手动清理过存储目录）', HttpStatus.NOT_FOUND)
     }
 
     const ext = this.normalizeExt(item.ext || getExtname(item.name))

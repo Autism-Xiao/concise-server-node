@@ -73,7 +73,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // 2. Nest 内置异常：HTTP 状态保留，code 映射成业务码
     if (exception instanceof HttpException) {
       const status = exception.getStatus()
-      const code = HTTP_STATUS_TO_BIZ_CODE[status] ?? BizErrorCode.INTERNAL_ERROR
+      // 已知状态走映射表；未映射的 4xx 用 status 本身兜底（4xx 段数字与 HTTP 语义一致，如 409 冲突），
+      // 5xx 才是真正的服务器内部错误。之前的写法会把 409/422 等伪装成 1006「内部错误」，自相矛盾。
+      const code = HTTP_STATUS_TO_BIZ_CODE[status] ?? (status >= 500 ? BizErrorCode.INTERNAL_ERROR : status)
       return response.status(status).json(fail(code, localize(status, pickMessage(exception))))
     }
 

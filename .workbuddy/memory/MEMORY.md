@@ -40,6 +40,15 @@
 - 密码：新数据 Argon2id（`@node-rs/argon2`，m=19456/t=2/p=1，约 18ms），历史 jeecg 格式在登录成功后就地升级；`UserService.verifyPassword` 是**异步**的，调用要 await
 - 权限集合走 `PermissionCacheService`（按角色缓存）；任何改动 role_permission / sys_permission 的写路径都要调用 invalidateRole / invalidateAll
 
+## 业务错误码（2026-11-10 起，新接口照此办理）
+
+- 枚举 `src/common/enums/biz-error-code.enum.ts` 已分段：**冻结段**（0 / 41x / 1001~1009 / 429 / 503，**只增不改**，前端与冒烟都在断言）+ 21xx 认证 / 31xx 角色 / 41xx 组织 / 51xx 配置 / 61xx 文件导入 / 71xx 协作 / 81xx 租户 / 91xx 运维
+- **加码铁律：一码一消费者**——新增前必须写明谁在用它分支（前端 UI / 监控聚合 / 重试策略）；同类细节靠 message 区分（导入缺哪列都算 6103），否则就是造死码（414/415/416 就是这么来的，已删）
+- 抛业务错用 `BizException(BizErrorCode.X, '人话文案', 可选HttpStatus)`；**能按 code 分支就别解析 message 文本**（文案随时会改）
+- 过滤器规则：BizException 用枚举码 / 已知 HttpException 查映射表 / **未映射 4xx 用 status 本身** / 仅 5xx 回落 1006
+- 前端 `ApiError` 已有 `code?: number`，`http.ts` 已透传 `json.code`；**401 的 body code 恒为 1003/1007，永远不是 401**（旧 `json.code === 401` 死分支已删，别再写回来）
+- `/v1/files/purge` 的 `ids` 必须是**字符串数组**（传 number 报 1001）；冒烟脚本调用后必须检查 `code`，否则静默失败
+
 ## 页面水印（2026-11-06 三期）
 
 - 模块 `src/modules/system/watermark/`：全局 `sys_watermark_setting`（单行）+ `sys_user_watermark`（NULL=继承）；生效规则唯一入口 `resolveWatermarkState`（off > enforced=2 > enforced=1 > forced > 用户??全局），别在别处重写判定

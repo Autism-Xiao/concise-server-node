@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { UserService } from '../../user/user.service'
@@ -66,7 +68,11 @@ export class TaskService extends BaseService<TaskEntity> {
     const task = await this.findOne(id)
     const allowed = STATUS_TRANSITIONS[task.status] ?? []
     if (!allowed.includes(status)) {
-      throw new BadRequestException(`任务不能从「${STATUS_LABELS[task.status] ?? task.status}」变更为「${STATUS_LABELS[status] ?? status}」`)
+      throw new BizException(
+        BizErrorCode.TASK_INVALID_TRANSITION,
+        `任务不能从「${STATUS_LABELS[task.status] ?? task.status}」变更为「${STATUS_LABELS[status] ?? status}」`,
+        HttpStatus.BAD_REQUEST
+      )
     }
     return super.update(id, { status })
   }

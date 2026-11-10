@@ -4,6 +4,8 @@ import { FileInterceptor } from '@nestjs/platform-express'
 import type { Response } from 'express'
 
 import { BatchDeleteDto } from '../../common/dto/batch-delete.dto'
+import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
+import { BizException } from '../../common/exceptions/biz.exception'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
@@ -133,7 +135,7 @@ export class RoleV1Controller {
       const text = file.buffer.toString('utf8')
       // utf8 解码失败会产生替换字符，明确报错比入库乱码好排查
       if (text.includes('\uFFFD')) {
-        throw new BadRequestException('CSV 文件编码不是 UTF-8，请改用 .xlsx 导入，或另存为「CSV UTF-8（逗号分隔）」')
+        throw new BizException(BizErrorCode.IMPORT_CSV_ENCODING, 'CSV 文件编码不是 UTF-8，请改用 .xlsx 导入，或另存为「CSV UTF-8（逗号分隔）」')
       }
       return this.roleService.importRoles(parseCsv(text), 1)
     }

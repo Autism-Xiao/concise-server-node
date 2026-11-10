@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, Logger } from '@nestjs/common'
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm'
 import { DataSource, Repository } from 'typeorm'
 
+import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
+import { BizException } from '../../common/exceptions/biz.exception'
 import { paginate, Pagination, type Pagination as PaginationType } from '../../helper/paginate'
 import { RealtimeService, WS_EVENTS, type MessageNewPayload } from '../../shared/realtime/realtime.service'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
@@ -60,11 +62,11 @@ export class MessageService {
     }
     const missing = entries.filter(entry => !byKey.has(entry))
     if (missing.length > 0) {
-      throw new BadRequestException(`以下接收人不存在或已删除：${missing.join('、')}`)
+      throw new BizException(BizErrorCode.MESSAGE_RECEIVER_INVALID, `以下接收人不存在或已删除：${missing.join('、')}`, HttpStatus.BAD_REQUEST)
     }
     const validIds = [...new Set(entries.map(entry => byKey.get(entry) as string))]
     if (validIds.length === 0) {
-      throw new BadRequestException('接收人不存在或已删除')
+      throw new BizException(BizErrorCode.MESSAGE_RECEIVER_INVALID, '接收人不存在或已删除', HttpStatus.BAD_REQUEST)
     }
 
     // 多步写必须事务；事务内一律 manager.getRepository()（默认连接看不到未提交数据）

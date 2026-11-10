@@ -1,8 +1,10 @@
-import { Injectable, BadRequestException } from '@nestjs/common'
+import { Injectable, BadRequestException, HttpStatus } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository, type DeepPartial } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { UserEntity } from '../../user/entities/user.entity'
@@ -59,14 +61,14 @@ export class DeptService extends BaseService<DeptEntity> {
     if (dto.parentId !== undefined) {
       const parentId = dto.parentId || null
       if (parentId === id) {
-        throw new BadRequestException('父级部门不能是自身')
+        throw new BizException(BizErrorCode.DEPT_CYCLE, '父级部门不能是自身', HttpStatus.BAD_REQUEST)
       }
       if (parentId) {
         await this.findOne(parentId)
         const all = await this.repository.find()
         const descendantIds = this.collectDescendantIds(all, id)
         if (descendantIds.has(parentId)) {
-          throw new BadRequestException('父级部门不能是自己的下级')
+          throw new BizException(BizErrorCode.DEPT_CYCLE, '父级部门不能是自己的下级', HttpStatus.BAD_REQUEST)
         }
       }
       dto.parentId = parentId
@@ -92,7 +94,7 @@ export class DeptService extends BaseService<DeptEntity> {
     await this.findOne(id)
     const childCount = await this.repository.count({ where: { parentId: id, delFlag: '0' } })
     if (childCount > 0) {
-      throw new BadRequestException('该部门下存在子部门，无法删除')
+      throw new BizException(BizErrorCode.DEPT_HAS_CHILDREN, '该部门下存在子部门，无法删除', HttpStatus.BAD_REQUEST)
     }
     // 走 sys_user_depart 关联表统计，并排除已软删用户（否则删过的人会一直挡住部门删除）
     const userCount = await this.repository.manager
@@ -101,7 +103,7 @@ export class DeptService extends BaseService<DeptEntity> {
       .where('user.del_flag = 0')
       .getCount()
     if (userCount > 0) {
-      throw new BadRequestException('该部门下存在用户，无法删除')
+      throw new BizException(BizErrorCode.DEPT_HAS_USERS, '该部门下存在用户，无法删除', HttpStatus.BAD_REQUEST)
     }
     await this.repository.update(id, { delFlag: '1' })
   }
@@ -177,7 +179,7 @@ export class DeptService extends BaseService<DeptEntity> {
     if (parentId) {
       const parent = await this.repository.findOne({ where: { id: parentId } })
       if (!parent) {
-        throw new BadRequestException('父级部门不存在')
+        throw new BizException(BizErrorCode.DEPT_PARENT_NOT_FOUND, '父级部门不存在', HttpStatus.BAD_REQUEST)
       }
       prefix = parent.orgCode
     }
