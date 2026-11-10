@@ -292,7 +292,8 @@ export class AuthService {
       throw new BizException(BizErrorCode.REFRESH_TOKEN_INVALID, '登录状态已失效，请重新登录', HttpStatus.UNAUTHORIZED)
     }
 
-    const user = await this.userService.findOneDetail(String(payload.id))
+    // 认证专用查询：refresh 请求无 accessToken，租户上下文是 0，走 findOneDetail 会被可见性断言误杀
+    const user = await this.userService.findOneDetailForAuth(String(payload.id))
     const result = await this.issueTokens(user)
     // 轮换：旧 refreshToken 立即作废（TTL 到其自然过期，不占用长期空间）
     await this.onlineService.markRevoked(refreshToken, this.remainingTtl(refreshToken, this.parseExpiresIn(this.jwt.refreshExpiresIn)))

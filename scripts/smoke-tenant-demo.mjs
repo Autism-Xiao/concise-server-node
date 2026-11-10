@@ -111,9 +111,15 @@ if (probeId) {
     check('无该租户归属的账号切过去被 403 拒绝', forbidden.status === 403, `status=${forbidden.status}`)
     const own = await api('/tenants/mine', { token: probeToken })
     // 注意别用 /depts 判断：新账号没有任何角色，会被权限守卫拦成 403，和租户无关。
-    // mine 只要登录就能访问，正好用来验证「无归属账号 → 租户列表为空、上下文落到 0」。
-    check('无归属账号的 mine 正常返回（不被租户层拦）', own.status === 200, `status=${own.status}`)
-    check('无归属账号名下租户为空', Array.isArray(own.data?.tenants) && own.data.tenants.length === 0, JSON.stringify(own.data?.tenants))
+    // mine 只要登录就能访问，正好用来验证归属语义。
+    check('无该租户归属账号的 mine 正常返回（不被租户层拦）', own.status === 200, `status=${own.status}`)
+    // 经 API 创建的账号会自动归属默认租户 1（UserService.resolveJoinTenantId），
+    // 所以这里应恰好只有默认租户一项，而不是空列表
+    check(
+      '新建账号默认归属租户 1（自动归属）',
+      Array.isArray(own.data?.tenants) && own.data.tenants.length === 1 && own.data.tenants[0]?.id === 1,
+      JSON.stringify(own.data?.tenants)
+    )
   }
   await api(`/users/${probeId}`, { method: 'DELETE', token })
   console.log('已清理临时账号', probeName)

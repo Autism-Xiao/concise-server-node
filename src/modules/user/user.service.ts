@@ -790,14 +790,27 @@ export class UserService extends BaseService<UserEntity> {
     return qb.getMany()
   }
 
-  /** 详情：带出角色 + 部门 + 岗位（过滤已软删，不存在抛 404） */
+  /** 详情：带出角色 + 部门 + 岗位（过滤已软删，不存在抛 404），并做租户可见性断言 */
   async findOneDetail(id: string): Promise<UserEntity> {
+    const user = await this.findOneDetailForAuth(id)
+    // 跨租户按「不存在」处理，不泄漏账号是否存在
+    await this.assertUserVisible(id)
+    return user
+  }
+
+  /**
+   * 认证流程专用的详情查询（refreshToken 换发等）：不做租户可见性断言。
+   *
+   * 为什么单独抽出来：refresh 请求按设计不带 accessToken（访问令牌此时往往已过期），
+   * 租户中间件对无令牌请求给 tenantId=0 的空上下文，assertUserVisible 会把任何人
+   * 都判成「用户不存在」（1=0），导致续期必然失败。令牌已验签，这里的 id 可信，
+   * 不需要再按租户收窄——管理端语义的可见性断言只属于 findOneDetail。
+   */
+  async findOneDetailForAuth(id: string): Promise<UserEntity> {
     const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true, posts: true } })
     if (!user) {
       throw new NotFoundException('用户不存在')
     }
-    // 跨租户按「不存在」处理，不泄漏账号是否存在
-    await this.assertUserVisible(id)
     this.applyDepts(user)
     await this.attachLevel([user])
     await this.attachWatermark([user])

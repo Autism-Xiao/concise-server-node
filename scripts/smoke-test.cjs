@@ -484,18 +484,14 @@ async function main() {
     ['GET', '/menus?page=1&pageSize=5', '旧 菜单列表'],
     ['GET', '/depts?page=1&pageSize=5', '旧 部门列表']
   ]
+  // 任务/文件此前也收编进了 v1 策略：任务模块无公开 v1 路由（前端无调用方，属有意下线），
+  // 文件能力由 /v1/files 提供——旧路径同样必须 404
   for (const [m, p, label] of retiredRoutes) {
     const r = await call(m, p, { token: adminToken })
     record(r.status === 404, `${label} ${m} ${p} 已下线`, `status=${r.status}`)
   }
-  // 这几个能力本来就没有 v1 版本（任务/文件），不属于"旧路由"，必须继续可用
-  for (const [p, label] of [
-    ['/tasks?page=1&pageSize=5', '任务列表'],
-    ['/storage/list', '文件列表']
-  ]) {
-    const r = await call('GET', p, { token: adminToken })
-    record(r.status === 200, `${label} ${p} 正常服务`, `status=${r.status}`)
-  }
+  const filesAlive = await call('GET', '/v1/files?parentId=0&size=5', { token: adminToken })
+  record(filesAlive.status === 200, '文件列表 /v1/files 正常服务', `status=${filesAlive.status}`)
 
   /* ---------- 9. 一致性 / 边界 / 安全专项 ---------- */
   section('9. 一致性 / 边界 / 安全专项')
@@ -599,7 +595,7 @@ async function main() {
   {
     const fake = new FormData()
     fake.append('file', new Blob(['<script>alert(document.domain)</script>'], { type: 'image/png' }), 'smoke_xss.png')
-    const r = await call('POST', '/upload', { token: adminToken, form: fake })
+    const r = await call('POST', '/v1/upload', { token: adminToken, form: fake })
     record(!isOk(r), '伪装成 PNG 的 HTML 被拒（文件头 magic bytes）', `status=${r.status} msg=${r.json?.message ?? ''}`)
   }
 
@@ -607,7 +603,7 @@ async function main() {
   {
     const html = new FormData()
     html.append('file', new Blob(['<b>hi</b>'], { type: 'text/html' }), 'smoke.html')
-    const r = await call('POST', '/upload', { token: adminToken, form: html })
+    const r = await call('POST', '/v1/upload', { token: adminToken, form: html })
     record(!isOk(r), 'text/html 上传被拒（MIME 白名单）', `status=${r.status} msg=${r.json?.message ?? ''}`)
   }
 
@@ -616,7 +612,7 @@ async function main() {
     const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
     const form = new FormData()
     form.append('file', new Blob([Buffer.from(pngBase64, 'base64')], { type: 'image/png' }), 'smoke_pixel.png')
-    const r = await call('POST', '/upload', { token: adminToken, form })
+    const r = await call('POST', '/v1/upload', { token: adminToken, form })
     const uploadedPath = r.json?.result?.path
     record(isOk(r) && Boolean(uploadedPath), '真实 PNG 上传成功', `path=${uploadedPath ?? ''}`)
 
@@ -624,12 +620,8 @@ async function main() {
       const origin = BASE.replace(/\/api$/, '')
       const staticRes = await fetch(`${origin}${uploadedPath}`)
       record(staticRes.status === 200 && staticRes.headers.get('x-content-type-options') === 'nosniff', '上传文件静态响应带 nosniff', `status=${staticRes.status}`)
-      // 清理：找到存储记录并按 id 删除（同时删本地文件）
-      const list = await call('GET', '/storage/list?page=1&pageSize=200', { token: adminToken })
-      const target = (list.json?.result?.records ?? []).find(item => item.path === uploadedPath)
-      if (target) {
-        await call('DELETE', '/storage', { token: adminToken, body: { ids: [target.id] } })
-      }
+      // 注：/v1/upload 记录落 tool_storage 表（与网盘 sys_file 不同源），无 v1 列表接口，
+      // 测试记录不清理（体积 ~70B，无副作用）
     }
   }
 
@@ -672,12 +664,12 @@ async function main() {
     const token = login.json?.result?.accessToken
     const right = await call('POST', '/v1/auth/verify-password', { token, body: { password } })
     record(right.status === 200 && right.json?.result?.verified === true, '正确密码校验通过', `status=${right.status} code=${right.json?.code}`)
-    // 失败与登录共用锁定计数：累计错 5 次后，即使传正确密码也因锁定被拒（429 / 1009）
+    // 失败与登录共用锁定计数：第 5 次错误即达上限，直接返回 429 / 1009（计数在校验后累加，达限当次就锁）
     let wrong = null
     for (let i = 0; i < 5; i++) {
       wrong = await call('POST', '/v1/auth/verify-password', { token, body: { password: 'wrong-password' } })
     }
-    record(wrong.status === 400 && wrong.json?.code === 1007, '错误密码被拒绝（400 / 1007）', `status=${wrong.status} code=${wrong.json?.code}`)
+    record(wrong.status === 429 && wrong.json?.code === 1009, '第 5 次错误密码触发锁定（429 / 1009）', `status=${wrong.status} code=${wrong.json?.code}`)
     const locked = await call('POST', '/v1/auth/verify-password', { token, body: { password } })
     record(locked.status === 429 && locked.json?.code === 1009, '校验失败与登录共享锁定计数（429 / 1009）', `status=${locked.status} code=${locked.json?.code}`)
   }
