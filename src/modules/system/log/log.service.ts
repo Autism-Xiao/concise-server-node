@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository, type DeleteQueryBuilder, type SelectQueryBuilder } from 'typeorm'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { assertImportRows, createImportResult, failImportRow, type ImportResult, pickCell, resolveImportLayout } from '../../../helper/import/excel-import'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
@@ -353,7 +355,7 @@ export class LogService {
   ): Promise<ImportResult> {
     const { columns, dataRows } = resolveImportLayout(rows, headerRowNumber, aliases as Record<LogImportField, string[]>)
     if (columns.username === undefined) {
-      throw new BadRequestException('未找到「用户名」列，请使用导入模板的表头')
+      throw new BizException(BizErrorCode.IMPORT_HEADER_MISMATCH, '未找到「用户名」列，请使用导入模板的表头', HttpStatus.BAD_REQUEST)
     }
     assertImportRows(dataRows)
 

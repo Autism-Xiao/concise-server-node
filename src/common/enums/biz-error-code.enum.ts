@@ -52,8 +52,6 @@ export enum BizErrorCode {
   REFRESH_TOKEN_INVALID = 2101,
   /** SSO 登录凭证（state/code）无效或已过期 —— 消费方：SSO 回调页展示「重新发起登录」 */
   SSO_CREDENTIAL_INVALID = 2102,
-  /** 密码已过期或被管理员标记，必须先改密 —— 消费方：前端强制改密弹窗 */
-  PASSWORD_EXPIRED = 2103,
   /** 原密码校验失败（改密流程） —— 消费方：改密弹窗定位到「原密码」输入框 */
   OLD_PASSWORD_INVALID = 2104,
 
@@ -96,7 +94,7 @@ export enum BizErrorCode {
   UPLOAD_SIGNATURE_MISMATCH = 6102,
   /** 导入模板表头不匹配（缺列/表头不对） —— 消费方：导入弹窗展示「下载模板」按钮 */
   IMPORT_HEADER_MISMATCH = 6103,
-  /** 导入文件没有数据行 */
+  /** 导入文件没有数据行（空文件 / 只有表头） —— 消费方：全部导入入口共用（assertImportRows + 各模块首行判空） */
   IMPORT_EMPTY = 6104,
   /** CSV 编码不是 UTF-8 */
   IMPORT_CSV_ENCODING = 6105,

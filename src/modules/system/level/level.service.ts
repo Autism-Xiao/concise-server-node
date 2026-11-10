@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Brackets, In, Repository } from 'typeorm'
 
+import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
+import { BizException } from '../../../common/exceptions/biz.exception'
 import { BaseService } from '../../../helper/crud/base.service'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
@@ -93,11 +95,11 @@ export class LevelService extends BaseService<LevelEntity> {
    */
   async importLevels(rows: string[][], headerRowNumber = 1, operator?: string): Promise<ImportResult> {
     if (!rows.length) {
-      throw new BadRequestException('文件内容为空，请下载模板后填写')
+      throw new BizException(BizErrorCode.IMPORT_EMPTY, '文件内容为空，请下载模板后填写', HttpStatus.BAD_REQUEST)
     }
     const { columns, dataRows } = resolveImportLayout<LevelImportField>(rows, headerRowNumber, LEVEL_IMPORT_ALIASES)
     if (columns.levelName === undefined) {
-      throw new BadRequestException('未找到「职级名称」列，请使用导入模板的表头')
+      throw new BizException(BizErrorCode.IMPORT_HEADER_MISMATCH, '未找到「职级名称」列，请使用导入模板的表头', HttpStatus.BAD_REQUEST)
     }
     assertImportRows(dataRows)
 

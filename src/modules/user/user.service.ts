@@ -1150,7 +1150,7 @@ export class UserService extends BaseService<UserEntity> {
    */
   async importUsers(rows: string[][], headerRowNumber = 1, operator?: string): Promise<UserImportResult> {
     if (!rows.length) {
-      throw new BadRequestException('文件内容为空，请下载模板后填写')
+      throw new BizException(BizErrorCode.IMPORT_EMPTY, '文件内容为空，请下载模板后填写', HttpStatus.BAD_REQUEST)
     }
     const { columns, dataRows } = this.resolveImportColumns(rows, headerRowNumber)
     if (columns.username === undefined) {
@@ -1160,7 +1160,7 @@ export class UserService extends BaseService<UserEntity> {
       throw new BadRequestException(`单次最多导入 ${USER_IMPORT_MAX_ROWS} 行，当前 ${dataRows.length} 行，请拆分后重试`)
     }
     if (!dataRows.length) {
-      throw new BadRequestException('表头下方没有数据行，请填写后再导入')
+      throw new BizException(BizErrorCode.IMPORT_EMPTY, '表头下方没有数据行，请填写后再导入', HttpStatus.BAD_REQUEST)
     }
 
     const [roles, depts, existingUsers, deletedUsers] = await Promise.all([

@@ -1,4 +1,7 @@
-import { BadRequestException } from '@nestjs/common'
+import { BadRequestException, HttpStatus } from '@nestjs/common'
+
+import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
+import { BizException } from '../../common/exceptions/biz.exception'
 
 /**
  * Excel 导入公共件
@@ -96,7 +99,9 @@ export function assertImportLimit(dataRows: ImportDataRow[]): void {
 /** 行数校验：空文件、只有表头、超上限三种情况给出可操作的提示 */
 export function assertImportRows(dataRows: ImportDataRow[]): void {
   if (!dataRows.length) {
-    throw new BadRequestException('表头下方没有数据行，请填写后再导入')
+    // 用 6104 而不是 1001：所有导入入口（角色/用户/字典/职级/岗位/公告/日志）都走这里，
+    // 前端与监控按同一个码就能识别「文件没填数据」，不必解析各模块不同的文案。
+    throw new BizException(BizErrorCode.IMPORT_EMPTY, '表头下方没有数据行，请填写后再导入', HttpStatus.BAD_REQUEST)
   }
   assertImportLimit(dataRows)
 }

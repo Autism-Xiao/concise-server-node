@@ -1,4 +1,4 @@
-import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
+import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
@@ -187,7 +187,7 @@ export class DictService extends BaseService<SysDictEntity> {
    */
   async importDicts(typeRows: string[][], typeHeaderRow: number, itemRows: string[][], itemHeaderRow: number, operator?: string): Promise<ImportResult> {
     if (!typeRows.length && !itemRows.length) {
-      throw new BadRequestException('文件内容为空，请下载模板后填写')
+      throw new BizException(BizErrorCode.IMPORT_EMPTY, '文件内容为空，请下载模板后填写', HttpStatus.BAD_REQUEST)
     }
 
     const result = createImportResult()
@@ -359,7 +359,7 @@ export class DictService extends BaseService<SysDictEntity> {
     }
 
     if (!result.total) {
-      throw new BadRequestException('文件里没有可导入的数据行，请在表头下方填写后再导入')
+      throw new BizException(BizErrorCode.IMPORT_EMPTY, '文件里没有可导入的数据行，请在表头下方填写后再导入', HttpStatus.BAD_REQUEST)
     }
     return result
   }

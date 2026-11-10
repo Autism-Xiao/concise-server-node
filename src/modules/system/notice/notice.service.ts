@@ -279,14 +279,14 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
    */
   async importNotices(rows: string[][], headerRowNumber = 1, operator?: string): Promise<NoticeImportResult> {
     if (!rows.length) {
-      throw new BadRequestException('文件内容为空，请下载模板后填写')
+      throw new BizException(BizErrorCode.IMPORT_EMPTY, '文件内容为空，请下载模板后填写', HttpStatus.BAD_REQUEST)
     }
     const { columns, dataRows } = this.resolveImportColumns(rows, headerRowNumber)
     if (columns.title === undefined) {
       throw new BizException(BizErrorCode.IMPORT_HEADER_MISMATCH, '未找到「标题」列，请使用导入模板的表头', HttpStatus.BAD_REQUEST)
     }
     if (!dataRows.length) {
-      throw new BadRequestException('表头下方没有数据行，请填写后再导入')
+      throw new BizException(BizErrorCode.IMPORT_EMPTY, '表头下方没有数据行，请填写后再导入', HttpStatus.BAD_REQUEST)
     }
     if (dataRows.length > NOTICE_IMPORT_MAX_ROWS) {
       throw new BadRequestException(`单次最多导入 ${NOTICE_IMPORT_MAX_ROWS} 行，当前 ${dataRows.length} 行，请拆分后重试`)
