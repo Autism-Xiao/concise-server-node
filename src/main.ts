@@ -8,6 +8,8 @@ import type { Express, Request, Response } from 'express'
 import { apiReference } from '@scalar/nestjs-api-reference'
 import helmet from 'helmet'
 import path from 'node:path'
+import { statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { AppModule, ObserveInstrument } from './app.module'
 import { envBoolean } from './global/env'
 import { LoggerService } from './shared/logger/logger.service'
@@ -55,6 +57,49 @@ function resolveTrustProxy(raw?: string): boolean | number | string {
 /** Swagger 是否开启：生产默认关闭，需要时用 SWAGGER_ENABLED=true 显式打开 */
 function swaggerEnabled(): boolean {
   return envBoolean('SWAGGER_ENABLED', process.env.NODE_ENV !== 'production')
+}
+
+/** 文档页脚本的本地路径（Scalar 的 cdn 参数传它就自动切单文件 UMD，不再 import jsdelivr） */
+const SCALAR_ASSET_FILE = 'scalar.standalone.js'
+
+/**
+ * 定位 `@scalar/api-reference` 的浏览器端 UMD 单文件（约 4.8MB）
+ *
+ * 为什么不用 CDN：`https://cdn.jsdelivr.net/npm/@scalar/api-reference/esm.js` 在国内网络下经常
+ * `ERR_CONNECTION_CLOSED`，`/api/docs` 直接白屏。改成本地伺服后完全离线可用。
+ *
+ * 为什么先 resolve 主入口再拼路径：该包 `exports` 没开放 `./dist/*`，直接
+ * `require.resolve('@scalar/api-reference/dist/browser/standalone.js')` 会抛 ERR_PACKAGE_PATH_NOT_EXPORTED。
+ */
+function resolveScalarBundleFile(): string | null {
+  try {
+    const entry = createRequire(__filename).resolve('@scalar/api-reference')
+    const file = path.join(path.dirname(entry), 'browser', 'standalone.js')
+    return statSync(file).isFile() ? file : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 伺服文档页的前端脚本（本地自托管，断网/被墙都能开）
+ *
+ * 只有开了文档才注册；没装包时返回 null，调用方会退回默认 CDN。
+ */
+function registerDocsAssets(app: NestExpressApplication, globalPrefix: string, bundleFile: string): string {
+  const assetUrl = `/${globalPrefix}/docs-assets/${SCALAR_ASSET_FILE}`
+  const instance = app.getHttpAdapter().getInstance() as Express
+  instance.get(assetUrl, (_req: Request, res: Response) => {
+    // sendFile 自带 ETag / Last-Modified，二次访问直接 304，不会每次重下 4.8MB。
+    // dotfiles 必须放开：pnpm 的真实路径在 node_modules/.pnpm/** 里，默认策略会把 `.pnpm` 当隐藏目录返回 404/500。
+    res.sendFile(bundleFile, { maxAge: '1d', dotfiles: 'allow' }, err => {
+      if (err && !res.headersSent) {
+        console.error(`[docs] 文档脚本读取失败：${err.message}`)
+        res.status(500).json({ code: 500, message: '文档脚本读取失败', result: null, success: false, timestamp: Date.now() })
+      }
+    })
+  })
+  return assetUrl
 }
 
 /**
@@ -149,8 +194,8 @@ async function bootstrap() {
   )
 
   // 接口文档三件套（生产默认关闭，暴露 117 个接口的入参结构与权限点等于给扫描器画地图）：
-  //  - /api/docs      Scalar 现代化文档 UI（默认入口；UI 由 jsdelivr CDN 加载，需浏览器联网）
-  //  - /api/docs-ui   原版 swagger-ui 备用入口（纯自托管，内网/断网环境用这个）
+  //  - /api/docs      Scalar 现代化文档 UI（默认入口；前端脚本本地自托管，断网/被墙可用）
+  //  - /api/docs-ui   原版 swagger-ui 备用入口（纯自托管，Scalar 出问题时的兜底）
   //  - /api/docs-json OpenAPI JSON（冒烟脚本与工具依赖，地址保持不变）
   if (swaggerEnabled()) {
     const swaggerConfig = new DocumentBuilder()
@@ -195,7 +240,23 @@ async function bootstrap() {
       customSiteTitle: 'concise-server-node API'
     })
     // 主入口换 Scalar：左侧接口树 + 全局搜索 + 直接调试，theme 可在 Saturn/DeepSpace 等间切换
-    app.use(`/${globalPrefix}/docs`, apiReference({ content: document, pageTitle: 'concise-server-node API', theme: 'saturn', layout: 'modern' }))
+    // 脚本走本地自托管：传了 cdn 参数后渲染器会自动切「单文件 UMD + Scalar.createApiReference」，
+    // 不再去 import jsdelivr 的 esm.js（那条 URL 在国内网络下会 ERR_CONNECTION_CLOSED 直接白屏）
+    const scalarBundle = resolveScalarBundleFile()
+    const scalarCdn = scalarBundle ? registerDocsAssets(app, globalPrefix, scalarBundle) : undefined
+    if (!scalarBundle) {
+      console.warn('[docs] 未找到 @scalar/api-reference 的本地 UMD 包，文档页将回退到 jsdelivr CDN（国内网络可能打不开）')
+    }
+    app.use(
+      `/${globalPrefix}/docs`,
+      apiReference({
+        content: document,
+        pageTitle: 'concise-server-node API',
+        theme: 'saturn',
+        layout: 'modern',
+        ...(scalarCdn ? { cdn: scalarCdn } : {})
+      })
+    )
   }
 
   await app.listen(port)
