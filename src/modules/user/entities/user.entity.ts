@@ -74,6 +74,18 @@ export class UserEntity {
   @Column({ type: 'tinyint', default: 0, comment: '下次登录强制改密(1是 0否)' })
   mustChangePassword?: number
 
+  /**
+   * TOTP 密钥（base32，两步验证）
+   * select:false：任何列表/详情查询都不会带出密钥，只有显式 addSelect 的认证链路能读
+   * （登录门禁 / TotpService）。setup 时写入，activate 成功后生效，deactivate 清空。
+   */
+  @ApiPropertyOptional({ description: 'TOTP 密钥（base32，接口不下发）', nullable: true, example: '' })
+  @Column({ type: 'varchar', length: 64, nullable: true, select: false, name: 'totp_secret', comment: 'TOTP 密钥(base32, 两步验证)' })
+  totpSecret?: string | null
+  @ApiPropertyOptional({ description: '是否开启两步验证：1 开 / 0 关', example: 0, enum: [0, 1] })
+  @Column({ type: 'tinyint', default: 0, name: 'totp_enabled', comment: '两步验证(1开 0关)' })
+  totpEnabled?: number
+
   @ApiProperty({ description: '状态：1 正常 / 2 冻结（对齐 sys_user）', example: 1, enum: [1, 2] })
   @Column({ type: 'tinyint', nullable: true, comment: '状态(1-正常,2-冻结)' })
   status: number

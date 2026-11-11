@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Length } from 'class-validator'
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Length, Matches } from 'class-validator'
 
 export class LoginDto {
   @ApiProperty({ description: '用户名', example: 'admin' })
@@ -19,6 +19,15 @@ export class LoginDto {
   @IsOptional()
   @IsString()
   captchaTicket?: string
+
+  @ApiPropertyOptional({
+    description: '两步验证 6 位动态码（开启 2FA 的账号必填；未开启请勿传，传了也不校验）',
+    example: '123456'
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{6}$/, { message: '两步验证码须为 6 位数字' })
+  totpCode?: string
 }
 
 /** 滑块验证码校验入参 */

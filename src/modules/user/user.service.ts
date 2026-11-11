@@ -841,7 +841,8 @@ export class UserService extends BaseService<UserEntity> {
   async findByUsername(username: string): Promise<UserEntity | null> {
     const user = await this.repository
       .createQueryBuilder('user')
-      .addSelect(['user.password', 'user.salt'])
+      // totp 两列是 select:false（防密钥随接口外泄），登录门禁要读，认证专用查询里显式带回
+      .addSelect(['user.password', 'user.salt', 'user.totpSecret', 'user.totpEnabled'])
       .leftJoinAndSelect('user.roles', 'role')
       .leftJoinAndSelect('user.depts', 'dept')
       .where('user.username = :username', { username })

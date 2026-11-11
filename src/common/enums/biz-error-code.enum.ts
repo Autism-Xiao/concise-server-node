@@ -54,6 +54,10 @@ export enum BizErrorCode {
   SSO_CREDENTIAL_INVALID = 2102,
   /** 原密码校验失败（改密流程） —— 消费方：改密弹窗定位到「原密码」输入框 */
   OLD_PASSWORD_INVALID = 2104,
+  /** 登录需要两步验证码（账号已开启 2FA 但未带 totpCode） —— 消费方：登录页弹出 6 位动态码输入框 */
+  TOTP_REQUIRED = 2105,
+  /** 两步验证码不正确或已过期 —— 消费方：登录页/2FA 弹窗清空输入框并提示重试 */
+  TOTP_INVALID = 2106,
 
   // ============ 3xxx 权限与角色（消费方：角色管理页禁用按钮/监控聚合） ============
 

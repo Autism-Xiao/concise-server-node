@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { captchaConfig, jwtConfig, type CaptchaConfig, type JwtConfig } from '../../../config'
 import { envNumber } from '../../../global/env'
 import { isArgon2Hash } from '../../../utils/password.util'
+import { verifyTotpCode } from '../../../shared/totp/totp.util'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { RateLimitService } from '../../../shared/rate-limit/rate-limit.service'
@@ -147,6 +148,20 @@ export class AuthService {
       await this.assertNotLocked(failKey)
 
       const user = await this.userService.findByUsername(dto.username)
+      // 两步验证门禁：先本地预检密码（不单独计数，失败统一抛 1007 由既有失败统计路径处理），
+      // 密码通过后才校验 TOTP —— 避免不验密码就能探测「账号是否开了 2FA」。
+      // 预检通过后主流程会再验一次密码（Argon2 约 18ms，换取不动主流程代码）。
+      if (user && Number(user.totpEnabled ?? 0) === 1) {
+        if (!(await this.userService.verifyPassword(user, dto.password))) {
+          throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
+        }
+        if (!dto.totpCode) {
+          throw new BizException(BizErrorCode.TOTP_REQUIRED, '该账号已开启两步验证，请输入 6 位动态验证码', HttpStatus.BAD_REQUEST)
+        }
+        if (!verifyTotpCode(user.totpSecret ?? '', dto.totpCode)) {
+          throw new BizException(BizErrorCode.TOTP_INVALID, '两步验证码不正确或已过期，请重试', HttpStatus.BAD_REQUEST)
+        }
+      }
       if (!user) {
         throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
       }

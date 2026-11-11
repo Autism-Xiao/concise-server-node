@@ -14,6 +14,7 @@ import { isSuperRole } from '../../utils/super-role.util'
 import { randomId32 } from '../../utils/password.util'
 import { RoleEntity } from './entities/role.entity'
 import { MenuEntity } from '../menu/entities/menu.entity'
+import { TenantEntity } from '../system/tenant/entities/tenant.entity'
 import type { CreateRoleDto } from './dto/create-role.dto'
 import type { QueryRoleDto } from './dto/query-role.dto'
 import type { UpdateRoleDto } from './dto/update-role.dto'
@@ -42,22 +43,40 @@ export class RoleService extends BaseService<RoleEntity> {
   constructor(
     @InjectRepository(RoleEntity)
     private readonly roleRepository: Repository<RoleEntity>,
+    @InjectRepository(TenantEntity)
+    private readonly tenantRepository: Repository<TenantEntity>,
     private readonly permissionCache: PermissionCacheService,
     private readonly authUserCache: AuthUserCacheService
   ) {
     super(roleRepository, '角色')
   }
 
-  /** 角色列表（含已授权菜单），角色数量少不分页，keyword 模糊匹配名称/编码 */
-  async listByQuery(query: QueryRoleDto): Promise<RoleEntity[]> {
+  /**
+   * 角色列表（含已授权菜单），角色数量少不分页，keyword 模糊匹配名称/编码
+   *
+   * 附带 tenantName：平台视角下会同时看到多个租户各自的角色模板（每个租户一套
+   * admin/editor/viewer，同名同码是设计如此），不标归属会被当成「重复数据」。
+   * tenant_id=0 是平台共享角色，没有租户名可标。
+   */
+  async listByQuery(query: QueryRoleDto): Promise<Array<RoleEntity & { tenantName?: string }>> {
     const rolesQb = this.roleRepository.createQueryBuilder('role').leftJoinAndSelect('role.permissions', 'perm').orderBy('role.createTime', 'ASC')
     applyTenantScope(rolesQb, 'role')
     const roles = await rolesQb.getMany()
     const keyword = query.keyword?.trim().toLowerCase()
-    if (!keyword) {
-      return roles
+    const filtered = keyword
+      ? roles.filter(role => (role.roleName ?? '').toLowerCase().includes(keyword) || (role.roleCode ?? '').toLowerCase().includes(keyword))
+      : roles
+    const tenantIds = [...new Set(filtered.map(role => Number(role.tenantId ?? 0)).filter(id => id > 0))]
+    if (!tenantIds.length) {
+      return filtered
     }
-    return roles.filter(role => (role.roleName ?? '').toLowerCase().includes(keyword) || (role.roleCode ?? '').toLowerCase().includes(keyword))
+    const tenants = await this.tenantRepository.find({ where: { id: In(tenantIds) }, select: { id: true, name: true } })
+    const nameById = new Map(tenants.map(tenant => [tenant.id, tenant.name]))
+    return filtered.map(role => {
+      const tid = Number(role.tenantId ?? 0)
+      // oxlint-disable-next-line typescript/no-misused-spread -- 实体实例挂计算字段，响应走 JSON 序列化
+      return tid > 0 ? { ...role, tenantName: nameById.get(tid) } : role
+    })
   }
 
   /** 角色下拉选项：只暴露 id/名称/编码，供用户表单分配角色、列表筛选（登录即可用，不含授权明细）；停用角色不给新分配 */

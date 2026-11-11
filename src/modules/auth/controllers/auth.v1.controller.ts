@@ -5,9 +5,11 @@ import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { ChangePasswordDto } from '../dto/change-password.dto'
 import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
+import { TwoFactorCodeDto } from '../dto/two-factor.dto'
 import { VerifyPasswordDto } from '../dto/verify-password.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
+import { TotpService } from '../services/totp.service'
 import type { UserEntity } from '../../user/entities/user.entity'
 
 /**
@@ -22,7 +24,8 @@ import type { UserEntity } from '../../user/entities/user.entity'
 export class AuthV1Controller {
   constructor(
     private readonly authService: AuthService,
-    private readonly captchaService: CaptchaService
+    private readonly captchaService: CaptchaService,
+    private readonly totpService: TotpService
   ) {}
 
   @ApiOperation({ summary: '获取滑块验证码（v1）', description: '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId；答案存 Redis，5 分钟有效' })
@@ -98,6 +101,43 @@ export class AuthV1Controller {
     const raw = Array.isArray(header) ? header[0] : header
     const token = raw?.split(' ')[1] ?? ''
     return this.authService.changePassword(req.user.id, dto, token)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: '两步验证状态（v1）', description: '返回当前账号是否已开启 TOTP 两步验证（账户设置页展示用）' })
+  @Get('2fa/status')
+  twoFactorStatus(@Request() req: { user: { id: string } }) {
+    return this.totpService.getStatus(req.user.id)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
+    summary: '发起两步验证绑定（v1）',
+    description: '生成 TOTP 密钥与 otpauth:// URI（前端渲染二维码）。覆盖式：重复调用会换新密钥，旧二维码立即作废'
+  })
+  @RateLimit({ limit: 10, window: 300, message: '操作过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('2fa/setup')
+  twoFactorSetup(@Request() req: { user: { id: string; username: string } }) {
+    return this.totpService.setup(req.user.id, req.user.username)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: '激活两步验证（v1）', description: '校验 6 位动态码后正式开启；开启后登录必须携带 totpCode' })
+  @RateLimit({ limit: 10, window: 300, message: '验证码尝试过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('2fa/activate')
+  twoFactorActivate(@Request() req: { user: { id: string } }, @Body() dto: TwoFactorCodeDto) {
+    return this.totpService.activate(req.user.id, dto.code)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({ summary: '关闭两步验证（v1）', description: '校验 6 位动态码后关闭并清除密钥，登录恢复为仅密码' })
+  @RateLimit({ limit: 10, window: 300, message: '验证码尝试过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('2fa/deactivate')
+  twoFactorDeactivate(@Request() req: { user: { id: string } }, @Body() dto: TwoFactorCodeDto) {
+    return this.totpService.deactivate(req.user.id, dto.code)
   }
 
   @ApiBearerAuth('jwt')

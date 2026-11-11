@@ -34,7 +34,7 @@ export class RoleV1Controller {
   @ApiOkResponse({ description: '角色列表（统一分页结构；字典类数据 size = total，一次全量返回）', type: Pagination })
   @Perms('system:role:list')
   @Get()
-  async list(@Query() query: QueryRoleDto): Promise<Pagination<RoleEntity>> {
+  async list(@Query() query: QueryRoleDto): Promise<Pagination<RoleEntity & { tenantName?: string }>> {
     return toPagination(await this.roleService.listByQuery(query))
   }
 
