@@ -239,7 +239,9 @@ async function bootstrap() {
       jsonDocumentUrl: `${globalPrefix}/docs-json`,
       customSiteTitle: 'concise-server-node API'
     })
-    // 主入口换 Scalar：左侧接口树 + 全局搜索 + 直接调试，theme 可在 Saturn/DeepSpace 等间切换
+    // 主入口换 Scalar：左侧接口树 + 全局搜索 + 直接调试
+    // theme 用 default（浅色）而非 saturn（暗紫）：后者整页发暗、和 swagger-ui 观感割裂，
+    // default 的浅底 + 细边框更接近 Stripe 式商务文档；两者都支持在线调试，切换只改这一行
     // 脚本走本地自托管：传了 cdn 参数后渲染器会自动切「单文件 UMD + Scalar.createApiReference」，
     // 不再去 import jsdelivr 的 esm.js（那条 URL 在国内网络下会 ERR_CONNECTION_CLOSED 直接白屏）
     const scalarBundle = resolveScalarBundleFile()
@@ -252,7 +254,10 @@ async function bootstrap() {
       apiReference({
         content: document,
         pageTitle: 'concise-server-node API',
-        theme: 'saturn',
+        theme: 'default',
+        // theme 只定义色板，明暗初始态由 darkMode 决定（默认会跟随浏览器 prefers-color-scheme，
+        // 暗色系统用户打开仍是黑底——这里固定浅色初始态，右下角切换按钮保留）
+        darkMode: false,
         layout: 'modern',
         ...(scalarCdn ? { cdn: scalarCdn } : {})
       })
