@@ -4,6 +4,7 @@ import compression from 'compression'
 import { ConfigService } from '@nestjs/config'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import type { NestExpressApplication } from '@nestjs/platform-express'
+import type { Express, Request, Response } from 'express'
 import { apiReference } from '@scalar/nestjs-api-reference'
 import helmet from 'helmet'
 import path from 'node:path'
@@ -56,6 +57,41 @@ function swaggerEnabled(): boolean {
   return envBoolean('SWAGGER_ENABLED', process.env.NODE_ENV !== 'production')
 }
 
+/**
+ * API 端口的「门面」路由
+ *
+ * 3459 是纯 JSON API 服务，没有页面也没有图标。浏览器或 IM 里点开 http://host:3459
+ * 只会得到裸 404，标签页还会反复请求 /favicon.ico（控制台刷 404，看着像服务挂了）。
+ * 这里补两条不经过全局前缀的顶层路由：
+ *  - `/`            → 开发/开了文档时 302 到 /api/docs；关文档时回一条最小 JSON 证明「我活着」
+ *  - `/favicon.ico` → 204，浏览器拿到就不再重试（真图标属于前端 5173，不在这里）
+ *
+ * 注意注册位置：必须排在 helmet / compression 之后，否则这两条响应拿不到安全头。
+ */
+function registerApiLanding(app: NestExpressApplication, globalPrefix: string): void {
+  const instance = app.getHttpAdapter().getInstance() as Express
+  const docsPath = `/${globalPrefix}/docs`
+
+  instance.get('/', (_req: Request, res: Response) => {
+    if (swaggerEnabled()) {
+      // 文档是本机开发时最想看的东西，直接送过去；关文档的生产环境不泄露这个路径
+      res.redirect(302, docsPath)
+      return
+    }
+    res.json({
+      code: 0,
+      message: 'concise-server-node API',
+      result: null,
+      success: true,
+      timestamp: Date.now()
+    })
+  })
+
+  instance.get('/favicon.ico', (_req: Request, res: Response) => {
+    res.status(204).setHeader('Cache-Control', 'public, max-age=86400').end()
+  })
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     instrument: ObserveInstrument,
@@ -100,6 +136,9 @@ async function bootstrap() {
       }
     }
   })
+
+  // 顶层门面路由（/ 与 /favicon.ico）：排在 helmet 之后才带得上安全头
+  registerApiLanding(app, globalPrefix)
 
   // 全局 DTO 校验管道：自动转换类型 + 剔除未声明属性
   app.useGlobalPipes(
@@ -160,9 +199,11 @@ async function bootstrap() {
   }
 
   await app.listen(port)
-  console.log(`Server running on http://localhost:${port}/${globalPrefix}`)
+  // 明确写清「这里没有页面」：本机最常踩的坑就是把 API 端口当管理后台打开，看到 404 以为服务挂了
+  console.log(`API 就绪：http://localhost:${port}/${globalPrefix}（纯接口服务，不提供页面）`)
+  console.log(`管理后台页面不在这个端口，请开前端 dev server（默认 http://localhost:5173）`)
   if (swaggerEnabled()) {
-    console.log(`Swagger docs: http://localhost:${port}/${globalPrefix}/docs (Scalar) | swagger-ui: /${globalPrefix}/docs-ui`)
+    console.log(`接口文档：http://localhost:${port}/${globalPrefix}/docs (Scalar) | swagger-ui: /${globalPrefix}/docs-ui`)
   }
 }
 
