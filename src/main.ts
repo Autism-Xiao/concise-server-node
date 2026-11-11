@@ -4,6 +4,7 @@ import compression from 'compression'
 import { ConfigService } from '@nestjs/config'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import type { NestExpressApplication } from '@nestjs/platform-express'
+import { apiReference } from '@scalar/nestjs-api-reference'
 import helmet from 'helmet'
 import path from 'node:path'
 import { AppModule, ObserveInstrument } from './app.module'
@@ -108,8 +109,10 @@ async function bootstrap() {
     })
   )
 
-  // Swagger 接口文档：/api/docs 在线查看，/api/docs-json 导出 OpenAPI 规范
-  // 生产默认关闭（暴露 117 个接口的入参结构与权限点等于给扫描器画地图）
+  // 接口文档三件套（生产默认关闭，暴露 117 个接口的入参结构与权限点等于给扫描器画地图）：
+  //  - /api/docs      Scalar 现代化文档 UI（默认入口；UI 由 jsdelivr CDN 加载，需浏览器联网）
+  //  - /api/docs-ui   原版 swagger-ui 备用入口（纯自托管，内网/断网环境用这个）
+  //  - /api/docs-json OpenAPI JSON（冒烟脚本与工具依赖，地址保持不变）
   if (swaggerEnabled()) {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('concise-server-node API')
@@ -147,13 +150,19 @@ async function bootstrap() {
       .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'jwt')
       .build()
     const document = SwaggerModule.createDocument(app, swaggerConfig)
-    SwaggerModule.setup(`${globalPrefix}/docs`, app, document)
+    // swagger-ui 挂到 /docs-ui 备用，但 JSON 契约显式钉在 /docs-json（不改会跟着 setup 路径漂移）
+    SwaggerModule.setup(`${globalPrefix}/docs-ui`, app, document, {
+      jsonDocumentUrl: `${globalPrefix}/docs-json`,
+      customSiteTitle: 'concise-server-node API'
+    })
+    // 主入口换 Scalar：左侧接口树 + 全局搜索 + 直接调试，theme 可在 Saturn/DeepSpace 等间切换
+    app.use(`/${globalPrefix}/docs`, apiReference({ content: document, pageTitle: 'concise-server-node API', theme: 'saturn', layout: 'modern' }))
   }
 
   await app.listen(port)
   console.log(`Server running on http://localhost:${port}/${globalPrefix}`)
   if (swaggerEnabled()) {
-    console.log(`Swagger docs: http://localhost:${port}/${globalPrefix}/docs`)
+    console.log(`Swagger docs: http://localhost:${port}/${globalPrefix}/docs (Scalar) | swagger-ui: /${globalPrefix}/docs-ui`)
   }
 }
 
