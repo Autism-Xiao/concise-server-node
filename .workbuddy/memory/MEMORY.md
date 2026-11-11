@@ -17,7 +17,8 @@
 - 统一响应 `{ code, message, result, success, timestamp }`（**是 `result` 不是 `data`**，早期笔记记错过，写冒烟脚本时按 `data` 取会全 undefined）；业务异常也是 HTTP 200/4xx 靠 `code` 区分；全局 ValidationPipe（transform + whitelist）
 - 泛型需 `extends ObjectLiteral`；query 参数 DTO 加 `@Type(() => Number)`；运行命令需 `PATH="/d/projram/nodejs:$PATH"`（Node 24）
 - 3000 端口被外部进程占用，本地测试用 `PORT=3457`
-- Swagger 文档（912b3ed）：`/api/docs` 在线 UI、`/api/docs-json` OpenAPI JSON。约定：新模块 DTO 加 @ApiProperty、Controller 加 @ApiTags + @ApiOperation；Bearer 方案名 'jwt'。文档规则：每轮改动在 docs/ 生成变更 .md（见下方强规则）。
+- **包管理器是 pnpm（有 `pnpm-lock.yaml` + `node_modules/.pnpm` 布局），绝不能跑 npm install**：会崩 `Cannot read properties of null (reading 'matches')`（arborist 处理不了 pnpm 布局）。装包 `pnpm add`，恢复依赖 `pnpm install --force`。顶层 `require` 不到 express 之类嵌套依赖是 pnpm 不提升的正常表现，别误判 node_modules 损坏（完整性看 `ls node_modules/.pnpm | wc -l`）。（`npm run build`/`npm run restart` 这类脚本照旧可用，它们只是跑 package.json 里的 scripts）
+- Swagger 文档（912b3ed）：`/api/docs` 在线 UI（2026-11-11 起换 Scalar，modern 布局 + Saturn 主题）、`/api/docs-ui` 原版 swagger-ui 备用（自托管，断网可用）、`/api/docs-json` OpenAPI JSON（地址用 `jsonDocumentUrl` 钉死，冒烟脚本依赖）。约定：新模块 DTO 加 @ApiProperty、Controller 加 @ApiTags + @ApiOperation；Bearer 方案名 'jwt'。文档规则：每轮改动在 docs/ 生成变更 .md（见下方强规则）。
 - 下一步：可选项——字典/公告/任务按钮权限在菜单管理录入、验证码接 Redis 支持多实例、操作日志导出
 - RBAC 完成（52ae21e）：user—role—menu 三级多对多（user_roles/role_menus），全局 JwtAuthGuard→RolesGuard（APP_GUARD 顺序注册），@Public()/@Roles() 装饰器，菜单树 GET /menus/tree。角色/菜单/用户模块类级 @Roles('admin')。坑：跨模块注入仓库需 imports 对方模块；TypeORM findOne 同时用 relations+select 会报 distinctAlias 错（用 QueryBuilder addSelect+leftJoinAndSelect 代替）。测试数据：角色 admin/viewer/editor，用户 admin(admin)/guest(无角色，密码 guest123)，菜单 系统管理→用户管理。
 - 已完成 auth 模块（889333c）：POST /auth/login、/auth/refresh、GET /auth/profile（JwtAuthGuard）。bcryptjs 哈希（UserService.create/update 自动处理）；jwt.strategy validate() 每次查库核对用户状态；双令牌 accessToken(2h)/refreshToken(7d) 从 .env 读。测试账号 admin/admin123（id=1）。类型坑：expiresIn 需 `StringValue` from 'ms'（@types/ms）。
