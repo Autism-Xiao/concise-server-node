@@ -1,7 +1,7 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
- * user 表对齐 JeecgBoot sys_user：
+ * user 表改为 sys_user：
  * 1. 补表注释「用户表」
  * 2. nickname → realname（真实姓名，与 sys_user 对齐）
  * 3. 新增 avatar/sex/phone/telephone/birthday/work_no/create_by/update_by/del_flag
@@ -12,7 +12,7 @@ export class Migration1793763842271 implements MigrationInterface {
 
   async up(queryRunner: QueryRunner): Promise<void> {
     // 表注释
-    await queryRunner.query("ALTER TABLE `user` COMMENT='用户表（对齐 JeecgBoot sys_user）'")
+    await queryRunner.query("ALTER TABLE `user` COMMENT='用户表'")
 
     // nickname → realname，同步保留原数据
     await queryRunner.query("ALTER TABLE `user` CHANGE COLUMN `nickname` `realname` varchar(100) NOT NULL COMMENT '真实姓名'")

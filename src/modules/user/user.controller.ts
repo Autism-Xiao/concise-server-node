@@ -33,7 +33,7 @@ export class UserController {
     return this.userService.findOneDetail(id)
   }
 
-  @ApiOperation({ summary: '创建用户', description: '32位主键自动生成；密码按 JeecgBoot PBEWithMD5AndDES(username, password, salt) 入库' })
+  @ApiOperation({ summary: '创建用户', description: '32位主键自动生成；密码由服务端哈希后入库' })
   @OperLog('用户管理')
   @Perms('system:user:add')
   @Post()

@@ -15,7 +15,7 @@ export interface DeptTreeItem extends DeptEntity {
   children: DeptTreeItem[]
 }
 
-/** 顶级部门的 parent_id 约定（JeecgBoot 用 null 或空串） */
+/** 顶级部门的 parent_id 约定（null 或空串均视为顶级） */
 function isRootParent(parentId?: string | null): boolean {
   return parentId === null || parentId === undefined || parentId === ''
 }
@@ -180,7 +180,7 @@ export class DeptService extends BaseService<DeptEntity> {
   }
 
   /**
-   * 生成机构编码，JeecgBoot 风格两位字母递增：
+   * 生成机构编码，两位字母递增：
    * - 顶级：A01、A02 ...
    * - 子级：父编码 + A01（如 A01A01）
    */

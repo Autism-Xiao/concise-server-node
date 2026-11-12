@@ -1,12 +1,12 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
- * 用户-部门改多对多（对齐 JeecgBoot sys_user_depart）
+ * 用户-部门改多对多
  *
- * 背景：此前 sys_user.dept_id 是「单部门」扩展列，JeecgBoot 原生用中间表 sys_user_depart，
+ * 背景：此前 sys_user.dept_id 是「单部门」扩展列，既有设计用中间表 sys_user_depart，
  * 一个用户可挂多个部门；主部门（depart_ids 第一个）的机构编码冗余到 sys_user.org_code 供数据权限过滤。
  *
- * 表结构完全照搬 JeecgBoot：ID varchar(32) 主键（DB 默认 replace(uuid(),'-','') 生成，TypeORM
+ * 表结构完全照搬：ID varchar(32) 主键（DB 默认 replace(uuid(),'-','') 生成，TypeORM
  * 多对多插入只写 user_id / dep_id 也不会失败）、user_id+dep_id 唯一键。
  *
  * up  ：建表 → 把存量 dept_id 搬进关联表 → 回填 depart_ids / org_code → 删除 dept_id 列

@@ -1,16 +1,16 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
- * 通知公告表对齐 JeecgBoot：notice（自增 int 主键、自造字段）→ sys_announcement
+ * 通知公告表：notice（自增 int 主键、自造字段）→ sys_announcement
  *
- * 字段映射（JeecgBoot 原表结构）：
+ * 字段映射（原表结构）：
  * - id            int auto_increment → varchar(32) 32 位字符串
- * - title         → titile（JeecgBoot 原表列名就是这个拼写，保留不改）
+ * - title         → titile（历史表列名就是这个拼写，保留不改）
  * - content       → msg_content
  * - type(1通知2公告) → msg_category 统一取 '1'（通知公告）；msg_type 取 'ALL'（全体用户）
  * - status(0草稿1已发布) → send_status('0'未发布 / '1'已发布)
  * - published_at  → send_time
- * - 新增 jeecg 原生列：priority / start_time / end_time / sender / cancel_time / user_ids
+ * - 新增列：priority / start_time / end_time / sender / cancel_time / user_ids
  * - created_at/updated_at → create_time/update_time，并补 create_by/update_by/del_flag
  *
  * 存量数据迁移完成后 drop 旧表 notice。
@@ -22,7 +22,7 @@ export class Migration1793788036198 implements MigrationInterface {
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS \`sys_announcement\` (
         \`id\` varchar(32) NOT NULL COMMENT '主键id',
-        \`titile\` varchar(100) NOT NULL COMMENT '标题（JeecgBoot 原表列名拼写）',
+        \`titile\` varchar(100) NOT NULL COMMENT '标题（历史表列名拼写）',
         \`msg_content\` text NULL COMMENT '内容',
         \`msg_category\` varchar(10) NOT NULL DEFAULT '1' COMMENT '消息类型（1通知公告 2系统消息）',
         \`msg_type\` varchar(10) NULL COMMENT '通告对象类型（USER指定用户 ALL全体用户）',
@@ -42,10 +42,10 @@ export class Migration1793788036198 implements MigrationInterface {
         PRIMARY KEY (\`id\`),
         KEY \`idx_sys_announcement_status\` (\`send_status\`, \`send_time\`),
         KEY \`idx_sys_announcement_category\` (\`msg_category\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统通告表（对齐 JeecgBoot sys_announcement）'
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统通告表'
     `)
 
-    // 迁移存量公告（若旧表还在）：状态 1已发布/0草稿 → jeecg '1'已发布/'0'未发布
+    // 迁移存量公告（若旧表还在）：状态 1已发布/0草稿 → 新表 '1'已发布/'0'未发布
     if (await queryRunner.hasTable('notice')) {
       await queryRunner.query(`
         INSERT INTO \`sys_announcement\` (
@@ -75,7 +75,7 @@ export class Migration1793788036198 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    // 回滚不还原旧 notice 表结构（存量数据已按 jeecg 语义转换，反向映射会丢优先级/通告对象等列）
+    // 回滚不还原旧 notice 表结构（存量数据已按新表语义转换，反向映射会丢优先级/通告对象等列）
     await queryRunner.query('DROP TABLE IF EXISTS `sys_announcement`')
   }
 }

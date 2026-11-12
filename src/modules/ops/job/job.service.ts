@@ -125,7 +125,7 @@ export class JobService {
     return { ...after, ...this.scheduler.recordOf(after.id) }
   }
 
-  /** 软删除（del_flag=1）并停止调度；JeecgBoot 也是逻辑删除 */
+  /** 软删除（del_flag=1）并停止调度；与既有实现一致，也是逻辑删除 */
   async deleteJob(id: string): Promise<void> {
     await this.findActive(id)
     await this.jobRepository.update(id, { delFlag: 1, status: -1, updateTime: new Date() })

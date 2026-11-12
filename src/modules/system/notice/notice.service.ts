@@ -84,9 +84,9 @@ function blankToUndefined(value: string): string | undefined {
 }
 
 /**
- * 通知公告服务（表 sys_announcement，对齐 JeecgBoot）
+ * 通知公告服务（表 sys_announcement）
  *
- * 状态语义（JeecgBoot）：send_status '0' 未发布 / '1' 已发布 / '2' 已撤销；
+ * 状态语义：send_status '0' 未发布 / '1' 已发布 / '2' 已撤销；
  * 删除为软删（del_flag '1'），所有查询默认排除已删除。
  */
 @Injectable()
@@ -166,7 +166,7 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
     return notice
   }
 
-  /** 创建：sendStatus=1 时直接发布并落 send_time/sender；其余字段补 jeecg 默认值 */
+  /** 创建：sendStatus=1 时直接发布并落 send_time/sender；其余字段补默认值 */
   async createNotice(dto: CreateNoticeDto, operator?: string): Promise<SysAnnouncementEntity> {
     const { startTime, endTime, ...rest } = dto
     const publish = rest.sendStatus === '1'

@@ -3,10 +3,10 @@ import { Column, Entity, ManyToMany, PrimaryColumn } from 'typeorm'
 import { UserEntity } from '../../../user/entities/user.entity'
 
 /**
- * 组织机构表（对齐 JeecgBoot sys_depart）
+ * 组织机构表
  * - 主键 32 位字符串；parent_id 为 null/'' 视为顶级
- * - org_code 唯一且必填（JeecgBoot 用它做机构编码，也用于用户 sys_user.org_code）
- * - status / del_flag 为 varchar：'1'/'0'（JeecgBoot 原样）
+ * - org_code 唯一且必填（既有的机构编码字段，也用于用户 sys_user.org_code）
+ * - status / del_flag 为 varchar：'1'/'0'（沿用原样）
  * - 部门↔用户走 sys_user_depart（dep_id + user_id），一个部门可挂多个用户
  */
 @Entity('sys_depart')
@@ -91,7 +91,7 @@ export class DeptEntity {
   @Column({ type: 'datetime', nullable: true, comment: '更新日期' })
   updateTime?: Date
 
-  @ApiPropertyOptional({ description: '租户 ID（对齐 JeecgBoot，默认 0）', example: 0, nullable: true })
+  @ApiPropertyOptional({ description: '租户 ID（默认 0）', example: 0, nullable: true })
   @Column({ type: 'int', default: 0, comment: '租户ID' })
   tenantId?: number
 

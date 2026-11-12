@@ -1,5 +1,5 @@
 /**
- * 分页结果包装（字段对齐 jeecg-boot / MyBatis-Plus IPage：records / total / size / current / pages）
+ * 分页结果包装（records / total / size / current / pages 五字段）
  */
 export class Pagination<T> {
   /** 当前页数据 */

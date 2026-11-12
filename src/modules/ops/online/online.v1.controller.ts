@@ -10,7 +10,7 @@ import { OnlineService } from './online.service'
 /**
  * 在线用户接口 V1：/api/v1/online/**
  *
- * JeecgBoot 没有 sys_user_online 表，在线状态存 Redis —— 本项目一致（online:session:*）。
+ * 不建 sys_user_online 表，在线状态存 Redis —— 本项目一致（online:session:*）。
  * 「强制下线」= 删会话 + 写 online:revoked:* 黑名单，JwtStrategy 每次校验都会查黑名单。
  */
 @ApiTags('在线用户 V1')

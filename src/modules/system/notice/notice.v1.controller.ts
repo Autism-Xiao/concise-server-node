@@ -44,7 +44,7 @@ class QueryPublishedNoticeDto extends PagerDto {
 /**
  * 通知公告接口 V1：/api/v1/notices/**
  *
- * 表 sys_announcement（对齐 JeecgBoot）：send_status '0' 未发布 / '1' 已发布 / '2' 已撤销；
+ * 表 sys_announcement：send_status '0' 未发布 / '1' 已发布 / '2' 已撤销；
  * 删除为软删（del_flag='1'）。管理端接口按按钮权限 system:notice:* 控制，
  * /published 面向所有登录用户（登录后即可读已发布公告）。
  */

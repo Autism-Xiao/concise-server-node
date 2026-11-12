@@ -3,7 +3,7 @@ import { DES, mode, pad, enc, lib } from 'crypto-js'
 import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2'
 
 /**
- * JeecgBoot 兼容密码工具：复现 Java PasswordUtil.encrypt(username, password, salt)
+ * 历史密码兼容工具：复现 Java PasswordUtil.encrypt(username, password, salt)
  *
  * Java 侧为 PBEWithMD5AndDES（RFC 2898 PBKDF1）：
  *   1. DK = MD5^1000(passwordBytes || saltBytes)，前 8 字节为 DES 密钥，后 8 字节为 IV
@@ -11,13 +11,13 @@ import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2'
  *   3. 结果为 8 字节密文的 16 位十六进制串
  *
  * Node 的 OpenSSL 3 已禁用 DES，因此 DES 部分用 crypto-js 实现；
- * 与 JeecgBoot sys_user 初始数据逐条验证一致（admin/123456 → cb362cfeefbf3d8d）。
+ * 与 sys_user 初始数据逐条验证一致（admin/123456 → cb362cfeefbf3d8d）。
  */
 
 /** PBKDF1-MD5 迭代次数（与 Java PBEWithMD5AndDES 的 ITERATIONCOUNT 一致） */
 const ITERATION_COUNT = 1000
 
-/** JeecgBoot 兼容加密：返回 16 位十六进制密码串 */
+/** 历史格式加密：返回 16 位十六进制密码串 */
 export function encryptPassword(username: string, password: string, salt: string): string {
   const derived = deriveKeyIV(password, salt)
   const key = lib.WordArray.create(derived.key)
@@ -41,7 +41,7 @@ function deriveKeyIV(password: string, salt: string): { key: Uint8Array; iv: Uin
   return { key: digest.subarray(0, 8), iv: digest.subarray(8, 16) }
 }
 
-/** 生成 8 位随机盐（与 JeecgBoot sys_user.salt 同风格，如 RCGTeGiH） */
+/** 生成 8 位随机盐（与 sys_user.salt 同风格，如 RCGTeGiH） */
 export function randomSalt(): string {
   return randomBytes(6)
     .toString('base64')
@@ -58,7 +58,7 @@ export function randomId32(): string {
 /* ------------------------------------------------------------------ *
  * 新密码算法：argon2id（@node-rs/argon2，Rust 预编译，无本地编译依赖）
  *
- * 为什么换掉 JeecgBoot 的 PBEWithMD5AndDES：
+ * 为什么换掉旧的 PBEWithMD5AndDES：
  *  - 单轮 MD5 + DES 早已不是密码哈希算法，抗 GPU 爆破能力接近于零；
  *  - 密钥材料只有 8 字节，且盐是 8 位 ASCII，输入空间很小。
  *

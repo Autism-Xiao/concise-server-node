@@ -4,9 +4,9 @@ import { DeptEntity } from '../../dept/entities/dept.entity'
 import { UserEntity } from '../../../user/entities/user.entity'
 
 /**
- * 岗位表（对齐 JeecgBoot sys_position）
+ * 岗位表
  * - 主键 32 位字符串；post_code 唯一
- * - 补充 dept_id（所属部门，JeecgBoot 新版走职位↔部门关联，这里简化为直挂一列）与 status
+ * - 补充 dept_id（所属部门，原设计走职位↔部门关联，这里简化为直挂一列）与 status
  */
 @Entity('sys_position')
 export class PostEntity {
@@ -54,7 +54,7 @@ export class PostEntity {
   @Column({ type: 'datetime', nullable: true, comment: '更新时间' })
   updateTime?: Date
 
-  @ApiPropertyOptional({ description: '租户 ID（对齐 JeecgBoot，默认 0）', example: 0, nullable: true })
+  @ApiPropertyOptional({ description: '租户 ID（默认 0）', example: 0, nullable: true })
   @Column({ type: 'int', default: 0, comment: '租户ID' })
   tenantId?: number
 

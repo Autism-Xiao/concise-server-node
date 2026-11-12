@@ -11,7 +11,7 @@ import { randomId32 } from '../../../utils/password.util'
 import { parseRequestInfo } from '../../../utils/request-info.util'
 import { SysLogEntity } from './entities/sys-log.entity'
 
-/** 登录日志入参（status 为 jeecg 语义：0 成功 / 1 失败） */
+/** 登录日志入参（status 取值：0 成功 / 1 失败） */
 export interface LoginLogInput {
   /** 账号校验通过后的用户 ID（用于按人检索登录日志）；账号不存在时为空 */
   userId?: string
@@ -24,7 +24,7 @@ export interface LoginLogInput {
   tenantId?: number
 }
 
-/** 操作日志入参（status 为 jeecg 语义：0 成功 / 1 失败） */
+/** 操作日志入参（status 取值：0 成功 / 1 失败） */
 export interface OperLogInput {
   userId?: string
   username?: string
@@ -44,9 +44,9 @@ export interface OperLogInput {
 const DEFAULT_TENANT_ID = 1
 
 /**
- * 日志服务（单表 sys_log，对齐 JeecgBoot）：
+ * 日志服务：
  * 登录日志 log_type=0、操作日志 log_type=1 共用一张表；
- * status 为 jeecg 语义 0 正常（成功）/ 1 异常（失败）。
+ * status 取值 0 正常（成功）/ 1 异常（失败）。
  * 写入失败只打日志不上抛——日志永远不能影响业务主流程
  */
 @Injectable()
@@ -315,7 +315,7 @@ export class LogService {
    * 导入操作日志（log_type=1）
    *
    * 列映射：操作人 / 模块 / 操作 / 结果 / 耗时(ms) / IP / 操作时间。
-   * log_content 按 JeecgBoot 约定拼成「模块 - 操作」。
+   * log_content 按约定拼成「模块 - 操作」。
    */
   async importOperLogs(rows: string[][], headerRowNumber = 1, operator?: string): Promise<ImportResult> {
     return this.importLogRows(rows, headerRowNumber, operator, 1, OPER_IMPORT_ALIASES, (get, statusOf) => {

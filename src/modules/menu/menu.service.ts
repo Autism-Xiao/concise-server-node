@@ -21,7 +21,7 @@ export interface ReplacePermNodesResult {
   kept: string[]
 }
 
-/** 顶级菜单的 parent_id 约定（JeecgBoot 用 null 或空串） */
+/** 顶级菜单的 parent_id 约定（null 或空串均视为顶级） */
 function isRootParent(parentId?: string | null): boolean {
   return parentId === null || parentId === undefined || parentId === ''
 }
@@ -36,7 +36,7 @@ export class MenuService extends BaseService<MenuEntity> {
     super(repository, '菜单')
   }
 
-  /** 创建：补 JeecgBoot 默认值（未删除、有效、是路由、不隐藏） */
+  /** 创建：补默认值（未删除、有效、是路由、不隐藏） */
   async create(dto: DeepPartial<MenuEntity>): Promise<MenuEntity> {
     if (dto.parentId) {
       await this.assertParentExists(dto.parentId)

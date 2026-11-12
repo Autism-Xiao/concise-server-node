@@ -2,11 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, CreateDateColumn, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm'
 
 /**
- * 通知公告表（对齐 JeecgBoot sys_announcement）
+ * 通知公告表
  *
- * 与 JeecgBoot 原表的差异说明：
- * - 标题列名在 JeecgBoot 里就是拼错的 `titile`，这里保留库列名不改，实体属性用 title 方便业务代码
- * - send_status / del_flag 在 JeecgBoot 里是 varchar，沿用字符串语义（'0'/'1'/'2'）
+ * 与原表的差异说明：
+ * - 标题列名在原始建表时就是拼错的 `titile`，这里保留库列名不改，实体属性用 title 方便业务代码
+ * - send_status / del_flag 在原始设计里是 varchar，沿用字符串语义（'0'/'1'/'2'）
  * - 主键 varchar(32)，由 BaseService 自动生成 32 位随机串
  */
 @Entity('sys_announcement')
@@ -19,7 +19,7 @@ export class SysAnnouncementEntity {
   @Column({ type: 'int', default: 1, comment: '租户ID(0=平台共享)' })
   tenantId?: number
 
-  /** 列名是 JeecgBoot 原样的拼写错误 titile，不要"修正"，否则与库不一致 */
+  /** 列名是历史遗留的拼写错误 titile，不要"修正"，否则与库不一致 */
   @ApiProperty({ description: '标题', example: '系统 V1.0 上线' })
   @Column({ name: 'titile', length: 100, comment: '标题' })
   title: string

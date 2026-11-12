@@ -3,7 +3,7 @@ import { type MigrationInterface, type QueryRunner } from 'typeorm'
 /**
  * sys_user 关联职级（sys_level）
  *
- * 背景：用户管理列表要对齐 jeecg 演示的「角色/职级/岗位/部门」列。
+ * 背景：用户管理列表要有「角色/职级/岗位/部门」四列。
  * 角色、岗位、部门都已有关联，唯独职级此前只是独立字典表（sys_level），
  * 用户身上没有落点 —— 这里补 level_id 单选字段（一人一个职级）。
  */

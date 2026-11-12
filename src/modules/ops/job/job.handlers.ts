@@ -26,7 +26,7 @@ export interface JobHandlerMeta {
 /**
  * 定时任务执行器注册表
  *
- * JeecgBoot 里 job_class_name 是 Java Quartz Job 实现类的全限定名，靠反射实例化；
+ * 原表里 job_class_name 是 Java Quartz Job 实现类的全限定名，靠反射实例化；
  * Node 没有反射式类加载，改为「注册表 + 可执行函数」：
  * 调度器按 job_class_name 到本注册表取函数执行，取不到视为任务配置错误（执行失败并记录原因）。
  *

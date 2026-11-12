@@ -33,7 +33,7 @@ class QueryLoginLogDto extends PagerDto {
   @MaxLength(100)
   username?: string
 
-  @ApiPropertyOptional({ description: '结果过滤（jeecg 语义）：0 成功 / 1 失败', example: 0, enum: [0, 1] })
+  @ApiPropertyOptional({ description: '结果过滤：0 成功 / 1 失败', example: 0, enum: [0, 1] })
   @IsOptional()
   @IsIn([0, 1])
   @Type(() => Number)
@@ -85,8 +85,8 @@ class DeleteLogsDto {
 /**
  * 日志管理接口 V1：/api/v1/logs/**
  *
- * 单表 sys_log（对齐 JeecgBoot）：log_type=0 登录日志、log_type=1 操作日志；
- * status 为 jeecg 语义 0 成功 / 1 失败。
+ * 单表 sys_log：log_type=0 登录日志、log_type=1 操作日志；
+ * status 取值 0 成功 / 1 失败。
  */
 @ApiTags('日志管理 V1')
 @ApiBearerAuth('jwt')

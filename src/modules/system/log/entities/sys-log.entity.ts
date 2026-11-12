@@ -2,11 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, PrimaryColumn } from 'typeorm'
 
 /**
- * 日志表（对齐 JeecgBoot sys_log 单表设计）
+ * 日志表
  * - 登录日志 log_type=0、操作日志 log_type=1 共用一张表
- * - status 为 JeecgBoot 语义：0 正常（成功）/ 1 异常（失败）——与旧表 1成功0失败 相反
+ * - status 取值：0 正常（成功）/ 1 异常（失败）——与旧表 1成功0失败 相反
  * - 主键 32 位字符串；create_time 为事件时间
- * - browser/os/location/params/error_msg 为本项目扩展列（JeecgBoot 原表没有）
+ * - browser/os/location/params/error_msg 为本项目扩展列（历史表没有）
  */
 @Entity('sys_log')
 export class SysLogEntity {
@@ -24,7 +24,7 @@ export class SysLogEntity {
   @Column({ type: 'int', default: 1, name: 'tenant_id', comment: '租户ID(0=平台级操作)' })
   tenantId: number
 
-  @ApiPropertyOptional({ description: '定时任务 ID（对齐 JeecgBoot，本项目暂不用）', nullable: true })
+  @ApiPropertyOptional({ description: '定时任务 ID', nullable: true })
   @Column({ type: 'varchar', length: 32, nullable: true, comment: '定时任务id' })
   jobId?: string
 
@@ -36,7 +36,7 @@ export class SysLogEntity {
   @Column({ type: 'int', comment: '日志类型（0登录日志，1操作日志）' })
   logType: number
 
-  @ApiPropertyOptional({ description: '操作类型（JeecgBoot）：1 查询 / 2 添加 / 3 更新 / 4 删除 / 5 导入 / 6 导出', example: 2, nullable: true })
+  @ApiPropertyOptional({ description: '操作类型：1 查询 / 2 添加 / 3 更新 / 4 删除 / 5 导入 / 6 导出', example: 2, nullable: true })
   @Column({ type: 'int', nullable: true, comment: '操作类型（1查询 2添加 3更新 4删除 5导入 6导出）' })
   operateType?: number
 
@@ -52,7 +52,7 @@ export class SysLogEntity {
   @Column({ length: 100, comment: 'IP' })
   ip: string
 
-  @ApiProperty({ description: '结果（JeecgBoot 语义）：0 正常（成功）/ 1 异常（失败）', example: 0, enum: [0, 1] })
+  @ApiProperty({ description: '结果：0 正常（成功）/ 1 异常（失败）', example: 0, enum: [0, 1] })
   @Column({ type: 'int', comment: '操作状态（0正常，1异常）' })
   status: number
 

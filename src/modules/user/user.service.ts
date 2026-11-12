@@ -281,7 +281,7 @@ export class UserService extends BaseService<UserEntity> {
     await this.findOne(id)
     await this.assertUniqueFields(data, id)
     if (data.password) {
-      // argon2id 自带盐，顺手把历史 jeecg 盐清空，避免后续误按旧算法校验
+      // argon2id 自带盐，顺手把历史盐清空，避免后续误按旧算法校验
       data.password = await hashPassword(data.password)
       data.salt = null
     }
@@ -363,7 +363,7 @@ export class UserService extends BaseService<UserEntity> {
   }
 
   /**
-   * 绑定部门（全量覆盖，对齐 JeecgBoot sys_user_depart）
+   * 绑定部门
    * - 入参顺序即主次顺序，第一个为主部门
    * - 同步冗余：sys_user.depart_ids（逗号串）、sys_user.org_code（主部门机构编码）
    */
@@ -396,7 +396,7 @@ export class UserService extends BaseService<UserEntity> {
     })
   }
 
-  /** 绑定岗位（全量覆盖，对齐 JeecgBoot sys_user_post）；岗位不存在时整体拒绝 */
+  /** 绑定岗位；岗位不存在时整体拒绝 */
   async assignPosts(id: string, postIds: string[], manager?: EntityManager): Promise<void> {
     if (!manager) {
       await this.findOne(id)
@@ -909,7 +909,7 @@ export class UserService extends BaseService<UserEntity> {
     return { password }
   }
 
-  /** 只改密码哈希（自助改密与重置密码共用）：argon2id 自带盐，顺手清历史 jeecg 盐 */
+  /** 只改密码哈希（自助改密与重置密码共用）：argon2id 自带盐，顺手清历史盐 */
   async updatePasswordOnly(id: string, plainPassword: string): Promise<void> {
     await this.repository.update(id, { password: await hashPassword(plainPassword), salt: null, updateTime: new Date() })
   }
@@ -1116,7 +1116,7 @@ export class UserService extends BaseService<UserEntity> {
   /**
    * 校验登录密码
    * - 新格式（$argon2id$...）：argon2id 比对
-   * - 旧格式（JeecgBoot 16/32/48 位十六进制）：复算 PBEWithMD5AndDES 比对，
+   * - 旧格式（16/32/48 位十六进制）：复算 PBEWithMD5AndDES 比对，
    *   登录成功后由 upgradePasswordHash 透明升级，无需批量刷库
    */
   async verifyPassword(user: UserEntity, plainPassword: string): Promise<boolean> {

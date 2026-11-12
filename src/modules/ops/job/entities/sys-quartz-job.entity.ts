@@ -2,9 +2,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, PrimaryColumn } from 'typeorm'
 
 /**
- * 定时任务实体（对齐 JeecgBoot sys_quartz_job，列名与官方 DDL 完全一致）
+ * 定时任务实体
  *
- * 与 JeecgBoot 的唯一差异在语义层：JeecgBoot 的 job_class_name 是 Java Quartz Job 实现类全限定名，
+ * 与原表的差异在语义层：原表的 job_class_name 是 Java Quartz Job 实现类全限定名，
  * Node 侧没有 Java 类，这里当作「执行器标识」，由 JobHandlerRegistry 注册的可执行函数消费。
  */
 @Entity('sys_quartz_job')
@@ -33,7 +33,7 @@ export class SysQuartzJobEntity {
   @Column({ type: 'int', nullable: true, default: 0, comment: '状态（0正常 -1停止）' })
   status: number
 
-  @ApiProperty({ description: '删除标记：0 正常 / 1 已删除（JeecgBoot 用 int 型 del_flag）', example: 0 })
+  @ApiProperty({ description: '删除标记：0 正常 / 1 已删除（int 型 del_flag）', example: 0 })
   @Column({ name: 'del_flag', type: 'int', nullable: true, default: 0, comment: '删除状态（0正常 1已删除）' })
   delFlag: number
 

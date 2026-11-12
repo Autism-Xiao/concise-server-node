@@ -209,7 +209,7 @@ export class UserV1Controller {
     return this.userService.findOneDetail(id)
   }
 
-  @ApiOperation({ summary: '创建用户（v1）', description: '32位主键自动生成；密码按 JeecgBoot 算法加密入库；可同时传 roleIds/deptIds' })
+  @ApiOperation({ summary: '创建用户（v1）', description: '32位主键自动生成；密码由服务端哈希后入库；可同时传 roleIds/deptIds' })
   @OperLog('用户管理')
   @Perms('system:user:add')
   @Post()

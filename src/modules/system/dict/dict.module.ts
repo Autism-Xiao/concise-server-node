@@ -9,7 +9,7 @@ import { SysDictEntity } from './entities/sys-dict.entity'
 import { SysDictItemEntity } from './entities/sys-dict-item.entity'
 
 /**
- * 数据字典模块（对齐 JeecgBoot：sys_dict + sys_dict_item）
+ * 数据字典模块
  *
  * 两个 Service 各自管理一张表，放在同一模块里是因为字典项强依赖所属字典，
  * 拆成两个模块会互相 import，反而更绕。

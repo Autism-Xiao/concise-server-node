@@ -1,7 +1,7 @@
 import { type MigrationInterface, type QueryRunner } from 'typeorm'
 
 /**
- * 修正 task.assignee_id 类型：int → varchar(32)，对齐 sys_user.id（JeecgBoot 风格字符串主键）
+ * 修正 task.assignee_id 类型：int → varchar(32)，对齐 sys_user.id（32 位字符串主键）
  *
  * 背景：task 表按 int 用户 ID 设计，但本项目用户主键是 32 位字符串。
  * 结果是「指派给某用户」永远匹配不上，首页概览「我的待办」只能恒等

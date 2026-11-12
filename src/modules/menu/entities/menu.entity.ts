@@ -3,11 +3,11 @@ import { Column, Entity, ManyToMany, PrimaryColumn } from 'typeorm'
 import { RoleEntity } from '../../role/entities/role.entity'
 
 /**
- * 菜单权限表（对齐 JeecgBoot sys_permission）
+ * 菜单权限表
  * - 主键 32 位字符串；parent_id 为 null/'' 表示顶级
  * - menu_type：0 一级菜单 / 1 子菜单 / 2 按钮权限
  * - perms 为按钮权限编码（如 system:user:add），供 PermsGuard 校验
- * - status 为 varchar：'1' 有效 / '0' 无效（JeecgBoot 原样）
+ * - status 为 varchar：'1' 有效 / '0' 无效（沿用原样）
  */
 @Entity('sys_permission')
 export class MenuEntity {

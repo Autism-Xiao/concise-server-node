@@ -46,7 +46,7 @@ export interface LoginResult {
   mustChangePassword?: boolean
 }
 
-/** 登录后权限汇总（对齐 JeecgBoot GetUserPermissionByToken） */
+/** 登录后权限汇总 */
 export interface PermissionResult {
   /** 角色 code 数组，如 ['admin'] */
   roles: string[]
@@ -167,7 +167,7 @@ export class AuthService {
       }
       knownUserId = user.id
 
-      // 密码校验：新数据走 argon2id，历史数据走 JeecgBoot PBEWithMD5AndDES（见 UserService.verifyPassword）
+      // 密码校验：新数据走 argon2id，历史数据走旧版 PBEWithMD5AndDES（见 UserService.verifyPassword）
       if (!(await this.userService.verifyPassword(user, dto.password))) {
         throw new BizException(BizErrorCode.LOGIN_FAILED, '用户名或密码错误', HttpStatus.UNAUTHORIZED)
       }
@@ -185,7 +185,7 @@ export class AuthService {
       // 登录成功即清零失败计数，避免「白天输错两次、晚上再错三次」被累计误锁
       await this.rateLimitService.reset(failKey)
 
-      // status 为 jeecg 语义（sys_log）：0 正常（成功）/ 1 异常（失败）
+      // status 取值（sys_log）：0 正常（成功）/ 1 异常（失败）
       await this.logService.recordLogin({ userId: knownUserId, username: dto.username, status: 0, message: '登录成功', ip: meta.ip, userAgent: meta.userAgent })
       const result = await this.issueTokens(user)
       // 密码过期/管理员标记：登录照常放行，但前端必须先引导改密（PRD：强制定期改密）

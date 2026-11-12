@@ -1,7 +1,7 @@
 import { type MigrationInterface, type QueryRunner } from 'typeorm'
 
 /**
- * 多租户（对齐 JeecgBoot sys_tenant / sys_user_tenant）
+ * 多租户
  *
  * 租户模型：
  *  - sys_tenant 租户档案（编码唯一、套餐、到期日、状态）
@@ -71,7 +71,7 @@ export class CreateTenantTables1794120000000 implements MigrationInterface {
     `)
 
     // ---- 4. 业务表补 tenant_id ----
-    // 已存在的 sys_depart.tenant_id / sys_role.tenant_id 是 jeecg 原生列，这里只回填存量值
+    // 已存在的 sys_depart.tenant_id / sys_role.tenant_id 是既有列，这里只回填存量值
     await queryRunner.query('UPDATE `sys_depart` SET `tenant_id` = 1 WHERE `tenant_id` IS NULL OR `tenant_id` = 0')
     await queryRunner.query('UPDATE `sys_role` SET `tenant_id` = 1 WHERE `tenant_id` IS NULL OR `tenant_id` = 0')
 
@@ -99,7 +99,7 @@ export class CreateTenantTables1794120000000 implements MigrationInterface {
       void comment
     }
 
-    // sys_depart / sys_role 的 tenant_id 是 jeecg 旧列，可能没有索引，补一个
+    // sys_depart / sys_role 的 tenant_id 是既有列，可能没有索引，补一个
     for (const table of ['sys_depart', 'sys_role']) {
       const indexName = `idx_${table}_tenant`
       if (!(await this.hasIndex(queryRunner, table, indexName))) {

@@ -2,7 +2,7 @@ import { DefaultNamingStrategy } from 'typeorm'
 import type { NamingStrategyInterface } from 'typeorm'
 
 /**
- * 全局 snake_case 命名策略（对齐 JeecgBoot 表结构风格）
+ * 全局 snake_case 命名策略
  * TypeORM 1.x 已移除内置 SnakeNamingStrategy，此处按 0.3.x 同名策略自行实现：
  * 实体驼峰属性自动映射下划线列名（createdAt→created_at、deptId→dept_id、workNo→work_no）
  * 显式指定的 @Column({ name }) / @Entity() 表名不受影响

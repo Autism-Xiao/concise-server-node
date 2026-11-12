@@ -7,7 +7,7 @@ import { type MigrationInterface, type QueryRunner } from 'typeorm'
  *    到期后登录照常放行，但登录响应带 mustChangePassword=true，由前端拦住强制改密后才能进系统
  *  - sys_role.data_scope：数据范围（1 全部 / 2 本部门及以下 / 3 本部门 / 4 仅本人），
  *    默认 1（全部），与改造前行为一致，不影响的存量角色
- *  - sys_user_post：用户↔岗位多对多（对齐 JeecgBoot sys_user_post），岗位本体 sys_position 已存在
+ *  - sys_user_post：用户↔岗位多对多，岗位本体 sys_position 已存在
  */
 export class UserSecurityAndScope1794080000000 implements MigrationInterface {
   name = 'UserSecurityAndScope1794080000000'

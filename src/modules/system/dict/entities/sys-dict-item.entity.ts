@@ -4,10 +4,10 @@ import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm'
 import { SysDictEntity } from './sys-dict.entity'
 
 /**
- * 数据字典条目表（对齐 JeecgBoot sys_dict_item）
+ * 数据字典条目表
  *
  * - dict_id 关联 sys_dict.id；同一字典下 item_value 唯一（Service 层校验）
- * - status：1 启用 / 0 不启用（JeecgBoot 语义）
+ * - status：1 启用 / 0 不启用
  */
 @Entity('sys_dict_item')
 export class SysDictItemEntity {
@@ -55,7 +55,7 @@ export class SysDictItemEntity {
   @Column({ name: 'update_time', type: 'datetime', nullable: true, comment: '更新时间' })
   updateTime?: Date
 
-  @ApiPropertyOptional({ description: '租户 ID（对齐 JeecgBoot，默认 0）', example: 0 })
+  @ApiPropertyOptional({ description: '租户 ID（默认 0）', example: 0 })
   @Column({ name: 'tenant_id', type: 'int', default: 0, comment: '租户ID' })
   tenantId?: number
 

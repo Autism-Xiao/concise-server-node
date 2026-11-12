@@ -129,7 +129,7 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
     return this.findDetail(id)
   }
 
-  /** 删除字典项（硬删：JeecgBoot 的 sys_dict_item 没有 del_flag） */
+  /** 删除字典项（硬删：sys_dict_item 无 del_flag 列） */
   async deleteItem(id: string): Promise<void> {
     await this.findDetail(id)
     await this.itemRepository.delete(id)

@@ -6,7 +6,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm'
  *    login_log.userAgent→user_agent、oper_log.userId/errorMsg→user_id/error_msg、
  *    role_menus.menuId/roleId→menu_id/role_id、task.assigneeId→assignee_id
  * 2. 用户主键 int → varchar(32)：oper_log.user_id、tool_storage.user_id、user_roles 重建
- * 3. 删除旧 user 表，按 JeecgBoot sys_user 建表并导入其初始数据（admin/123456 等 4 个用户）
+ * 3. 删除旧 user 表，按 sys_user 结构建表并导入其初始数据（admin/123456 等 4 个用户）
  * 4. admin 用户绑定本库 admin 角色（id=1）；额外扩展列 dept_id 对接本部门模块
  */
 export class Migration1793765557497 implements MigrationInterface {
@@ -35,7 +35,7 @@ export class Migration1793765557497 implements MigrationInterface {
       PRIMARY KEY (\`user_id\`, \`role_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户-角色关联表'`)
 
-    // ---- 4. 旧 user 表 → sys_user（JeecgBoot 结构）----
+    // ---- 4. 旧 user 表 → sys_user（沿用原表结构）----
     await queryRunner.query('DROP TABLE `user`')
     await queryRunner.query(`CREATE TABLE \`sys_user\` (
       \`id\` varchar(32) NOT NULL COMMENT '主键id',
@@ -82,7 +82,7 @@ export class Migration1793765557497 implements MigrationInterface {
       KEY \`idx_su_del_flag\` (\`del_flag\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表'`)
 
-    // JeecgBoot 初始数据（密码为 PBEWithMD5AndDES(username, '123456', salt)）
+    // 初始数据（密码为旧版 PBEWithMD5AndDES(username, '123456', salt)）
     await queryRunner.query(`INSERT INTO \`sys_user\` (\`id\`, \`username\`, \`realname\`, \`password\`, \`salt\`, \`avatar\`, \`birthday\`, \`sex\`, \`email\`, \`phone\`, \`org_code\`, \`status\`, \`del_flag\`, \`work_no\`, \`create_by\`, \`create_time\`, \`update_by\`, \`update_time\`, \`user_identity\`, \`depart_ids\`, \`login_tenant_id\`, \`bpm_status\`, \`last_pwd_update_time\`, \`sort\`, \`dept_id\`) VALUES
       ('1714471285016895490', 'ceshi', '测试用户', 'a9932bb12d2cbc5a', 'AF4vhXUz', NULL, '2024-04-11', NULL, 'winter@jeecg.org', '15201111112', NULL, 1, 0, '123', 'admin', '2023-10-18 10:39:42', 'admin', '2026-08-20 23:00:25', 1, '', 0, NULL, '2025-11-25 15:42:34', 1000, NULL),
       ('3d464b4ea0d2491aab8a7bde74c57e95', 'zhangsan', '张三', '02ea098224c7d0d2077c14b9a3a1ed16', 'x5xRdeKB', 'https://static.jeecg.com/temp/jmlogo_1606575041993.png', '2024-04-11', NULL, '111@1.com', '13426411111', '财务部', 1, 0, '0005', 'admin', '2020-05-14 21:26:24', 'admin', '2024-04-26 13:25:37', 1, '', NULL, NULL, '2025-11-25 15:42:34', 1000, NULL),
@@ -119,7 +119,7 @@ export class Migration1793765557497 implements MigrationInterface {
       PRIMARY KEY (\`id\`),
       UNIQUE KEY \`IDX_user_username\` (\`username\`),
       UNIQUE KEY \`uniq_user_work_no\` (\`work_no\`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表（对齐 JeecgBoot sys_user）'`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表'`)
     await queryRunner.query(`INSERT INTO \`user\` (\`id\`, \`username\`, \`realname\`, \`password\`, \`status\`, \`del_flag\`, \`work_no\`, \`created_at\`, \`updated_at\`, \`dept_id\`) VALUES
       (1, 'admin', '管理员', '$2a$10$placeholderbcrypt', 1, 0, '00001', NOW(), NOW(), 1),
       (2, 'guest', '访客甲', '$2a$10$placeholderbcrypt', 1, 0, '00003', NOW(), NOW(), NULL),

@@ -16,7 +16,7 @@ import { JobService } from './job.service'
 /**
  * 定时任务接口 V1：/api/v1/jobs/**
  *
- * 表对齐 JeecgBoot sys_quartz_job；job_class_name 在 Node 侧是「执行器标识」，
+ * 表 sys_quartz_job；job_class_name 在 Node 侧是「执行器标识」，
  * 可选值见 GET /api/v1/jobs/handlers。status：0 正常（运行中）/ -1 停止。
  */
 @ApiTags('定时任务 V1')

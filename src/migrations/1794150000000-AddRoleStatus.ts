@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
 
-/** sys_role 加状态列：1 正常 / 0 停用（对齐 jeecg 角色管理的状态开关列） */
+/** sys_role 加状态列：1 正常 / 0 停用 */
 export class AddRoleStatus1794150000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     const hasColumn = await queryRunner.hasColumn('sys_role', 'status')

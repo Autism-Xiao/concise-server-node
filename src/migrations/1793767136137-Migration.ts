@@ -3,7 +3,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm'
 /**
  * 角色/权限关联表去重并加唯一索引
  *
- * 背景：sys_user_role、sys_role_permission 采用 JeecgBoot 结构（独立 id 主键），
+ * 背景：sys_user_role、sys_role_permission 采用带独立主键的结构，
  * 只有普通索引，重复执行「授权」会插入重复关联行（同一角色同一菜单多行）。
  * 无唯一约束时权限查询结果虽然正确但数据脏，这里先清理重复再补唯一键。
  */

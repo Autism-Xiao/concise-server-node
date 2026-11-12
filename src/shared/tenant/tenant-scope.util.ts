@@ -11,7 +11,7 @@ export interface TenantCondition {
 }
 
 /**
- * 生成租户过滤条件（对齐 JeecgBoot 的 MyBatis-Plus TenantLineInnerInterceptor）
+ * 生成租户过滤条件
  *
  * - `null`（上下文未设置 / 超管平台视角）→ 不加条件
  * - `0`  → 只看平台共享数据

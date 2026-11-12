@@ -1,10 +1,10 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
- * 日志表对齐 JeecgBoot：login_log + oper_log 两张自增表合并为单表 sys_log
- * - id 为 32 位字符串（对齐 jeecg 主键风格）
+ * 日志表：login_log + oper_log 两张自增表合并为单表 sys_log
+ * - id 为 32 位字符串
  * - log_type：0 登录日志 / 1 操作日志
- * - status：jeecg 语义 0 正常（成功）/ 1 异常（失败）——存量数据需取反映射
+ * - status：0 正常（成功）/ 1 异常（失败）——存量数据需取反映射
  * - 保留项目扩展列：browser/os/location（登录）、params/error_msg（操作）
  * - 存量数据迁移完成后 drop 旧表
  */
@@ -34,10 +34,10 @@ export class Migration1793786906437 implements MigrationInterface {
         PRIMARY KEY (\`id\`),
         KEY \`idx_sys_log_type_time\` (\`log_type\`, \`create_time\`),
         KEY \`idx_sys_log_user\` (\`operate_user_name\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统日志表（对齐 JeecgBoot sys_log）'
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统日志表'
     `)
 
-    // 迁移登录日志存量：status 1成功/0失败 → jeecg 0成功/1失败；message+username 拼进 log_content
+    // 迁移登录日志存量：status 1成功/0失败 → 新表 0成功/1失败；message+username 拼进 log_content
     await queryRunner.query(`
       INSERT INTO \`sys_log\` (\`id\`, \`log_content\`, \`log_type\`, \`operate_user_name\`, \`ip\`, \`status\`, \`browser\`, \`os\`, \`location\`, \`create_by\`, \`create_time\`)
       SELECT

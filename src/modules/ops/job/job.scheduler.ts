@@ -32,7 +32,7 @@ const TIME_ZONE = 'Asia/Shanghai'
  *
  * - 启动时把 status=0 且未删除的任务全部挂上调度
  * - 新增/修改/启停/删除后由 Service 调用 schedule / unschedule 增量同步
- * - 执行结果只保留在内存（sys_quartz_job 没有执行记录列，JeecgBoot 的 Quartz 日志在 QRTZ_* 表里，
+ * - 执行结果只保留在内存（sys_quartz_job 没有执行记录列，Quartz 自身的日志在 QRTZ_* 表里，
  *   本项目不引入那套表），需要持久化执行记录时接 sys_log.job_id
  */
 @Injectable()

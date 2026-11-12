@@ -2,8 +2,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
  * 新建职级表 sys_level 与岗位表 sys_position：
- * - 职级：JeecgBoot 无原生表，按其风格自建（32 位字符串主键、tenant_id、审计四列）
- * - 岗位：对齐 JeecgBoot sys_position，补充 dept_id（所属部门）与 status
+ * - 职级：无对应原表，按同风格自建（32 位字符串主键、tenant_id、审计四列）
+ * - 岗位：sys_position，补充 dept_id（所属部门）与 status
  */
 export class Migration1793785118314 implements MigrationInterface {
   name = 'Migration1793785118314'
@@ -41,7 +41,7 @@ export class Migration1793785118314 implements MigrationInterface {
         \`tenant_id\` int NOT NULL DEFAULT 0 COMMENT '租户ID',
         PRIMARY KEY (\`id\`),
         UNIQUE KEY \`uk_sys_position_code\` (\`post_code\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='岗位表（对齐 JeecgBoot sys_position）'
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='岗位表'
     `)
   }
 

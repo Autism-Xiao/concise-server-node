@@ -16,7 +16,7 @@ class ClearCacheDto {
 /**
  * 运维监控接口 V1：/api/v1/monitor/**
  *
- * JeecgBoot 的服务监控/缓存监控都没有表，是实时采集；本项目一致，不落库。
+ * 服务监控/缓存监控都不落表，是实时采集；本项目一致，不落库。
  */
 @ApiTags('运维监控 V1')
 @ApiBearerAuth('jwt')

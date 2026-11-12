@@ -136,7 +136,7 @@ export class DictService extends BaseService<SysDictEntity> {
     return this.findActive(id)
   }
 
-  /** 删除字典：软删（JeecgBoot 的 del_flag=1）；字典下还有字典项时拒绝 */
+  /** 删除字典：软删（del_flag=1）；字典下还有字典项时拒绝 */
   async deleteDict(id: string): Promise<void> {
     await this.findActive(id)
     const itemCount = await this.dictRepository.manager.count(SysDictItemEntity, { where: { dictId: id } })

@@ -169,7 +169,7 @@
   }
 
   // 补齐历史按钮权限的 status：权限查询只认 status='1'，
-  // 早期从 jeecg 迁移过来的按钮（menu_type=2）status 是 NULL，导致非 admin 角色的按钮权限一直不生效
+  // 早期迁移过来的按钮（menu_type=2）status 是 NULL，导致非 admin 角色的按钮权限一直不生效
   const fixedButtons = await ds.query("UPDATE sys_permission SET status = '1' WHERE menu_type = 2 AND status IS NULL AND del_flag = 0")
   if (fixedButtons.affectedRows) {
     console.log(`已补齐 ${fixedButtons.affectedRows} 条历史按钮权限的 status（原为 NULL，权限校验不认）`)

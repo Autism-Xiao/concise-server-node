@@ -1,5 +1,5 @@
 /**
- * 统一响应结构（对齐 JeecgBoot 的 Result<T>）
+ * 统一响应结构（code / message / result / success / timestamp）
  *
  * 成功：{ code: 0, message: '', result: <业务数据>, success: true, timestamp: 1793768743245 }
  * 失败：{ code: <非 0>, message: '<可直接提示的文案>', result: null, success: false, timestamp: ... }

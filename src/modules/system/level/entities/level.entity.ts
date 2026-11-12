@@ -2,9 +2,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, PrimaryColumn } from 'typeorm'
 
 /**
- * 职级表（JeecgBoot 无原生职级表，按其风格自建 sys_level）
+ * 职级表（无对应原表，按同风格自建 sys_level）
  * - 主键 32 位字符串；level_name 唯一（P6 / M1 / T3 ...）
- * - level_rank 数字越大级别越高；status varchar：'1' 正常 / '0' 停用（JeecgBoot 惯例）
+ * - level_rank 数字越大级别越高；status varchar：'1' 正常 / '0' 停用（沿用既有惯例）
  */
 @Entity('sys_level')
 export class LevelEntity {
@@ -44,7 +44,7 @@ export class LevelEntity {
   @Column({ type: 'datetime', nullable: true, comment: '更新时间' })
   updateTime?: Date
 
-  @ApiPropertyOptional({ description: '租户 ID（对齐 JeecgBoot，默认 0）', example: 0, nullable: true })
+  @ApiPropertyOptional({ description: '租户 ID（默认 0）', example: 0, nullable: true })
   @Column({ type: 'int', default: 0, comment: '租户ID' })
   tenantId?: number
 }

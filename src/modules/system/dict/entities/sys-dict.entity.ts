@@ -2,10 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, PrimaryColumn } from 'typeorm'
 
 /**
- * 数据字典表（对齐 JeecgBoot sys_dict）
+ * 数据字典表
  *
  * - 主键 32 位字符串，dict_code 唯一
- * - JeecgBoot 的字典类型没有「启用/停用」列，只有 del_flag（0 正常 / 1 已删除），本项目保持一致
+ * - 字典类型没有「启用/停用」列，只有 del_flag（0 正常 / 1 已删除），本项目保持一致
  * - type：0 string / 1 number，表示该字典下 item_value 的值类型
  */
 @Entity('sys_dict')
@@ -50,7 +50,7 @@ export class SysDictEntity {
   @Column({ name: 'update_time', type: 'datetime', nullable: true, comment: '更新时间' })
   updateTime?: Date
 
-  @ApiPropertyOptional({ description: '租户 ID（对齐 JeecgBoot，默认 0）', example: 0 })
+  @ApiPropertyOptional({ description: '租户 ID（默认 0）', example: 0 })
   @Column({ name: 'tenant_id', type: 'int', default: 0, comment: '租户ID' })
   tenantId?: number
 

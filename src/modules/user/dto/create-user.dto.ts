@@ -13,7 +13,7 @@ export class CreateUserDto {
   @Length(1, 100)
   realname?: string
 
-  @ApiProperty({ description: '密码（6~64 位明文，服务端生成盐并按 JeecgBoot 算法加密入库）', example: '123456', minLength: 6, maxLength: 64 })
+  @ApiProperty({ description: '密码（6~64 位明文，服务端哈希后入库）', example: '123456', minLength: 6, maxLength: 64 })
   @IsString()
   @Length(6, 64, { message: '密码长度须在 6~64 位之间' })
   password: string

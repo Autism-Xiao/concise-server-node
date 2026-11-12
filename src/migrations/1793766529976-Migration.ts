@@ -1,15 +1,15 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
- * role → sys_role、menu → sys_permission、dept → sys_depart（对齐 JeecgBoot）
+ * role → sys_role、menu → sys_permission、dept → sys_depart
  *
  * 要点：
  * 1. 三张表主键由 int 自增改为 varchar(32)，旧数据用确定性规则映射：
- *    role  → admin 固定 JeecgBoot id，其余 UUID
+ *    role  → admin 固定主键，其余 UUID
  *    menu  → 'menu_<旧id>'，parent_id 0 转 NULL
  *    dept  → 'dept_<旧id>'，parent_id 0 转 NULL
  * 2. 关联表重建：user_roles → sys_user_role、role_menus → sys_role_permission
- *    （JeecgBoot 结构带独立 id，用 DEFAULT (replace(uuid(),'-','')) 让 TypeORM 插入时无需提供）
+ *    （表结构带独立 id，用 DEFAULT (replace(uuid(),'-','')) 让 TypeORM 插入时无需提供）
  * 3. dept 的机构编码 org_code 唯一必填：按树层级自动生成 A01 / A01A01
  * 4. sys_user.dept_id 同步改为 varchar(32) 并按新 dept id 重写，org_code 回填
  */
@@ -33,7 +33,7 @@ export class Migration1793766529976 implements MigrationInterface {
       UNIQUE KEY \`uniq_sys_role_role_code\` (\`role_code\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='角色表'`)
 
-    // 旧 role.name → sys_role.role_code，label → role_name；admin 沿用 JeecgBoot 初始 id
+    // 旧 role.name → sys_role.role_code，label → role_name；admin 沿用初始数据里的主键
     await queryRunner.query(`INSERT INTO \`sys_role\` (\`id\`, \`role_name\`, \`role_code\`, \`description\`, \`create_by\`, \`create_time\`, \`update_by\`, \`update_time\`, \`tenant_id\`)
       SELECT CASE WHEN \`name\` = 'admin' THEN 'f6817f48af4fb3af11b9e8bf182f618b' ELSE REPLACE(UUID(), '-', '') END,
              \`label\`, \`name\`, \`remark\`, 'admin', NOW(), 'admin', NOW(), 0

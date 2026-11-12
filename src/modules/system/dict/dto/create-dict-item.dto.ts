@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { IsIn, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator'
 
-/** 创建字典项（对齐 JeecgBoot sys_dict_item 字段） */
+/** 创建字典项 */
 export class CreateDictItemDto {
   @ApiProperty({ description: '所属字典 ID（sys_dict.id）', example: 'dict_1' })
   @IsString()

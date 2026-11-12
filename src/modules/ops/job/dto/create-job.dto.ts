@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { IsIn, IsOptional, IsString, Length } from 'class-validator'
 
-/** 创建定时任务（对齐 JeecgBoot sys_quartz_job 字段） */
+/** 创建定时任务 */
 export class CreateJobDto {
   @ApiProperty({ description: '任务类名（Node 侧为执行器标识，可选值见 GET /api/v1/jobs/handlers）', example: 'cleanLogJob' })
   @IsString()

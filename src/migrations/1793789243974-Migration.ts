@@ -1,12 +1,12 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
- * 定时任务表：与 JeecgBoot 官方 DDL 完全一致（表名 sys_quartz_job，字段名/类型不改造）
+ * 定时任务表：与官方原始 DDL 完全一致（表名 sys_quartz_job，字段名/类型不改造）
  *
- * JeecgBoot 原表字段（MySQL 版）：
+ * 历史表字段（MySQL 版）：
  * - id             varchar(32) 主键
  * - create_by/create_time/del_flag/update_by/update_time  审计四件套 + 删除标记
- * - job_class_name varchar(255) 任务类名（JeecgBoot 里是 Quartz Job 实现类全限定名；
+ * - job_class_name varchar(255) 任务类名（该列原本是 Quartz Job 实现类全限定名；
  *                               Node 侧没有 Java 类，按「执行器标识」使用，见 JobHandlerRegistry）
  * - cron_expression varchar(255) cron 表达式
  * - parameter      varchar(255) 参数（原样传给执行器）

@@ -4,9 +4,9 @@ import { MenuEntity } from '../../menu/entities/menu.entity'
 import { UserEntity } from '../../user/entities/user.entity'
 
 /**
- * 角色表（对齐 JeecgBoot sys_role）
+ * 角色表
  * - 主键 32 位字符串，role_code 唯一（@Roles() 按 roleCode 匹配）
- * - 无 status 字段（JeecgBoot 原表无状态列）
+ * - 无 status 字段（历史表无状态列）
  * - 角色↔菜单走 sys_role_permission（role_id + permission_id）
  */
 @Entity('sys_role')

@@ -45,9 +45,9 @@ export interface SessionUser {
 }
 
 /**
- * 在线用户（对齐 JeecgBoot 的做法：不建表，在线状态存 Redis）
+ * 在线用户
  *
- * JeecgBoot 的在线用户来自 Redis 里的 token 记录 + 强制下线；本项目 JWT 无状态，
+ * 在线用户来自 Redis 里的 token 记录 + 强制下线；本项目 JWT 无状态，
  * 因此在 JwtStrategy 每次校验通过时按 accessToken 的哈希登记一条会话：
  *   online:session:<tokenHash>  → JSON（账号/部门/IP/归属地/浏览器/系统/登录时间）
  *   online:revoked:<tokenHash>  → 强制下线黑名单，TTL 到 token 过期

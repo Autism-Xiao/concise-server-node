@@ -53,7 +53,7 @@ const ITEM_COLUMNS = [
 /**
  * 数据字典接口 V1：/api/v1/dicts
  *
- * 表对齐 JeecgBoot sys_dict；删除是软删（del_flag=1），字典下还有字典项时拒绝删除。
+ * 表 sys_dict；删除是软删（del_flag=1），字典下还有字典项时拒绝删除。
  */
 @ApiTags('数据字典 V1')
 @ApiBearerAuth('jwt')

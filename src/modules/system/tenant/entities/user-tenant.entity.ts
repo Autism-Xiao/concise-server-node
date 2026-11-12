@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm'
 
 /**
- * 用户-租户关系（对齐 JeecgBoot sys_user_tenant）
+ * 用户-租户关系
  *
  * 一个账号可属于多个租户：登录后用 `X-Tenant-Id` 请求头切换「当前租户」，
  * 服务端在中间件里校验成员关系（不信任前端传来的任意 id）。

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 /**
- * 请求级租户上下文（对齐 JeecgBoot 的 TenantContext ThreadLocal）
+ * 请求级租户上下文
  *
  * 由 TenantMiddleware 在每个请求进入时写入，后续的 Guard / Interceptor / Service 都读同一份。
  * 用 AsyncLocalStorage 而不是全局变量：并发请求之间互不干扰。

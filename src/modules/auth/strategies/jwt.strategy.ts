@@ -27,7 +27,7 @@ function extractToken(request: RequestWithToken): string | null {
 /**
  * 从 Authorization: Bearer <token> 解析并校验 accessToken
  *
- * 除常规校验外做两件事（在线用户 / 强制下线，对齐 JeecgBoot 用 Redis 管在线态的做法）：
+ * 除常规校验外做两件事：
  * 1. 查 online:revoked:<tokenHash> 黑名单，命中直接 401（被踢下线的令牌立即失效）
  * 2. 校验通过后按 token 哈希登记/刷新 online:session:<tokenHash>，TTL 到 token 过期
  */

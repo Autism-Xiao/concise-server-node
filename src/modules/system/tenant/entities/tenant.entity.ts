@@ -10,14 +10,14 @@ export const TENANT_PLAN = {
 
 export type TenantPlanCode = (typeof TENANT_PLAN)[keyof typeof TENANT_PLAN]
 
-/** 租户状态：0 正常 / 1 停用（对齐 JeecgBoot sys_tenant.status） */
+/** 租户状态：0 正常 / 1 停用 */
 export const TENANT_STATUS = {
   NORMAL: 0,
   DISABLED: 1
 } as const
 
 /**
- * 租户表（对齐 JeecgBoot sys_tenant）
+ * 租户表
  *
  * - 主键自增 int（业务表 tenant_id 是 int，保持一致）
  * - code 全局唯一，作为对外稳定标识（改名不影响数据归属）

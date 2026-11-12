@@ -1,8 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
- * 数据字典对齐 JeecgBoot：dict_type / dict_item（自增 int 主键、自造字段）
- * → sys_dict / sys_dict_item（JeecgBoot 原表名与字段）
+ * 数据字典：dict_type / dict_item（自增 int 主键、自造字段）
+ * → sys_dict / sys_dict_item（历史表名与字段）
  *
  * 字段映射：
  * - dict_type.name          → sys_dict.dict_name
@@ -37,7 +37,7 @@ export class Migration1793791381916 implements MigrationInterface {
         \`tenant_id\` int NOT NULL DEFAULT '0' COMMENT '租户ID',
         PRIMARY KEY (\`id\`),
         UNIQUE KEY \`uk_sd_dict_code\` (\`dict_code\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据字典表（对齐 JeecgBoot sys_dict）'
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据字典表'
     `)
 
     await queryRunner.query(`
@@ -59,7 +59,7 @@ export class Migration1793791381916 implements MigrationInterface {
         KEY \`idx_sdi_sort_order\` (\`sort_order\`),
         KEY \`idx_sdi_status\` (\`status\`),
         KEY \`idx_sdi_dict_value\` (\`dict_id\`, \`item_value\`)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据字典条目表（对齐 JeecgBoot sys_dict_item）'
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据字典条目表'
     `)
 
     // 旧表存在才迁数据（全新环境没有 dict_type 时直接跳过）

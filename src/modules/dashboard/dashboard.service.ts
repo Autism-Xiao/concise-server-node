@@ -327,7 +327,7 @@ export class DashboardService {
   }
 
   private async notices(): Promise<NoticeRow[]> {
-    // 注意：sys_announcement 的标题列在建表时拼成了 titile（JeecgBoot 历史拼写），不是 title
+    // 注意：sys_announcement 的标题列在建表时拼成了 titile（历史遗留拼写），不是 title
     // 公告有 tenant_id（0 = 全平台公告），首页必须按租户过滤，否则租户能看到别家的公告
     const params: unknown[] = []
     const tenantFilter = this.tenantClause('tenant_id', params, { shared: true })

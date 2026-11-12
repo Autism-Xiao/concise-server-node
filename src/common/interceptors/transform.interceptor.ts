@@ -5,7 +5,7 @@ import { map } from 'rxjs/operators'
 import type { ApiResult } from '../interfaces/api-result.interface'
 
 /**
- * 统一响应包装（对齐 JeecgBoot Result<T>）
+ * 统一响应包装（code / message / result / success / timestamp）
  * 成功时固定返回：{ code: 0, message: '', result: <数据>, success: true, timestamp }
  * 文件流（StreamableFile / Buffer）为二进制下载，不参与包装
  */

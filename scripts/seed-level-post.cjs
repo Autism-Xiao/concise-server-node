@@ -2,12 +2,12 @@
  * 职级 / 岗位示例数据脚本（幂等，可重复执行）
  *
  * 数据来源：
- * - sys_level  → JeecgBoot 官方「职务职级」字典 position_rank（sys_dict_item：
+ * - sys_level  → 官方的「职务职级」字典项 position_rank（sys_dict_item：
  *                员工=1 / 小组长=2 / 部门经理=3 / 副总经理=4），总经理为组织架构最高职务补齐
  * - sys_position → 与上述职级一一对应的职务岗，挂在 sys_depart 实际部门下
  *
  * 说明：
- * - 本表 level_rank 语义是「数字越大级别越高」，与 jeecg position_rank 的序号同向，直接沿用其数值
+ * - 本表 level_rank 语义是「数字越大级别越高」，与字典项 position_rank 的序号同向，直接沿用其数值
  * - 幂等策略：按业务唯一键（level_name / post_code）判断，存在则更新、缺失则插入
  * - 部门取自库内真实 sys_depart（dept_1 总公司 / dept_2 研发部），部门不存在时该岗位 dept_id 置空
  *
@@ -21,13 +21,13 @@
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false })
   const ds = app.get(getDataSourceToken('default'))
 
-  /** 职级：jeecg position_rank 字典项（数字越大级别越高） */
+  /** 职级：position_rank 字典项（数字越大级别越高） */
   const LEVELS = [
-    { name: '员工', rank: 1, remark: 'JeecgBoot position_rank=1，基础执行岗' },
-    { name: '小组长', rank: 2, remark: 'JeecgBoot position_rank=2，带领小组完成既定任务' },
-    { name: '部门经理', rank: 3, remark: 'JeecgBoot position_rank=3，部门负责人' },
-    { name: '副总经理', rank: 4, remark: 'JeecgBoot position_rank=4，分管业务条线' },
-    { name: '总经理', rank: 5, remark: 'JeecgBoot 组织架构最高职务，全面负责经营管理' }
+    { name: '员工', rank: 1, remark: '职级序号 1，基础执行岗' },
+    { name: '小组长', rank: 2, remark: '职级序号 2，带领小组完成既定任务' },
+    { name: '部门经理', rank: 3, remark: '职级序号 3，部门负责人' },
+    { name: '副总经理', rank: 4, remark: '职级序号 4，分管业务条线' },
+    { name: '总经理', rank: 5, remark: '组织架构最高职务，全面负责经营管理' }
   ]
 
   /** 岗位：与职级一一对应的职务岗 */

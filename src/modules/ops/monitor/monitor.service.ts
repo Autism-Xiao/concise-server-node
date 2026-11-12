@@ -61,7 +61,7 @@ function positiveInt(raw: string | undefined, fallback: number): number {
 }
 
 /**
- * 运维监控（JeecgBoot 这两个页面都没有表：服务监控走系统 API 实时采集，缓存监控走 Redis INFO）
+ * 运维监控（这两个页面都不落表：服务监控走系统 API 实时采集，缓存监控走 Redis INFO）
  * 本项目保持一致：不落库，全部实时读取。
  *
  * CPU 使用率改成**后台定时采样 + 读缓存**：原来每次 getServerInfo 都 `await 200ms` 做两次

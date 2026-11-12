@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { IsISO8601, IsIn, IsOptional, IsString, Length, MaxLength } from 'class-validator'
 
-/** 创建通知公告（字段对齐 JeecgBoot sys_announcement） */
+/** 创建通知公告 */
 export class CreateNoticeDto {
   @ApiProperty({ description: '标题', example: '系统 V1.0 上线', maxLength: 100 })
   @IsString()
