@@ -37,10 +37,14 @@ export class TenantAccessService {
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  /** 用户归属（带缓存） */
+  /** 用户归属（带缓存）。读到过期条目时顺手删除：Map 以 userId 为键、只有覆盖同键才会重写，
+   * 不清理的话冷用户（登一次就走的账号）的条目会永久滞留，进程内缓慢无界增长 */
   async loadMembership(userId: string): Promise<TenantMembership> {
     const cached = this.cache.get(userId)
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value
+    if (cached) {
+      if (Date.now() - cached.at < CACHE_TTL_MS) return cached.value
+      this.cache.delete(userId)
+    }
 
     const [profile, rows] = await Promise.all([
       this.dataSource.query<{ isPlatformAdmin: number | null; loginTenantId: number | null }[]>(
