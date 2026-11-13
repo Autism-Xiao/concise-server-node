@@ -43,6 +43,7 @@ import { MonitorModule } from './modules/ops/monitor/monitor.module'
 import { ToolsModule } from './modules/tools/tools.module'
 import { DashboardModule } from './modules/dashboard/dashboard.module'
 import { TenantModule } from './modules/system/tenant/tenant.module'
+import { CustomerModule } from './modules/customer/customer.module'
 import { TenantContextModule } from './shared/tenant/tenant-context.module'
 import { TenantMiddleware } from './shared/tenant/tenant.middleware'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
@@ -82,7 +83,6 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     MessageModule,
     RealtimeModule,
     SupplierModule,
-    SupplierModule,
     DictModule,
     NoticeModule,
     // 待办任务（system/task）
@@ -102,6 +102,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     MonitorModule,
     // 公共工具模块（上传/存储）
     ToolsModule,
+    CustomerModule,
     // Distributed tracing, auto-correlated logs, request/job metrics, error
     // telemetry, alarms, and more — out of the box. Sign up at https://observe.nestjs.com,
     // then run `npx @nestjs/observe link` to write your key pair into .env.
