@@ -128,5 +128,14 @@ export enum BizErrorCode {
   /** 定时任务缺少/无效的 cron 表达式 */
   JOB_CRON_INVALID = 9101,
   /** 在线会话不存在或已过期 */
-  SESSION_EXPIRED = 9102
+  SESSION_EXPIRED = 9102,
+
+  // ============ 92xx 代码生成器（消费方：代码生成页面按码分支） ============
+
+  /** 目标模块目录已存在 —— 消费方：页面弹「已存在，是否覆盖追加」二次确认（force=true 重试） */
+  CODEGEN_MODULE_EXISTS = 9201,
+  /** 生成器被禁用（生产环境默认关闭） —— 消费方：页面顶部横幅提示改 CODEGEN_ENABLED */
+  CODEGEN_DISABLED = 9202,
+  /** 生成脚本执行失败（校验不过/写盘失败/超时） —— 消费方：页面展示原始 stderr 首行 */
+  CODEGEN_FAILED = 9203
 }

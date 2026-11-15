@@ -30,6 +30,7 @@ import { RegionModule } from './modules/system/region/region.module'
 import { MessageModule } from './modules/message/message.module'
 import { RealtimeModule } from './shared/realtime/realtime.module'
 import { SupplierModule } from './modules/supplier/supplier.module'
+import { CodegenModule } from './modules/codegen/codegen.module'
 import { DictModule } from './modules/system/dict/dict.module'
 import { NoticeModule } from './modules/system/notice/notice.module'
 import { TaskModule } from './modules/system/task/task.module'
@@ -92,6 +93,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     WatermarkModule,
     // 用户界面设置（sys_user_setting：/v1/users/me/settings，前端本地兜底的云端副本）
     UserSettingModule,
+    // 代码生成器（包装 scripts/gen-module.cjs：预览走临时目录，生成本机写盘，生产默认禁用）
+    CodegenModule,
     LevelModule,
     PostModule,
     // 多租户管理（sys_tenant + sys_user_tenant）

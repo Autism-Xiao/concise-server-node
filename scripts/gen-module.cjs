@@ -47,8 +47,18 @@ function usageAndExit() {
   process.exit(1)
 }
 
-const moduleSnake = argOf('--module')
-const label = argOf('--label', moduleSnake)
+/**
+ * --spec <file.json>：结构化定义（页面表单 → JSON 直接落盘，避免中文/逗号破坏 DSL 解析）
+ *   { module, label, perms?, table?, menuParent?, sort?, icon?, fields: [{ name, type, comment,
+ *     required, unique, query, search, default, enumValues: [{value,label}] }] }
+ * --out <dir>：把所有产物写进暂存目录（server/ 与 admin/ 两棵子树），用于「不落盘的预览」
+ * --json：结束时多打一行 __CODEGEN__{...} 机器可读清单（页面接口解析）
+ */
+const specPath = argOf('--spec')
+const spec = specPath ? JSON.parse(fs.readFileSync(path.resolve(specPath), 'utf8')) : {}
+
+const moduleSnake = spec.module ?? argOf('--module')
+const label = spec.label ?? argOf('--label', moduleSnake)
 if (!moduleSnake || !label) usageAndExit()
 if (!/^[a-z][a-z0-9_]*$/.test(moduleSnake)) {
   console.error(`--module 须为小写蛇形（如 customer / biz_order），收到：${moduleSnake}`)
@@ -56,13 +66,15 @@ if (!/^[a-z][a-z0-9_]*$/.test(moduleSnake)) {
 }
 const moduleCamel = moduleSnake.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 const ModulePascal = moduleCamel[0].toUpperCase() + moduleCamel.slice(1)
-const permsPrefix = argOf('--perms', moduleSnake)
-const table = argOf('--table', moduleSnake)
-const menuParent = argOf('--menu-parent', 'menu_collab')
-const menuSort = Number(argOf('--sort', '50'))
-const feIcon = argOf('--icon', 'Briefcase')
-const adminRoot = argOf('--admin', path.resolve(process.cwd(), '../concise-admin'))
+const permsPrefix = spec.perms ?? argOf('--perms', moduleSnake)
+const table = spec.table ?? argOf('--table', moduleSnake)
+const menuParent = spec.menuParent ?? argOf('--menu-parent', 'menu_collab')
+const menuSort = Number(spec.sort ?? argOf('--sort', '50'))
+const feIcon = spec.icon ?? argOf('--icon', 'Briefcase')
+const adminRoot = spec.adminRoot ?? argOf('--admin', path.resolve(process.cwd(), '../concise-admin'))
 const serverRoot = process.cwd()
+const OUT_ROOT = argOf('--out')
+const JSON_OUT = args.includes('--json')
 
 const TYPE_MAP = {
   string: { ts: 'string', mysql: 'VARCHAR(128)', dto: 'IsString', fe: 'input' },
@@ -77,78 +89,153 @@ const TYPE_MAP = {
 }
 const NUMERIC_TYPES = ['int', 'bigint', 'tinyint', 'decimal', 'enum']
 
+/** 统一字段校验：DSL 与 --spec JSON 都走这里，保证两条入口行为一致 */
+function normalizeField(raw, rawText) {
+  const name = raw.name
+  const type = raw.type
+  const text = rawText ?? `${name}:${type}`
+  if (!name || !TYPE_MAP[type]) {
+    console.error(`字段「${text}」不合法（类型须为 ${Object.keys(TYPE_MAP).join('/')}）`)
+    process.exit(2)
+  }
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+    console.error(`字段名「${name}」须为小写蛇形`)
+    process.exit(2)
+  }
+  if ((raw.comment ?? '').length > 64) {
+    console.error(`字段「${name}」中文备注过长（≤64 字）`)
+    process.exit(2)
+  }
+  const field = {
+    name,
+    type,
+    comment: raw.comment || name,
+    required: !!raw.required,
+    unique: !!raw.unique,
+    query: !!raw.query,
+    search: !!raw.search,
+    default: raw.default === undefined || raw.default === null || raw.default === '' ? undefined : String(raw.default),
+    enumValues: []
+  }
+  if (type === 'enum') {
+    const list = Array.isArray(raw.enumValues) ? raw.enumValues : []
+    if (list.length === 0) {
+      console.error(`enum 字段「${name}」缺少枚举值（如 1:普通|2:VIP）`)
+      process.exit(2)
+    }
+    field.enumValues = list.map(item => {
+      if (!Number.isFinite(Number(item.value)) || !item.label) {
+        console.error(`enum 字段「${name}」选项「${JSON.stringify(item)}」不合法，应为 值:标签`)
+        process.exit(2)
+      }
+      return { value: Number(item.value), label: String(item.label) }
+    })
+    if (field.default !== undefined && !field.enumValues.some(item => item.value === Number(field.default))) {
+      console.error(`enum 字段「${name}」默认值 ${field.default} 不在枚举值里`)
+      process.exit(2)
+    }
+  }
+  if (type === 'bool' && field.default !== undefined && !['0', '1'].includes(field.default)) {
+    console.error(`bool 字段「${name}」默认值只能是 0/1`)
+    process.exit(2)
+  }
+  return field
+}
+
+/** DSL：名称:类型:中文备注[:选项，逗号分隔] —— 兼容命令行老用法
+ *  字段之间用逗号分隔，但选项也用逗号（r,s）→ 不含冒号的分段并回上一个字段，
+ *  这样 "name:string:名称:r,s, contact:string:联系人" 与 "name:string:名称:rs" 都成立。 */
+function parseFieldsDsl(fieldsArg) {
+  const merged = []
+  for (const segment of fieldsArg.split(',')) {
+    const text = segment.trim()
+    if (!text) continue
+    if (merged.length === 0 || text.includes(':')) merged.push(text)
+    else merged[merged.length - 1] += `,${text}`
+  }
+  return merged
+    .map(raw => {
+      // 选项可能含冒号（enum 的 e=1:启用），把第 3 个冒号之后的全部并回选项
+      const parts = raw.split(':')
+      const [name, type, comment] = parts
+      const options = parts.slice(3).join(':') ?? ''
+      const defaultMatch = options.match(/default=([^,]+)/)
+      const enumMatch = options.match(/e=([^,]+)/)
+      const flagStr = options.replace(/default=[^,]+/g, '').replace(/e=[^,]+/g, '').replace(/[,\s]/g, '')
+      const enumValues = enumMatch
+        ? enumMatch[1].split('|').map(pair => {
+            const [value, enumLabel] = pair.split(':')
+            if (value === undefined || enumLabel === undefined) {
+              console.error(`enum 字段「${name}」选项「${pair}」不合法，应为 值:标签`)
+              process.exit(2)
+            }
+            return { value: Number(value), label: enumLabel }
+          })
+        : []
+      return normalizeField(
+        {
+          name,
+          type,
+          comment,
+          required: flagStr.includes('r'),
+          unique: flagStr.includes('u'),
+          query: flagStr.includes('q'),
+          search: flagStr.includes('s'),
+          default: defaultMatch?.[1],
+          enumValues
+        },
+        raw
+      )
+    })
+}
+
+const specFields = Array.isArray(spec.fields) && spec.fields.length > 0 ? spec.fields : null
 const fieldsArg = argOf('--fields')
-if (!fieldsArg) usageAndExit()
-const parsedFields = fieldsArg
-  .split(',')
-  .map(raw => raw.trim())
-  .filter(Boolean)
-  .map(raw => {
-    // 选项可能含冒号（enum 的 e=1:启用），把第 3 个冒号之后的全部并回选项
-    const parts = raw.split(':')
-    const [name, type, comment] = parts
-    const options = parts.slice(3).join(':') ?? ''
-    if (!name || !TYPE_MAP[type]) {
-      console.error(`字段「${raw}」不合法（类型须为 ${Object.keys(TYPE_MAP).join('/')}）`)
-      process.exit(1)
-    }
-    if (!/^[a-z][a-z0-9_]*$/.test(name)) {
-      console.error(`字段名「${name}」须为小写蛇形`)
-      process.exit(1)
-    }
-    const defaultMatch = options.match(/default=([^,]+)/)
-    const enumMatch = options.match(/e=([^,]+)/)
-    const flagStr = options.replace(/default=[^,]+/g, '').replace(/e=[^,]+/g, '').replace(/[,\s]/g, '')
-    const field = {
-      name,
-      type,
-      comment: comment || name,
-      required: flagStr.includes('r'),
-      unique: flagStr.includes('u'),
-      query: flagStr.includes('q'),
-      search: flagStr.includes('s'),
-      default: defaultMatch?.[1],
-      enumValues: []
-    }
-    if (type === 'enum') {
-      if (!enumMatch) {
-        console.error(`enum 字段「${name}」缺少 e= 值:标签 选项（如 e=1:普通|2:VIP）`)
-        process.exit(1)
-      }
-      field.enumValues = enumMatch[1].split('|').map(pair => {
-        const [value, enumLabel] = pair.split(':')
-        if (value === undefined || enumLabel === undefined) {
-          console.error(`enum 字段「${name}」选项「${pair}」不合法，应为 值:标签`)
-          process.exit(1)
-        }
-        return { value: Number(value), label: enumLabel }
-      })
-      if (field.default !== undefined && !field.enumValues.some(item => item.value === Number(field.default))) {
-        console.error(`enum 字段「${name}」默认值 ${field.default} 不在枚举值里`)
-        process.exit(1)
-      }
-    }
-    return field
-  })
+if (!specFields && !fieldsArg) usageAndExit()
+if (specFields && specFields.length > 40) {
+  console.error('字段数量超过 40 个，请拆表（生成器不适合超宽表）')
+  process.exit(2)
+}
+const parsedFields = specFields ? specFields.map(field => normalizeField(field)) : parseFieldsDsl(fieldsArg)
 
 const pascal = name => name.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase())
 const tsProp = name => pascal(name)[0].toLowerCase() + pascal(name).slice(1)
 const writeCount = { ok: 0, skip: 0 }
+const written = []
+const skippedFiles = []
+/** 对外展示的相对路径：后端仓库内直接相对 serverRoot，前端仓库加 concise-admin/ 前缀 */
+function displayRel(file) {
+  if (file.startsWith(serverRoot + path.sep)) return path.relative(serverRoot, file)
+  if (file.startsWith(adminRoot + path.sep)) return path.join('concise-admin', path.relative(adminRoot, file))
+  return path.relative(serverRoot, file)
+}
+/** --out 暂存模式：把两个仓库的产物各自映射到 <out>/server 与 <out>/admin 子树 */
+function mapOut(file) {
+  if (!OUT_ROOT) return file
+  if (file.startsWith(serverRoot + path.sep)) return path.join(OUT_ROOT, 'server', path.relative(serverRoot, file))
+  if (file.startsWith(adminRoot + path.sep)) return path.join(OUT_ROOT, 'admin', path.relative(adminRoot, file))
+  return path.join(OUT_ROOT, 'other', path.basename(file))
+}
 function writeFile(file, content) {
-  const rel = path.relative(serverRoot, file)
+  const rel = displayRel(file)
   if (DRY_RUN) {
     console.log(`[dry-run] 将生成: ${rel}`)
+    written.push(rel)
     return
   }
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, content)
+  const target = mapOut(file)
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  fs.writeFileSync(target, content)
   writeCount.ok++
+  written.push(rel)
   console.log(`生成: ${rel}`)
 }
 function writeIfAbsent(file, content) {
   if (fs.existsSync(file)) {
-    console.log(`跳过（已存在）: ${path.relative(serverRoot, file)}`)
+    const rel = displayRel(file)
+    console.log(`跳过（已存在）: ${rel}`)
     writeCount.skip++
+    skippedFiles.push(rel)
     return
   }
   writeFile(file, content)
@@ -242,6 +329,8 @@ for (const field of parsedFields) usedValidators.add(TYPE_MAP[field.type].dto)
 if (parsedFields.some(field => NUMERIC_TYPES.includes(field.type))) usedValidators.add('Type')
 if (parsedFields.some(field => field.type === 'enum')) usedValidators.add('IsIn')
 if (parsedFields.some(field => field.unique)) usedValidators.add('MaxLength')
+// Query DTO 的 keyword 恒用 @MaxLength(64)，与是否出现唯一字段无关
+usedValidators.add('MaxLength')
 const validatorImports = [...usedValidators].filter(name => name !== 'Type' && !name.startsWith('Api')).join(', ') || 'IsOptional'
 const listDtoValidators = 'IsInt, IsOptional, MaxLength'
 const needsType = usedValidators.has('Type')
@@ -340,7 +429,7 @@ const queryConds = parsedFields
   })
   .join('\n')
 const uniqueFields = parsedFields.filter(field => field.unique)
-const uniquePropList = uniqueFields.map(field => `'${field.name}'`).join(', ') || 'never[]'
+const uniquePropList = uniqueFields.map(field => `'${field.name}'`).join(', ')
 const uniqueLabelMap = uniqueFields.map(field => `    ${field.name}: '${field.comment}'`).join('\n') || '    // 无唯一字段'
 
 const serviceFile = path.join(serverRoot, `src/modules/${moduleSnake}/${moduleSnake}.service.ts`)
@@ -1096,3 +1185,20 @@ console.log(`
   2. 让各租户的角色模板拿到新菜单：POST /v1/tenants/provision-all
      （之后退出重登即可在侧边栏看到「${label}管理」）
 `)
+
+if (JSON_OUT) {
+  // 单行机器可读清单，前缀标记便于调用方从日志里定位（页面接口解析这一行）
+  console.log(
+    `__CODEGEN__${JSON.stringify({
+      ok: true,
+      module: moduleSnake,
+      label,
+      table,
+      menuId: `menu_${moduleSnake}`,
+      created: written,
+      skipped: skippedFiles,
+      dryRun: DRY_RUN,
+      staged: Boolean(OUT_ROOT)
+    })}`
+  )
+}
