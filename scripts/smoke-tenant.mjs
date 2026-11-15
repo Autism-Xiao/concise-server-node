@@ -160,9 +160,24 @@ try {
   check('普通用户切平台视角被拒（400）', probePlatform.status === 400 || probePlatform.body?.code === 400, JSON.stringify(probePlatform.body).slice(0, 160))
 
   // ---------- 5. 数据隔离 ----------
+  // 平台共享字典（tenant_id=0）对所有租户可见是设计行为；隔离检查只看「他租户的私有字典是否泄漏」
+  const [sharedRows] = await conn.query('SELECT COUNT(*) AS c FROM sys_dict WHERE tenant_id = 0')
+  const sharedLen = Number(sharedRows[0]?.c ?? 0)
+  const [privateRows] = await conn.query('SELECT dict_code FROM sys_dict WHERE tenant_id <> 0 AND tenant_id <> ?', [tenantA])
+  const privateCodes = privateRows.map(row => row.dict_code)
+  const codesOf = res => {
+    const records = Array.isArray(res.data) ? res.data : (res.data?.records ?? [])
+    return records.map(item => item.dictCode)
+  }
+
   const dictsAEmpty = await api('/dicts', { token: adminToken, tenantId: tenantA })
   const emptyLen = lenOf(dictsAEmpty)
-  check('租户 A 初始看不到默认租户的字典', emptyLen === 0, `len=${emptyLen} ${JSON.stringify(dictsAEmpty.body).slice(0, 120)}`)
+  const leakedEmpty = codesOf(dictsAEmpty).filter(code => privateCodes.includes(code))
+  check(
+    '租户 A 初始只看到平台共享字典（无他租户私有字典泄漏）',
+    emptyLen === sharedLen && leakedEmpty.length === 0,
+    `len=${emptyLen} 共享=${sharedLen} 泄漏=${JSON.stringify(leakedEmpty)}`
+  )
 
   const createDict = await api('/dicts', {
     method: 'POST',
@@ -176,10 +191,18 @@ try {
   check('新字典被打上租户 A 标记', Number(dictRows[0]?.tenant_id) === tenantA, JSON.stringify(dictRows))
 
   const dictsA = await api('/dicts', { token: adminToken, tenantId: tenantA })
-  check('租户 A 现在只看得到自己的 1 条字典', lenOf(dictsA) === 1, `len=${lenOf(dictsA)}`)
+  check(
+    '租户 A 只看得到共享字典 + 自己的 1 条',
+    lenOf(dictsA) === sharedLen + 1 && codesOf(dictsA).includes(`smk_tnt_${stamp}`),
+    `len=${lenOf(dictsA)} 共享=${sharedLen}`
+  )
 
   const dictsB = await api('/dicts', { token: adminToken, tenantId: tenantB })
-  check('租户 B 看不到租户 A 的字典', lenOf(dictsB) === 0, `len=${lenOf(dictsB)}`)
+  check(
+    '租户 B 看不到租户 A 的字典（仅共享）',
+    lenOf(dictsB) === sharedLen && !codesOf(dictsB).includes(`smk_tnt_${stamp}`),
+    `len=${lenOf(dictsB)} 共享=${sharedLen}`
+  )
 
   const dictsAdmin = await api('/dicts', { token: adminToken })
   const adminRecords = Array.isArray(dictsAdmin.data) ? dictsAdmin.data : (dictsAdmin.data?.records ?? [])

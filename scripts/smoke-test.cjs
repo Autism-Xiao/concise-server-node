@@ -672,6 +672,12 @@ async function main() {
     record(wrong.status === 429 && wrong.json?.code === 1009, '第 5 次错误密码触发锁定（429 / 1009）', `status=${wrong.status} code=${wrong.json?.code}`)
     const locked = await call('POST', '/v1/auth/verify-password', { token, body: { password } })
     record(locked.status === 429 && locked.json?.code === 1009, '校验失败与登录共享锁定计数（429 / 1009）', `status=${locked.status} code=${locked.json?.code}`)
+    // 清理：删除临时账号（此前每次运行都会留下一个活跃账号，审计时发现的残留）
+    const verUserId = login.json?.result?.userInfo?.id
+    if (verUserId) {
+      const del = await call('DELETE', `/v1/users/${verUserId}`, { token: adminToken })
+      record(isOk(del), '临时账号已清理', `status=${del.status}`)
+    }
   }
 
   /* ---------- 10.7 用户管理 PRD：批量操作/清缓存/头像/密码策略/登录日志按用户 ---------- */
@@ -892,12 +898,19 @@ async function main() {
     record(isOk(unread3) && Number(unread3.json?.result) === 0, '10.9 全部已读 → 未读数 0', `unread=${unread3.json?.result}`)
 
     // 4) 创建 remindAt 已过期的日程 → 立即触发（巡逻/即时路径）
+    // 提醒派发是异步的，POST 返回时可能还没落库；轮询最多 5 秒，出现未读即算通过
     const evPast = await call('POST', '/v1/schedule/events', {
       token: adminToken,
       body: { calendarId: calId, title: `冒烟过期提醒_${STAMP}`, startTime: startIso, endTime: endIso, remindAt: iso(now - 60000) }
     })
-    const unread4 = await call('GET', '/v1/schedule/reminder/unread-count', { token: adminToken })
-    record(isOk(evPast) && Number(unread4.json?.result) === 1, '10.9 过期提醒创建即触发', `unread=${unread4.json?.result}`)
+    let unread4Num = 0
+    for (let i = 0; i < 10; i++) {
+      const unread4 = await call('GET', '/v1/schedule/reminder/unread-count', { token: adminToken })
+      unread4Num = Number(unread4.json?.result ?? 0)
+      if (unread4Num >= 1) break
+      await new Promise(r => setTimeout(r, 500))
+    }
+    record(isOk(evPast) && unread4Num >= 1, '10.9 过期提醒创建即触发', `unread=${unread4Num}`)
     const evPastId = evPast.json?.result?.id
 
     // 5) 修改日程取消提醒（remindAt=null）→ isReminded 置 0 但不再触发
