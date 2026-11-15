@@ -37,6 +37,9 @@ const DRY_RUN = args.includes('--dry-run')
 const NO_REGISTER = args.includes('--no-register')
 /** --no-migration：目标表已建（重复生成 / 先建表后生成），不再产迁移，避免 migrations 表出现同表重复记录 */
 const NO_MIGRATION = args.includes('--no-migration')
+/** --overwrite：同名文件先备份到 .codegen-backup/<时间戳>/ 再覆盖（重新生成用，默认绝不覆盖） */
+const OVERWRITE = args.includes('--overwrite')
+const backupStamp = new Date().toISOString().replace(/[:.]/g, '-')
 
 function argOf(name, fallback) {
   const key = name.startsWith('--') ? name : `--${name}`
@@ -51,11 +54,13 @@ function usageAndExit() {
 
 /**
  * --spec <file.json>：结构化定义（页面表单 → JSON 直接落盘，避免中文/逗号破坏 DSL 解析）
- *   { module, label, perms?, table?, menuParent?, sort?, icon?, fields: [{ name, type, comment,
- *     required, unique, query, search, default, enumValues: [{value,label}] }] }
+ *   { module, label, perms?, table?, menuParent?, sort?, icon?,
+ *     existingColumns?: string[]（目标表现有列名，用于生成补列的 ALTER）,
+ *     fields: [{ name, type, comment, required, unique, query, search, default, enumValues: [{value,label}] }] }
  * --out <dir>：把所有产物写进暂存目录（server/ 与 admin/ 两棵子树），用于「不落盘的预览」
  * --json：结束时多打一行 __CODEGEN__{...} 机器可读清单（页面接口解析）
  * --no-migration：不产迁移文件（目标表已存在时用，避免 migrations 表出现同表重复记录）
+ * --overwrite：同名文件先备份到 .codegen-backup/<时间戳>/ 再覆盖
  */
 const specPath = argOf('--spec')
 const spec = specPath ? JSON.parse(fs.readFileSync(path.resolve(specPath), 'utf8')) : {}
@@ -67,6 +72,8 @@ if (!/^[a-z][a-z0-9_]*$/.test(moduleSnake)) {
   console.error(`--module 须为小写蛇形（如 customer / biz_order），收到：${moduleSnake}`)
   process.exit(1)
 }
+/** 目标表现有列名：非空才说明表已存在，迁移里才会出现补列片段 */
+const existingColumns = Array.isArray(spec.existingColumns) ? spec.existingColumns.map(String) : []
 const moduleCamel = moduleSnake.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 const ModulePascal = moduleCamel[0].toUpperCase() + moduleCamel.slice(1)
 const permsPrefix = spec.perms ?? argOf('--perms', moduleSnake)
@@ -206,6 +213,9 @@ const tsProp = name => pascal(name)[0].toLowerCase() + pascal(name).slice(1)
 const writeCount = { ok: 0, skip: 0 }
 const written = []
 const skippedFiles = []
+const overwrittenFiles = []
+/** 覆盖模式的备份根目录（只在真的覆盖了文件时才存在） */
+const backupRoot = path.join(serverRoot, '.codegen-backup', backupStamp)
 /** 对外展示的相对路径：后端仓库内直接相对 serverRoot，前端仓库加 concise-admin/ 前缀 */
 function displayRel(file) {
   if (file.startsWith(serverRoot + path.sep)) return path.relative(serverRoot, file)
@@ -237,9 +247,19 @@ function writeIfAbsent(file, content) {
   // --out 暂存模式（预览）不看真实仓库：预览的语义是「将会生成什么」，即使同名文件已存在也要完整展示
   if (!OUT_ROOT && fs.existsSync(file)) {
     const rel = displayRel(file)
-    console.log(`跳过（已存在）: ${rel}`)
-    writeCount.skip++
-    skippedFiles.push(rel)
+    if (!OVERWRITE) {
+      console.log(`跳过（已存在）: ${rel}`)
+      writeCount.skip++
+      skippedFiles.push(rel)
+      return
+    }
+    // 覆盖：旧内容先落备份（路径分隔符压平成 __，避免子目录重名冲突）
+    const backupFile = path.join(backupRoot, rel.replace(/[\\/]/g, '__'))
+    fs.mkdirSync(path.dirname(backupFile), { recursive: true })
+    fs.copyFileSync(file, backupFile)
+    overwrittenFiles.push(rel)
+    console.log(`覆盖（旧文件已备份）: ${rel}`)
+    writeFile(file, content)
     return
   }
   writeFile(file, content)
@@ -663,14 +683,64 @@ const menuUpSql = `INSERT IGNORE INTO \`sys_permission\`
         ${menuRows}`
   .replace(/`/g, '\\`')
 
-const migrationFile = path.join(serverRoot, `src/migrations/${timestamp}-Gen${ModulePascal}.ts`)
-if (NO_MIGRATION) console.log('跳过迁移生成（--no-migration）：表已存在，不产生重复迁移')
-else
-  writeIfAbsent(
-  migrationFile,
-  `import { type MigrationInterface, type QueryRunner } from 'typeorm'
+// 表已存在（重新生成）时只补缺失列：CREATE TABLE IF NOT EXISTS 对旧表不生效，
+// 不补列就会出现「代码里有这个字段、库里没有」→ 运行时 SQL 报 Unknown column
+const missingFields = existingColumns.length === 0 ? [] : parsedFields.filter(field => !existingColumns.includes(field.name))
 
-/** 生成器产物：${label}表（${table}）+ 菜单节点（租户级，挂 ${menuParent} 下） */
+/** ALTER 片段：全部走「现查 information_schema 再决定」，所以迁移重复执行也安全 */
+function buildAlterBlock() {
+  if (missingFields.length === 0) return ''
+  const addColumns = missingFields
+    .map(field => {
+      const typeMap = TYPE_MAP[field.type]
+      let comment = field.comment
+      if (field.type === 'enum') comment += `(${field.enumValues.map(item => `${item.value}:${item.label}`).join(' ')})`
+      const defaultSql = field.default !== undefined ? ` DEFAULT '${field.default}'` : field.required ? '' : ' DEFAULT NULL'
+      const sql = `ALTER TABLE \`${table}\` ADD COLUMN \`${field.name}\` ${typeMap.mysql}${field.required ? ' NOT NULL' : ' NULL'}${defaultSql} COMMENT '${comment}'`
+      return `    if (!existingColumns.has(${JSON.stringify(field.name)})) {
+      await queryRunner.query(${JSON.stringify(sql)})
+    }`
+    })
+    .join('\n')
+  // 新增且要求唯一的列，唯一索引不会随 CREATE TABLE 一起生效，得单独补
+  const addUniques = missingFields
+    .filter(field => field.unique)
+    .map(field => {
+      const indexName = `uniq_${table}_${field.name}`
+      const sql = `ALTER TABLE \`${table}\` ADD UNIQUE KEY \`${indexName}\` (\`tenant_id\`, \`${field.name}\`)`
+      return `    if (!existingIndexes.has(${JSON.stringify(indexName)})) {
+      await queryRunner.query(${JSON.stringify(sql)})
+    }`
+    })
+    .join('\n')
+  return `
+    const columnRows: Array<{ c: string }> = await queryRunner.query(
+      ${JSON.stringify(
+        `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${table}'`
+      )}
+    )
+    const existingColumns = new Set(columnRows.map(row => row.c))
+${addColumns}${
+    addUniques
+      ? `
+    const indexRows: Array<{ n: string }> = await queryRunner.query(
+      ${JSON.stringify(
+        `SELECT DISTINCT INDEX_NAME AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${table}'`
+      )}
+    )
+    const existingIndexes = new Set(indexRows.map(row => row.n))
+${addUniques}`
+      : ''
+  }
+`
+}
+
+const alterBlock = buildAlterBlock()
+
+const migrationFile = path.join(serverRoot, `src/migrations/${timestamp}-Gen${ModulePascal}.ts`)
+const migrationContent = `import { type MigrationInterface, type QueryRunner } from 'typeorm'
+
+/** 生成器产物：${label}表（${table}）+ 菜单节点（租户级，挂 ${menuParent} 下）${missingFields.length > 0 ? `\n * 目标表已存在：本迁移会补齐 ${missingFields.map(field => field.name).join('、')} 等缺失列，已有列的类型与默认值不动` : ''} */
 export class Gen${ModulePascal}${timestamp} implements MigrationInterface {
   name = 'Gen${ModulePascal}${timestamp}'
 
@@ -678,7 +748,7 @@ export class Gen${ModulePascal}${timestamp} implements MigrationInterface {
     await queryRunner.query(\`
       ${upSql}
     \`)
-    await queryRunner.query(\`
+${alterBlock}    await queryRunner.query(\`
       ${menuUpSql}
     \`)
   }
@@ -692,7 +762,18 @@ export class Gen${ModulePascal}${timestamp} implements MigrationInterface {
   }
 }
 `
+
+// 重复生成同一模块时不要每次都塞一份迁移：仓库里已有内容相同（只差时间戳）的就跳过
+const migrationDir = path.join(serverRoot, 'src/migrations')
+const siblingMigrations = (fs.existsSync(migrationDir) ? fs.readdirSync(migrationDir) : []).filter(name => name.endsWith(`-Gen${ModulePascal}.ts`))
+const normalizeMigration = text => text.replace(/\d{13}/g, '<timestamp>')
+const sameMigrationExists = siblingMigrations.some(
+  name => normalizeMigration(fs.readFileSync(path.join(migrationDir, name), 'utf8')) === normalizeMigration(migrationContent)
 )
+const migrationSkipped = NO_MIGRATION || sameMigrationExists
+if (NO_MIGRATION) console.log('跳过迁移生成（--no-migration）：表已存在且不需要补列')
+else if (sameMigrationExists) console.log('跳过迁移生成（仓库已有内容相同的迁移，只差时间戳）')
+else writeIfAbsent(migrationFile, migrationContent)
 
 // ==================== 前端 ====================
 
@@ -1183,14 +1264,20 @@ export const Route = createFileRoute('/_authenticated/system/${moduleSnake}s')({
 }
 
 console.log(`
-完成${DRY_RUN ? '（dry-run 预览，未写任何文件）' : ''}。产物 ${writeCount.ok} 个文件，跳过已存在 ${writeCount.skip} 个。
+完成${DRY_RUN ? '（dry-run 预览，未写任何文件）' : ''}。产物 ${writeCount.ok} 个文件${
+  overwrittenFiles.length > 0
+    ? `（其中覆盖 ${overwrittenFiles.length} 个，旧文件已备份到 ${path.relative(serverRoot, backupRoot)}）`
+    : ''
+}，跳过已存在 ${writeCount.skip} 个。
 
 接下来手动做两件事：
 ${
-  NO_MIGRATION
-    ? `  1. 表 ${table} 已存在，本次未生成迁移；菜单节点若缺失请手写 INSERT，或先删表再重新生成`
+  migrationSkipped
+    ? `  1. 本次没有生成迁移文件（表结构与已有迁移一致）；菜单节点若缺失请手写 INSERT`
     : `  1. npx typeorm migration:run
-     （迁移已带上菜单节点 menu_${moduleSnake}（${menuParent} 下，租户级）+ 三个按钮权限）`
+     （迁移已带上菜单节点 menu_${moduleSnake}（${menuParent} 下，租户级）+ 三个按钮权限${
+       missingFields.length > 0 ? `，并补齐 ${missingFields.map(field => field.name).join('、')} 等缺失列` : ''
+     }）`
 }
   2. 让各租户的角色模板拿到新菜单：POST /v1/tenants/provision-all
      （之后退出重登即可在侧边栏看到「${label}管理」）
@@ -1207,7 +1294,10 @@ if (JSON_OUT) {
       menuId: `menu_${moduleSnake}`,
       created: written,
       skipped: skippedFiles,
-      migrationSkipped: NO_MIGRATION,
+      overwritten: overwrittenFiles,
+      backupDir: overwrittenFiles.length > 0 ? backupRoot : undefined,
+      migrationSkipped,
+      addedColumns: missingFields.map(field => field.name),
       dryRun: DRY_RUN,
       staged: Boolean(OUT_ROOT)
     })}`

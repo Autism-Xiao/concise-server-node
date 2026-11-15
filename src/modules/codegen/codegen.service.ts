@@ -42,6 +42,9 @@ interface RunResult {
     menuId: string
     created: string[]
     skipped: string[]
+    overwritten?: string[]
+    backupDir?: string
+    addedColumns?: string[]
   }
 }
 
@@ -74,9 +77,16 @@ export interface CodegenGenerateResult {
   label: string
   table: string
   menuId: string
+  /** 本次写入的文件（新增 + 被覆盖的） */
   created: string[]
   skipped: string[]
-  /** 本次生成没有做的事（表已存在不生成迁移、全部文件已存在等），前端直接列出来 */
+  /** 被覆盖的已有文件（均已备份到 backupDir） */
+  overwritten: string[]
+  /** 覆盖模式的备份目录（相对后端仓库根），没有覆盖时为 null */
+  backupDir: string | null
+  /** 生成的迁移会补哪些缺失列（表已存在时才有） */
+  addedColumns: string[]
+  /** 本次没有做的事（表结构不动、全部文件已最新等），前端直接列出来 */
   warnings: string[]
   nextSteps: string[]
   log: string
@@ -144,15 +154,14 @@ export class CodegenService {
   /** 预览：跑一遍生成器但写进临时目录，读完内容即丢弃，真正零落盘 */
   async preview(dto: PreviewCodegenDto): Promise<CodegenPreviewResult> {
     this.assertEnabled()
-    const tableExists = await this.tableExists(dto.table ?? dto.module)
+    const existingColumns = await this.tableColumns(dto.table ?? dto.module)
     const stage = mkdtempSync(path.join(tmpdir(), 'codegen-preview-'))
     try {
       const specFile = path.join(stage, 'spec.json')
-      writeFileSync(specFile, JSON.stringify(this.toSpec(dto), null, 2))
+      writeFileSync(specFile, JSON.stringify(this.toSpec(dto, existingColumns), null, 2))
       const outDir = path.join(stage, 'out')
-      // 参数与 generate 保持一致：表已存在时不产迁移，预览才不会展示一份实际不会写入的迁移文件
+      // 表已存在时脚本会产出「补缺失列」的迁移，正好让人在预览里先看清要 ALTER 什么
       const cliArgs = ['--spec', specFile, '--out', outDir, '--no-register', '--json']
-      if (tableExists) cliArgs.push('--no-migration')
       const { log, manifest } = await this.run(cliArgs, '预览')
       const files = this.collectStaged(outDir)
       return {
@@ -162,7 +171,7 @@ export class CodegenService {
         menuId: manifest?.menuId ?? `menu_${dto.module}`,
         files,
         touched: this.touchedRegistrations(dto.module),
-        warnings: this.warnings(dto, tableExists),
+        warnings: this.warnings(dto, existingColumns),
         log
       }
     } finally {
@@ -178,36 +187,48 @@ export class CodegenService {
       throw new BizException(BizErrorCode.CODEGEN_MODULE_EXISTS, `模块目录 src/modules/${dto.module} 已存在，确认要追加生成请带上覆盖标记`)
     }
     const tableName = dto.table ?? dto.module
-    // 表已存在只有两种来路：重复生成同一模块，或先手工建表再生成。
-    // 此时迁移里的 CREATE TABLE IF NOT EXISTS 改不动旧表，只会往 migrations 表塞一条同表记录，
-    // 所以本次跳过迁移生成（force 的语义是"补齐缺失文件"，不是"重建表"）。
-    const tableExists = await this.tableExists(tableName)
-    const warnings: string[] = []
-    if (tableExists) {
-      warnings.push(`数据表 ${tableName} 已存在：本次不生成迁移，旧表结构不会被修改；要改字段请手写 ALTER 迁移`)
-    }
+    // 表已存在只有两种来路：重新生成同一模块，或先手工建表再生成。
+    // 把现有列名交给脚本，迁移里就会多出「补缺失列」的片段（CREATE TABLE IF NOT EXISTS 对旧表无效）。
+    const existingColumns = await this.tableColumns(tableName)
+    const tableExists = existingColumns.length > 0
 
     const specDir = mkdtempSync(path.join(tmpdir(), 'codegen-generate-'))
     const specFile = path.join(specDir, 'spec.json')
     try {
-      writeFileSync(specFile, JSON.stringify(this.toSpec(dto), null, 2))
+      writeFileSync(specFile, JSON.stringify(this.toSpec(dto, existingColumns), null, 2))
       const cliArgs = ['--spec', specFile, '--json']
-      if (tableExists) cliArgs.push('--no-migration')
+      // force = 重新生成：同名文件覆盖（先备份）；非 force 走默认的「不覆盖」
+      if (dto.force) cliArgs.push('--overwrite')
       const { log, manifest } = await this.run(cliArgs, '生成')
+
       const created = manifest?.created ?? []
-      if (created.length === 0 && (manifest?.skipped.length ?? 0) > 0) {
-        warnings.push('所有文件都已存在，本次没有写入任何文件；要完全重新生成请先删除对应目录')
+      const skipped = manifest?.skipped ?? []
+      const overwritten = manifest?.overwritten ?? []
+      const addedColumns = manifest?.addedColumns ?? []
+      const warnings: string[] = []
+      if (tableExists && addedColumns.length === 0) {
+        warnings.push(`数据表 ${tableName} 已存在且字段都对得上：本次没有补列，表结构不变`)
       }
-      this.logger.log(`代码生成完成：${dto.module}（写入 ${created.length} 个文件，跳过 ${manifest?.skipped.length ?? 0} 个）`)
+      if (created.length === 0 && skipped.length > 0) {
+        warnings.push('所有文件都已是最新，本次没有写入任何文件')
+      }
+      this.logger.log(
+        `代码生成完成：${dto.module}（写入 ${created.length} 个${overwritten.length > 0 ? `，其中覆盖 ${overwritten.length} 个` : ''}，跳过 ${skipped.length} 个${
+          addedColumns.length > 0 ? `，补列 ${addedColumns.length} 个` : ''
+        }）`
+      )
       return {
         module: manifest?.module ?? dto.module,
         label: manifest?.label ?? dto.label,
         table: manifest?.table ?? tableName,
         menuId: manifest?.menuId ?? `menu_${dto.module}`,
         created,
-        skipped: manifest?.skipped ?? [],
+        skipped,
+        overwritten,
+        backupDir: manifest?.backupDir ? path.relative(this.serverRoot, manifest.backupDir) : null,
+        addedColumns,
         warnings,
-        nextSteps: this.nextSteps(created.length > 0, tableExists),
+        nextSteps: this.nextSteps({ wrote: created.length > 0, tableExists, addedColumns }),
         log
       }
     } finally {
@@ -216,13 +237,18 @@ export class CodegenService {
   }
 
   /** 生成后的下一步：按本次到底做了什么给，避免让人跑一堆空命令 */
-  private nextSteps(wroteFiles: boolean, tableExists: boolean): string[] {
-    if (!wroteFiles) {
-      return ['本次没有写入任何文件，无需 build / 迁移 / 重启；如需调整请手改代码或先删目录再生成']
+  private nextSteps(options: { wrote: boolean; tableExists: boolean; addedColumns: string[] }): string[] {
+    const { wrote, tableExists, addedColumns } = options
+    if (!wrote) {
+      return ['本次没有写入任何文件，无需 build / 重启；要调整请改字段后重新生成，或直接改代码']
     }
     const steps: string[] = ['执行 npm run build 重新编译（新模块已自动注册进 app.module.ts）']
     if (!tableExists) steps.push('执行 npm run migration:run 建表并写入菜单节点')
-    steps.push('重启后端进程（node scripts/serve.mjs）', '平台管理员执行 POST /v1/tenants/provision-all，让各租户角色模板拿到新菜单')
+    else if (addedColumns.length > 0) steps.push(`执行 npm run migration:run 补齐 ${addedColumns.join('、')} 等列（只加列，不改旧列）`)
+    steps.push('重启后端进程（node scripts/serve.mjs）')
+    if (!tableExists || addedColumns.length > 0) {
+      steps.push('平台管理员执行 POST /v1/tenants/provision-all，让各租户角色模板拿到新菜单')
+    }
     steps.push('前端 dev 会自动生成路由，刷新后侧边栏即可看到新菜单')
     return steps
   }
@@ -315,7 +341,7 @@ export class CodegenService {
     throw new BizException(BizErrorCode.CODEGEN_DISABLED, '代码生成器已关闭（生产环境默认禁用，需要 CODEGEN_ENABLED=true 显式开启）', HttpStatus.FORBIDDEN)
   }
 
-  private toSpec(dto: PreviewCodegenDto) {
+  private toSpec(dto: PreviewCodegenDto, existingColumns: string[] = []) {
     return {
       module: dto.module,
       label: dto.label,
@@ -325,6 +351,7 @@ export class CodegenService {
       sort: dto.sort ?? 50,
       icon: dto.icon ?? 'Briefcase',
       adminRoot: this.adminRoot,
+      existingColumns,
       fields: dto.fields.map(field => ({
         name: field.name,
         type: field.type,
@@ -352,14 +379,20 @@ export class CodegenService {
     return list
   }
 
-  private warnings(dto: PreviewCodegenDto, tableExists: boolean): string[] {
+  private warnings(dto: PreviewCodegenDto, existingColumns: string[]): string[] {
     const list: string[] = []
     const table = dto.table ?? dto.module
+    const tableExists = existingColumns.length > 0
     if (existsSync(path.join(this.serverRoot, 'src', 'modules', dto.module))) {
-      list.push(`后端已有 src/modules/${dto.module}：生成只补齐缺失文件，同名文件按不覆盖跳过；要完全重来请先删目录`)
+      list.push(`后端已有 src/modules/${dto.module}：确认生成时同名文件会先备份到 .codegen-backup/ 再覆盖`)
     }
     if (tableExists) {
-      list.push(`数据表 ${table} 已存在：本次不生成迁移，旧表结构不会被修改；改字段请手写 ALTER 迁移`)
+      const missing = dto.fields.filter(field => !existingColumns.includes(field.name)).map(field => field.name)
+      list.push(
+        missing.length > 0
+          ? `数据表 ${table} 已存在：迁移只补缺失列（${missing.join('、')}），已有列的类型与默认值不会被修改`
+          : `数据表 ${table} 已存在且字段都对得上：迁移里不会有 ALTER，表结构不变`
+      )
     }
     if (!existsSync(this.adminRoot)) {
       list.push('未找到前端管理后台目录，只会生成后端产物（可用 ADMIN_PORTAL_DIR 指定）')
@@ -380,6 +413,17 @@ export class CodegenService {
       [table]
     )
     return Number(rows[0]?.c ?? 0) > 0
+  }
+
+  /** 目标表现有列名（空数组 = 表不存在）；交给生成脚本判断迁移里要不要补列 */
+  private async tableColumns(table: string): Promise<string[]> {
+    const rows: Array<{ c: string }> = await this.dataSource.query(
+      `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION`,
+      [table]
+    )
+    return rows.map(row => row.c)
   }
 
   private mapColumnType(dataType: string, columnType: string): string {
