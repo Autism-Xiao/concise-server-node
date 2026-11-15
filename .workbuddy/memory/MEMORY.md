@@ -8,7 +8,7 @@
 
 - **包管理器 pnpm，禁 `npm install`**（崩 `Cannot read properties of null (reading 'matches')`）。装包 `pnpm add`，恢复 `pnpm install --force`。顶层 require 不到 express 是 pnpm 不提升的正常现象；完整性看 `ls node_modules/.pnpm | wc -l`（约 1000）。
 - Node 24，命令需 `PATH="/d/projram/nodejs:$PATH"`；NestJS 12 CJS + Jest + oxlint + ESLint 9 flat + Prettier（单引号/无分号/160 列/无尾逗号/arrowParens avoid）+ husky→lint-staged（别手动 format）。TypeORM 1.1 + MySQL 8.4（服务 `MySQL84`，root/123456，库 `concise_server`）。
-- 端口：后端 `.env` `PORT=3459`；**前端管理后台在 5173**（vite 代理 `/backend-api`→后端，端口自动读后端 .env）。测试实例用 3461 + `CAPTCHA_ENABLED=false`；3457 被外部代理占用。
+- 端口：后端 `.env` `PORT=3000`（2026-11-14 起改，3459 已让给外部代理）；**前端管理后台 dev 在 5173，被占时 vite 自动换 5174**（vite 代理 `/backend-api`→后端，端口自动读后端 .env）。测试实例用 3461 + `CAPTCHA_ENABLED=false`；3457/3459 被外部代理占用（502）；本机 curl 直连要 `--noproxy "*"`。
 - **重启后端**：`npm run restart` 会「假重启」（清 dist 被 safe-delete 钩子拦，`&&` 短路后 serve.mjs 没跑但输出像成功）。被拦就「先 `npm run build`（走审批）+ `node scripts/serve.mjs`」；绝不用 `nest start --watch`。判新代码生效：`curl /api/v1/<新路由>` 404=旧进程 / 401=新的。后台起 serve.mjs 会被标 failed（父退出子存活）别当挂了；启动命令别接管道（head 关管道会杀子进程）。
 - 给用户的终端命令用 **PowerShell 5.1 语法**（无 `&&`/`||`/三元/`??`）：`npm run build; if ($?) { ... }`、`$env:PORT="3459"`。
 - 统一响应 `{ code, message, result, success, timestamp }`（**是 result 不是 data**）；业务异常靠 code 区分（可 HTTP 200）；全局 ValidationPipe(transform+whitelist)。泛型需 `extends ObjectLiteral`；query DTO 加 `@Type(()=>Number)`。
@@ -35,6 +35,9 @@
 - **水印**：`resolveWatermarkState` 是唯一判定入口（off > enforced=2 > enforced=1 > forced > 用户??全局）；用户侧只能改 enabled/content/density，样式参数仅全局可改。
 - **界面设置上云**：`sys_user_setting`（**故意无 tenant_id**）+ `GET|PUT /v1/users/me/settings`；白名单唯一入口 `user-setting.util.ts`，**加设置项必须同步改**；库里只存差异（`stripDefaultSettings`）；前端 `lib/settings.ts` 不能用 `getApiResult`（401 会踢登录页）。
 - **数据库约定**：新表显式 `COLLATE=utf8mb4_unicode_ci`（sys_user 是 unicode_ci，默认 0900_ai_ci JOIN 会炸）；`@Column({length})` 可空要显式 `type:'varchar'`（否则推断成 Object）；`Pagination` 无链式方法，列表一律 `toPagination()`，数据源类（tree/options/code）才返数组。
+- **前端弹框规约**（concise-admin）：DialogContent 默认固定头尾（自动分拣 Header/Footer），Footer 必须是 DialogContent 直接子元素——写进 `<form>` 会被划进滚动区；表单写法 `form id="x-form"` + 提交按钮 `form="x-form"`；自绘满幅布局传 `layout="free"`。互斥少选项切换用 `ui/segmented.tsx`。
+
+- **代码生成器**（2026-11-15）：页面 /system/codegen（scope=platform，生产默认禁用 `CODEGEN_ENABLED`）→ `src/modules/codegen` spawn `scripts/gen-module.cjs`（唯一模板源，支持 `--spec` JSON / `--out` 暂存预览 / `--json` 清单 / `--no-migration`）。改模板后必须用极端字段组合（无唯一/无搜索/全可选）各编译一遍——已修过 `[never[]]` 与 MaxLength import 两个分支漏。错误码 9201/9202/9203。**force 语义 = 只补齐缺失文件**（写盘一律 `writeIfAbsent` 不覆盖；表已存在时传 `--no-migration` 不产重复迁移，结果带 warnings 说明没做的事）。前端 9201 的「弹二次确认」必须带 `!force` 守卫，否则 force 也过不去时无限弹框。`--out` 暂存模式不查真实仓库（否则对已有模块预览返回 0 文件）。
 
 ## 测试数据与冒烟（本地 dev 库）
 
@@ -45,5 +48,5 @@
 ## 遗留 / 下一步
 
 - 任务 `assignee_id` 已迁 varchar；`GET /v1/tasks/mine` 刻意不加租户隔离。
-- 可选：字典/公告/任务按钮权限录入菜单、验证码接 Redis 支持多实例、操作日志导出。
+- 可选：字典/公告/任务按钮权限录入菜单、操作日志导出。~~验证码接 Redis~~ **已实现**（challenge/ticket 走 Redis MULTI GET+DEL 一次性，支持多实例）；sys_log 时间索引也已齐全，勿再当优化项。
 - 设计未落地：「个人权限可监管别的部门」→ 建议新表 `sys_user_supervise_dept`，`applyDataScope` 合并 own ∪ supervise（用户中断未确认，未开发）。

@@ -35,6 +35,8 @@ const path = require('node:path')
 const args = process.argv.slice(2)
 const DRY_RUN = args.includes('--dry-run')
 const NO_REGISTER = args.includes('--no-register')
+/** --no-migration：目标表已建（重复生成 / 先建表后生成），不再产迁移，避免 migrations 表出现同表重复记录 */
+const NO_MIGRATION = args.includes('--no-migration')
 
 function argOf(name, fallback) {
   const key = name.startsWith('--') ? name : `--${name}`
@@ -53,6 +55,7 @@ function usageAndExit() {
  *     required, unique, query, search, default, enumValues: [{value,label}] }] }
  * --out <dir>：把所有产物写进暂存目录（server/ 与 admin/ 两棵子树），用于「不落盘的预览」
  * --json：结束时多打一行 __CODEGEN__{...} 机器可读清单（页面接口解析）
+ * --no-migration：不产迁移文件（目标表已存在时用，避免 migrations 表出现同表重复记录）
  */
 const specPath = argOf('--spec')
 const spec = specPath ? JSON.parse(fs.readFileSync(path.resolve(specPath), 'utf8')) : {}
@@ -231,7 +234,8 @@ function writeFile(file, content) {
   console.log(`生成: ${rel}`)
 }
 function writeIfAbsent(file, content) {
-  if (fs.existsSync(file)) {
+  // --out 暂存模式（预览）不看真实仓库：预览的语义是「将会生成什么」，即使同名文件已存在也要完整展示
+  if (!OUT_ROOT && fs.existsSync(file)) {
     const rel = displayRel(file)
     console.log(`跳过（已存在）: ${rel}`)
     writeCount.skip++
@@ -660,7 +664,9 @@ const menuUpSql = `INSERT IGNORE INTO \`sys_permission\`
   .replace(/`/g, '\\`')
 
 const migrationFile = path.join(serverRoot, `src/migrations/${timestamp}-Gen${ModulePascal}.ts`)
-writeIfAbsent(
+if (NO_MIGRATION) console.log('跳过迁移生成（--no-migration）：表已存在，不产生重复迁移')
+else
+  writeIfAbsent(
   migrationFile,
   `import { type MigrationInterface, type QueryRunner } from 'typeorm'
 
@@ -1180,8 +1186,12 @@ console.log(`
 完成${DRY_RUN ? '（dry-run 预览，未写任何文件）' : ''}。产物 ${writeCount.ok} 个文件，跳过已存在 ${writeCount.skip} 个。
 
 接下来手动做两件事：
-  1. npx typeorm migration:run
-     （迁移已带上菜单节点 menu_${moduleSnake}（${menuParent} 下，租户级）+ 三个按钮权限）
+${
+  NO_MIGRATION
+    ? `  1. 表 ${table} 已存在，本次未生成迁移；菜单节点若缺失请手写 INSERT，或先删表再重新生成`
+    : `  1. npx typeorm migration:run
+     （迁移已带上菜单节点 menu_${moduleSnake}（${menuParent} 下，租户级）+ 三个按钮权限）`
+}
   2. 让各租户的角色模板拿到新菜单：POST /v1/tenants/provision-all
      （之后退出重登即可在侧边栏看到「${label}管理」）
 `)
@@ -1197,6 +1207,7 @@ if (JSON_OUT) {
       menuId: `menu_${moduleSnake}`,
       created: written,
       skipped: skippedFiles,
+      migrationSkipped: NO_MIGRATION,
       dryRun: DRY_RUN,
       staged: Boolean(OUT_ROOT)
     })}`

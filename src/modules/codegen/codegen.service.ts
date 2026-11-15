@@ -76,6 +76,8 @@ export interface CodegenGenerateResult {
   menuId: string
   created: string[]
   skipped: string[]
+  /** 本次生成没有做的事（表已存在不生成迁移、全部文件已存在等），前端直接列出来 */
+  warnings: string[]
   nextSteps: string[]
   log: string
 }
@@ -142,12 +144,16 @@ export class CodegenService {
   /** 预览：跑一遍生成器但写进临时目录，读完内容即丢弃，真正零落盘 */
   async preview(dto: PreviewCodegenDto): Promise<CodegenPreviewResult> {
     this.assertEnabled()
+    const tableExists = await this.tableExists(dto.table ?? dto.module)
     const stage = mkdtempSync(path.join(tmpdir(), 'codegen-preview-'))
     try {
       const specFile = path.join(stage, 'spec.json')
       writeFileSync(specFile, JSON.stringify(this.toSpec(dto), null, 2))
       const outDir = path.join(stage, 'out')
-      const { log, manifest } = await this.run(['--spec', specFile, '--out', outDir, '--no-register', '--json'], '预览')
+      // 参数与 generate 保持一致：表已存在时不产迁移，预览才不会展示一份实际不会写入的迁移文件
+      const cliArgs = ['--spec', specFile, '--out', outDir, '--no-register', '--json']
+      if (tableExists) cliArgs.push('--no-migration')
+      const { log, manifest } = await this.run(cliArgs, '预览')
       const files = this.collectStaged(outDir)
       return {
         module: manifest?.module ?? dto.module,
@@ -156,7 +162,7 @@ export class CodegenService {
         menuId: manifest?.menuId ?? `menu_${dto.module}`,
         files,
         touched: this.touchedRegistrations(dto.module),
-        warnings: this.warnings(dto),
+        warnings: this.warnings(dto, tableExists),
         log
       }
     } finally {
@@ -172,41 +178,53 @@ export class CodegenService {
       throw new BizException(BizErrorCode.CODEGEN_MODULE_EXISTS, `模块目录 src/modules/${dto.module} 已存在，确认要追加生成请带上覆盖标记`)
     }
     const tableName = dto.table ?? dto.module
-    if (existsSync(moduleDir)) {
-      const existsTable = await this.tableExists(tableName)
-      if (existsTable) {
-        throw new BizException(
-          BizErrorCode.CODEGEN_MODULE_EXISTS,
-          `数据表 ${tableName} 已存在，同名模块无法继续生成（迁移里的 CREATE TABLE IF NOT EXISTS 不会改动旧表）`
-        )
-      }
+    // 表已存在只有两种来路：重复生成同一模块，或先手工建表再生成。
+    // 此时迁移里的 CREATE TABLE IF NOT EXISTS 改不动旧表，只会往 migrations 表塞一条同表记录，
+    // 所以本次跳过迁移生成（force 的语义是"补齐缺失文件"，不是"重建表"）。
+    const tableExists = await this.tableExists(tableName)
+    const warnings: string[] = []
+    if (tableExists) {
+      warnings.push(`数据表 ${tableName} 已存在：本次不生成迁移，旧表结构不会被修改；要改字段请手写 ALTER 迁移`)
     }
 
     const specDir = mkdtempSync(path.join(tmpdir(), 'codegen-generate-'))
     const specFile = path.join(specDir, 'spec.json')
     try {
       writeFileSync(specFile, JSON.stringify(this.toSpec(dto), null, 2))
-      const { log, manifest } = await this.run(['--spec', specFile, '--json'], '生成')
-      this.logger.log(`代码生成完成：${dto.module}（${manifest?.created.length ?? 0} 个文件）`)
+      const cliArgs = ['--spec', specFile, '--json']
+      if (tableExists) cliArgs.push('--no-migration')
+      const { log, manifest } = await this.run(cliArgs, '生成')
+      const created = manifest?.created ?? []
+      if (created.length === 0 && (manifest?.skipped.length ?? 0) > 0) {
+        warnings.push('所有文件都已存在，本次没有写入任何文件；要完全重新生成请先删除对应目录')
+      }
+      this.logger.log(`代码生成完成：${dto.module}（写入 ${created.length} 个文件，跳过 ${manifest?.skipped.length ?? 0} 个）`)
       return {
         module: manifest?.module ?? dto.module,
         label: manifest?.label ?? dto.label,
         table: manifest?.table ?? tableName,
         menuId: manifest?.menuId ?? `menu_${dto.module}`,
-        created: manifest?.created ?? [],
+        created,
         skipped: manifest?.skipped ?? [],
-        nextSteps: [
-          '执行 npm run build 重新编译（新模块已自动注册进 app.module.ts）',
-          '执行 npm run migration:run 建表并写入菜单节点',
-          '重启后端进程（node scripts/serve.mjs）',
-          '平台管理员执行 POST /v1/tenants/provision-all，让各租户角色模板拿到新菜单',
-          '前端 dev 会自动生成路由，刷新后侧边栏即可看到新菜单'
-        ],
+        warnings,
+        nextSteps: this.nextSteps(created.length > 0, tableExists),
         log
       }
     } finally {
       rmSync(specDir, { recursive: true, force: true })
     }
+  }
+
+  /** 生成后的下一步：按本次到底做了什么给，避免让人跑一堆空命令 */
+  private nextSteps(wroteFiles: boolean, tableExists: boolean): string[] {
+    if (!wroteFiles) {
+      return ['本次没有写入任何文件，无需 build / 迁移 / 重启；如需调整请手改代码或先删目录再生成']
+    }
+    const steps: string[] = ['执行 npm run build 重新编译（新模块已自动注册进 app.module.ts）']
+    if (!tableExists) steps.push('执行 npm run migration:run 建表并写入菜单节点')
+    steps.push('重启后端进程（node scripts/serve.mjs）', '平台管理员执行 POST /v1/tenants/provision-all，让各租户角色模板拿到新菜单')
+    steps.push('前端 dev 会自动生成路由，刷新后侧边栏即可看到新菜单')
+    return steps
   }
 
   /** 可反查的已有表：排除系统表与迁移表，标出已存在同名模块的（用于「从数据库表导入」） */
@@ -334,11 +352,14 @@ export class CodegenService {
     return list
   }
 
-  private warnings(dto: PreviewCodegenDto): string[] {
+  private warnings(dto: PreviewCodegenDto, tableExists: boolean): string[] {
     const list: string[] = []
     const table = dto.table ?? dto.module
     if (existsSync(path.join(this.serverRoot, 'src', 'modules', dto.module))) {
-      list.push(`后端已有 src/modules/${dto.module}，生成会跳过同名文件（不覆盖），迁移也会因表已存在而无效果`)
+      list.push(`后端已有 src/modules/${dto.module}：生成只补齐缺失文件，同名文件按不覆盖跳过；要完全重来请先删目录`)
+    }
+    if (tableExists) {
+      list.push(`数据表 ${table} 已存在：本次不生成迁移，旧表结构不会被修改；改字段请手写 ALTER 迁移`)
     }
     if (!existsSync(this.adminRoot)) {
       list.push('未找到前端管理后台目录，只会生成后端产物（可用 ADMIN_PORTAL_DIR 指定）')
