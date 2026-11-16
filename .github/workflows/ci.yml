@@ -1,0 +1,212 @@
+name: CI
+
+# 三件事：能不能编译、有没有 lint 脏点、接口还能不能跑通。
+# 任何一步失败都在 PR 上显示红叉，避免"改一处崩一片"上线才发现。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支只留最新一次，连续 push 时自动取消旧任务，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: 构建 + 静态检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # 只认 lockfile：lockfile 与 package.json 不一致时直接失败，防止本地偷偷换版本
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 编译（nest build → dist）
+        run: pnpm run build
+
+      - name: ESLint
+        run: pnpm run lint
+
+      # 单测跑的是 dist（node --test tests/*.test.cjs），所以必须排在 build 之后
+      - name: 单元测试
+        run: pnpm test
+
+      # oxlint 的 type-aware 规则集还在演进，先只报警不拦合并
+      - name: oxlint（非阻断）
+        continue-on-error: true
+        run: pnpm run lint:ox
+
+      - name: Prettier 格式检查（非阻断）
+        continue-on-error: true
+        run: pnpm run format:check
+
+  smoke:
+    name: 接口冒烟（MySQL + Redis）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: quality
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: concise_server
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      PORT: 3461
+      API_PREFIX: api
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      DB_DATABASE: concise_server
+      DB_SYNCHRONIZE: false
+      DB_LOGGING: false
+      # CI 一次性实例，密钥随便给；不要照抄到任何真实环境
+      JWT_SECRET: ci-only-jwt-secret-not-for-production
+      JWT_EXPIRES_IN: 2h
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-not-for-production
+      JWT_REFRESH_EXPIRES_IN: 7d
+      CAPTCHA_ENABLED: false
+      CAPTCHA_DEBUG: false
+      REDIS_ENABLED: true
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ''
+      REDIS_DB: 0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 编译
+        run: pnpm run build
+
+      # 用仓库里的快照还原数据，等价于本机那套库；不用跑迁移和一堆 seed
+      - name: 导入数据库快照
+        run: |
+          set -euo pipefail
+          SNAPSHOT=sql/concise_server_full_2026-11-15.sql
+          test -f "$SNAPSHOT" || { echo "::error::找不到快照 $SNAPSHOT"; exit 1; }
+          # runner 上一定有 docker，借 mysql 镜像里的客户端导入，省一次 apt 安装
+          docker run --rm --network host -i \
+            --env MYSQL_PWD=root \
+            mysql:8.4 \
+            mysql -h127.0.0.1 -P3306 -uroot --default-character-set=utf8mb4 concise_server \
+            < "$SNAPSHOT"
+          TABLES=$(docker run --rm --network host --env MYSQL_PWD=root mysql:8.4 \
+            mysql -h127.0.0.1 -P3306 -uroot -N -B -e \
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='concise_server'")
+          echo "导入完成，表数：$TABLES"
+          # 少于 30 张表说明快照没导全，后面冒烟会全红，早点拦住
+          test "$TABLES" -ge 30
+
+      # 应用读 .env；本地这台机器的 .env 不在仓库里，CI 现写一份
+      - name: 生成 .env
+        run: |
+          {
+            echo "PORT=$PORT"
+            echo "API_PREFIX=$API_PREFIX"
+            echo "DB_HOST=$DB_HOST"
+            echo "DB_PORT=$DB_PORT"
+            echo "DB_USERNAME=$DB_USERNAME"
+            echo "DB_PASSWORD=$DB_PASSWORD"
+            echo "DB_DATABASE=$DB_DATABASE"
+            echo "DB_SYNCHRONIZE=$DB_SYNCHRONIZE"
+            echo "DB_LOGGING=$DB_LOGGING"
+            echo "JWT_SECRET=$JWT_SECRET"
+            echo "JWT_EXPIRES_IN=$JWT_EXPIRES_IN"
+            echo "JWT_REFRESH_SECRET=$JWT_REFRESH_SECRET"
+            echo "JWT_REFRESH_EXPIRES_IN=$JWT_REFRESH_EXPIRES_IN"
+            echo "CAPTCHA_ENABLED=$CAPTCHA_ENABLED"
+            echo "CAPTCHA_DEBUG=$CAPTCHA_DEBUG"
+            echo "REDIS_ENABLED=$REDIS_ENABLED"
+            echo "REDIS_HOST=$REDIS_HOST"
+            echo "REDIS_PORT=$REDIS_PORT"
+            echo "REDIS_PASSWORD="
+            echo "REDIS_DB=$REDIS_DB"
+          } > .env
+
+      # 快照只到 55 号迁移。之后新加的表（sys_config、备份码等）必须在这里补跑，
+      # 否则 CI 里等于在跑一个"缺表"的库，冒烟一碰就 500。
+      - name: 执行数据库迁移
+        run: pnpm exec typeorm migration:run -d dist/shared/database/data-source.js
+
+      - name: 启动后端
+        run: |
+          set -euo pipefail
+          node dist/main.js > server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:$PORT/api/v1/health" > /dev/null 2>&1; then
+              echo "第 $i 次探测成功，服务已就绪"
+              curl -fsS "http://127.0.0.1:$PORT/api/v1/health"; echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::服务 120s 内未就绪"
+          tail -100 server.log
+          exit 1
+
+      # 三个脚本覆盖：鉴权 + 数据权限 + 首页聚合 + 界面设置 + 批量导入导出
+      - name: 冒烟 · 首页概览
+        run: node scripts/smoke-dashboard.mjs
+
+      - name: 冒烟 · 界面设置
+        run: node scripts/smoke-user-setting.mjs
+
+      - name: 冒烟 · 批量导入导出
+        run: node scripts/smoke-batch-io.mjs
+
+      - name: 失败时输出服务端日志
+        if: failure()
+        run: tail -200 server.log || true
+
+      - name: 收尾（结束后端进程）
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
