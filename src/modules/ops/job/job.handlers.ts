@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm'
 import { DataSource } from 'typeorm'
 
 import type { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
+import { DbBackupService } from '../../../shared/backup/db-backup.service'
 
 /** 触发来源：cron 定时触发 / manual 页面「执行一次」 */
 export type JobTrigger = 'cron' | 'manual'
@@ -38,7 +39,11 @@ export class JobHandlerRegistry {
   private readonly handlers = new Map<string, JobHandler>()
   private readonly descriptions = new Map<string, string>()
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    // 定时备份：导出 + 导入校验 + 保留策略，实现见 shared/backup
+    private readonly dbBackup: DbBackupService
+  ) {
     this.registerBuiltins()
   }
 
@@ -87,6 +92,16 @@ export class JobHandlerRegistry {
         return `已清理 ${days} 天前日志 ${affected} 条`
       },
       '清理日志：删除 N 天前的登录/操作日志，参数为保留天数（默认 30）'
+    )
+
+    this.register(
+      'backupDbJob',
+      async () => {
+        const result = await this.dbBackup.backupNow()
+        const verifyText = result.verified ? `校验通过（${result.tables} 张表）` : '未校验'
+        return `备份完成 ${result.file}（${result.sizeMb} MB，${verifyText}，清理旧备份 ${result.pruned} 份）`
+      },
+      '数据库备份：导出全库 → 临时库导入校验 → 按保留策略清理（默认留 7 份，可在参数配置里改）'
     )
   }
 }
