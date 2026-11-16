@@ -11,6 +11,7 @@ import { UserWatermarkEntity } from '../system/watermark/entities/user-watermark
 import { WatermarkSettingEntity } from '../system/watermark/entities/watermark-setting.entity'
 import { UserSettingModule } from '../system/user-setting/user-setting.module'
 import { SystemConfigModule } from '../system/config/config.module'
+import { OpenApiModule } from '../openapi/open.module'
 import { UserEntity } from './entities/user.entity'
 import { UserV1Controller } from './user.v1.controller'
 import { UserController } from './user.controller'
@@ -27,7 +28,9 @@ import { UserService } from './user.service'
     OnlineModule,
     UserSettingModule,
     // 密码策略来自 sys_config（长度/复杂度/有效期），不引会拿不到 SystemConfigService
-    SystemConfigModule
+    SystemConfigModule,
+    // 用户创建/删除要派发 webhook 事件（开放平台的订阅方收通知）
+    OpenApiModule
   ],
   controllers: [UserV1Controller, ...(LEGACY_ROUTES_ENABLED ? [UserController] : [])],
   providers: [UserService],

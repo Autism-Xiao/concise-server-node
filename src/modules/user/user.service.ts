@@ -18,6 +18,7 @@ import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-er
 import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
 import { assertPasswordStrength } from '../../utils/password-policy.util'
 import { SystemConfigService } from '../system/config/system-config.service'
+import { WebhookService } from '../openapi/webhook.service'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
 import { PostEntity } from '../system/post/entities/post.entity'
 import { LevelEntity } from '../system/level/entities/level.entity'
@@ -211,7 +212,8 @@ export class UserService extends BaseService<UserEntity> {
     private readonly permissionCacheService: PermissionCacheService,
     private readonly userSettingService: UserSettingService,
     private readonly authUserCache: AuthUserCacheService,
-    private readonly systemConfig: SystemConfigService
+    private readonly systemConfig: SystemConfigService,
+    private readonly webhookService: WebhookService
   ) {
     super(repository, '用户')
   }
@@ -267,7 +269,10 @@ export class UserService extends BaseService<UserEntity> {
       ])
       return user.id
     })
-    return this.findOneDetail(id) as Promise<UserEntity>
+    const created = (await this.findOneDetail(id)) as UserEntity
+    // 开放平台事件：创建成功才发，失败静默（订阅方靠 user.id 幂等）
+    this.webhookService.dispatch('user.created', { id: created.id, username: created.username, realname: created.realname ?? null })
+    return created
   }
 
   /** 新账号默认归属的租户：当前租户上下文 > 默认租户（0/平台视角都落到 1） */
@@ -901,6 +906,8 @@ export class UserService extends BaseService<UserEntity> {
     })
     // 删号即失效：缓存里若还留着这个人，鉴权会继续放行到下次过期
     this.authUserCache.invalidate(id)
+    // 开放平台事件：软删也通知（订阅方一般用于同步通讯录/回收站）
+    this.webhookService.dispatch('user.deleted', { id, username: user.username })
   }
 
   /** 批量删除用户：逐条走 delete，保留「内置管理员不可删」的保护并收集原因 */

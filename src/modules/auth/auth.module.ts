@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm'
 import { jwtConfig, type JwtConfig } from '../../config'
 import { LEGACY_ROUTES_ENABLED } from '../../config/legacy-routes.config'
 import { UserEntity } from '../user/entities/user.entity'
+import { OpenApiModule } from '../openapi/open.module'
 import { UserModule } from '../user/user.module'
 import { MenuModule } from '../menu/menu.module'
 import { LogModule } from '../system/log/log.module'
@@ -30,6 +31,8 @@ import { JwtStrategy } from './strategies/jwt.strategy'
     MenuModule,
     LogModule,
     RedisModule,
+    // JwtStrategy 要实时校验应用令牌（停用/删除即时生效）；OpenApiModule 不依赖本模块，无循环
+    OpenApiModule,
     // TotpService 直接读写 sys_user 的 totp 两列：跨模块注入仓库需本模块 forFeature 注册实体
     TypeOrmModule.forFeature([UserEntity, UserBackupCodeEntity]),
     // 在线用户/强制下线：JwtStrategy 用它的会话登记与令牌黑名单

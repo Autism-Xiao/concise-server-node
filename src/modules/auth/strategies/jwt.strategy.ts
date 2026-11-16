@@ -4,6 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt'
 
 import { jwtConfig, type JwtConfig } from '../../../config'
 import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
+import { AppService } from '../../openapi/app.service'
 import { UserService } from '../../user/user.service'
 import { OnlineService, type SessionRequest } from '../../ops/online/online.service'
 import type { JwtPayload } from '../services/auth.service'
@@ -37,7 +38,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     @Inject(jwtConfig.KEY) jwt: JwtConfig,
     private readonly userService: UserService,
     private readonly onlineService: OnlineService,
-    private readonly authUserCache: AuthUserCacheService
+    private readonly authUserCache: AuthUserCacheService,
+    private readonly appService: AppService
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -51,6 +53,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(request: RequestWithToken, payload: JwtPayload) {
     const token = extractToken(request)
     const issuedAt = (payload as { iat?: number }).iat
+
+    // 应用令牌（client_credentials 换发）：payload 带 app=true，没有"用户/会话/黑名单"概念。
+    // 实时查应用状态与最新 scope：停用/删除/改授权范围对已签发令牌即时生效，不留窗口期
+    if ((payload as { app?: boolean }).app === true) {
+      const app = await this.appService.resolveActiveApp(String(payload.id))
+      if (!app) {
+        throw new UnauthorizedException('应用已被停用或删除，请重新获取令牌')
+      }
+      return {
+        id: app.id,
+        username: app.appName,
+        isApp: true,
+        scopes: this.appService.parseScopes(app),
+        roles: [],
+        isPlatformAdmin: 0
+      }
+    }
 
     // 令牌黑名单（强制下线/登出）+ 用户级下线（refreshToken 重放时踢全量会话）
     if (token && (await this.onlineService.isSessionInvalid(token, String(payload.id), issuedAt))) {

@@ -50,6 +50,8 @@ import { BizOrderModule } from './modules/biz_order/biz_order.module'
 import { TenantContextModule } from './shared/tenant/tenant-context.module'
 import { TenantMiddleware } from './shared/tenant/tenant.middleware'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
+import { ApiScopeGuard } from './common/guards/api-scope.guard'
+import { OpenApiModule } from './modules/openapi/open.module'
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule()
 
@@ -111,6 +113,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     SystemConfigModule,
     CustomerModule,
     BizOrderModule,
+    // 开放平台：应用凭证（client_credentials）/ Webhook 订阅与派发 / 开放接口（/v1/open/**）
+    OpenApiModule,
     // Distributed tracing, auto-correlated logs, request/job metrics, error
     // telemetry, alarms, and more — out of the box. Sign up at https://observe.nestjs.com,
     // then run `npx @nestjs/observe link` to write your key pair into .env.
@@ -128,11 +132,12 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
     { provide: APP_INTERCEPTOR, useClass: OperLogInterceptor },
-    // 全局守卫：先限流（最便宜的拒绝），再 JWT 认证（@Public() 放行），再角色鉴权（@Roles()），最后按钮级权限（@Perms()）
+    // 全局守卫：先限流（最便宜的拒绝），再 JWT 认证（@Public() 放行），再角色鉴权（@Roles()），再按钮级权限（@Perms()），最后开放接口 scope（@ApiScope()，只约束应用令牌）
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
-    { provide: APP_GUARD, useClass: PermsGuard }
+    { provide: APP_GUARD, useClass: PermsGuard },
+    { provide: APP_GUARD, useClass: ApiScopeGuard }
   ]
 })
 export class AppModule implements NestModule {
