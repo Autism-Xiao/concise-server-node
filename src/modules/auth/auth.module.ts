@@ -8,7 +8,9 @@ import { UserEntity } from '../user/entities/user.entity'
 import { UserModule } from '../user/user.module'
 import { MenuModule } from '../menu/menu.module'
 import { LogModule } from '../system/log/log.module'
+import { SystemConfigModule } from '../system/config/config.module'
 import { RedisModule } from '../../shared/redis/redis.module'
+import { MailerModule } from '../../shared/mailer/mailer.module'
 import { OnlineModule } from '../ops/online/online.module'
 import { AuthController } from './controllers/auth.controller'
 import { AuthV1Controller } from './controllers/auth.v1.controller'
@@ -16,6 +18,7 @@ import { SsoV1Controller } from './controllers/sso.v1.controller'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { AuthService } from './services/auth.service'
 import { CaptchaService } from './services/captcha.service'
+import { PasswordResetService } from './services/password-reset.service'
 import { SsoService } from './services/sso.service'
 import { TotpService } from './services/totp.service'
 import { UserBackupCodeEntity } from './entities/user-backup-code.entity'
@@ -31,6 +34,10 @@ import { JwtStrategy } from './strategies/jwt.strategy'
     TypeOrmModule.forFeature([UserEntity, UserBackupCodeEntity]),
     // 在线用户/强制下线：JwtStrategy 用它的会话登记与令牌黑名单
     OnlineModule,
+    // 忘记密码：发信走邮件通道（开关与信封读 sys_config）
+    MailerModule,
+    // PasswordResetService 直接读 mail.resetCode.ttlMinutes
+    SystemConfigModule,
     JwtModule.registerAsync({
       // 直接注入 jwt 命名空间（ConfigModule 为全局模块，无需 imports）
       inject: [jwtConfig.KEY],
@@ -42,7 +49,7 @@ import { JwtStrategy } from './strategies/jwt.strategy'
   ],
   // 旧版（无 /v1）控制器默认不注册，见 config/legacy-routes.config.ts
   controllers: [AuthV1Controller, SsoV1Controller, ...(LEGACY_ROUTES_ENABLED ? [AuthController] : [])],
-  providers: [AuthService, CaptchaService, SsoService, TotpService, JwtStrategy, JwtAuthGuard],
+  providers: [AuthService, CaptchaService, SsoService, TotpService, PasswordResetService, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard]
 })
 export class AuthModule {}

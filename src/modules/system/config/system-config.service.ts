@@ -28,7 +28,11 @@ const DEFAULTS: Record<string, string> = {
   'security.password.requireComplexity': 'true',
   'security.password.expireDays': '90',
   'security.password.forceChangeOnFirstLogin': 'false',
-  'security.login.maxFailCount': '5'
+  'security.login.maxFailCount': '5',
+  // 邮件通道：SMTP 连接信息走环境变量（MAIL_SMTP_*），这里只有开关与展示项
+  'mail.enabled': 'false',
+  'mail.from': '',
+  'mail.resetCode.ttlMinutes': '5'
 }
 
 /** 进程内缓存有效期（毫秒）：多实例部署时，别处改的值最多这么久后本实例生效 */

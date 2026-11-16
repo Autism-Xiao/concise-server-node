@@ -8,3 +8,5 @@ shellEmulator: true
 allowBuilds:
   '@parcel/watcher': true
   '@scarf/scarf': true
+  # 纯 JS 包，postinstall 只是打补丁脚本，不需要执行（显式关掉，避免 pnpm 每次安装报 ERR_PNPM_IGNORED_BUILDS）
+  'vue-demi': false

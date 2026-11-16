@@ -1,14 +1,16 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, Request } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Ip, Post, Put, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { ChangePasswordDto } from '../dto/change-password.dto'
 import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
+import { ForgotPasswordDto, ResetByCodeDto } from '../dto/password-reset.dto'
 import { TwoFactorCodeDto } from '../dto/two-factor.dto'
 import { VerifyPasswordDto } from '../dto/verify-password.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
+import { PasswordResetService } from '../services/password-reset.service'
 import { TotpService } from '../services/totp.service'
 import type { UserEntity } from '../../user/entities/user.entity'
 
@@ -25,7 +27,8 @@ export class AuthV1Controller {
   constructor(
     private readonly authService: AuthService,
     private readonly captchaService: CaptchaService,
-    private readonly totpService: TotpService
+    private readonly totpService: TotpService,
+    private readonly passwordResetService: PasswordResetService
   ) {}
 
   @ApiOperation({ summary: '获取滑块验证码（v1）', description: '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId；答案存 Redis，5 分钟有效' })
@@ -101,6 +104,32 @@ export class AuthV1Controller {
     const raw = Array.isArray(header) ? header[0] : header
     const token = raw?.split(' ')[1] ?? ''
     return this.authService.changePassword(req.user.id, dto, token)
+  }
+
+  @ApiOperation({
+    summary: '申请重置密码验证码（v1）',
+    description:
+      '向账号绑定邮箱发 6 位一次性验证码（有效期见系统参数 mail.resetCode.ttlMinutes，默认 5 分钟）。' +
+      '无论账号是否存在、是否绑邮箱，一律返回 sent:true，防止被当成账号探测器'
+  })
+  @Public()
+  @RateLimit({ limit: 5, window: 300, message: '申请重置密码过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('password/forgot')
+  forgotPassword(@Body() dto: ForgotPasswordDto, @Ip() ip: string) {
+    return this.passwordResetService.request(dto.account, ip)
+  }
+
+  @ApiOperation({
+    summary: '用验证码重置密码（v1）',
+    description: '校验邮件验证码后写入新密码（受密码策略约束）；验证码只能成功使用一次，试错 5 次作废'
+  })
+  @Public()
+  @RateLimit({ limit: 10, window: 300, message: '重置密码过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('password/reset-by-code')
+  resetPasswordByCode(@Body() dto: ResetByCodeDto) {
+    return this.passwordResetService.reset(dto.account, dto.code, dto.newPassword)
   }
 
   @ApiBearerAuth('jwt')
