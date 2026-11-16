@@ -284,7 +284,8 @@ export class UserService extends BaseService<UserEntity> {
     delete data.username // 账号不允许修改（改账号会让审计与历史密码哈希对不上）
     data.levelId = await this.resolveLevelId(data.levelId)
     data.passwordExpireAt = normalizePasswordExpireAt(passwordExpireAt)
-    await this.findOne(id)
+    // 留一份改前快照：下面走的是自己写的事务（不是 super.update），审计要手动喂
+    const before = await this.findOne(id)
     await this.assertUniqueFields(data, id)
     if (data.password) {
       // 改密码同样过策略；用户名不可改，用原用户名校验「不能包含用户名」
@@ -314,6 +315,8 @@ export class UserService extends BaseService<UserEntity> {
         await this.assignPosts(id, postIds, manager)
       }
     })
+    // 字段级审计：data 里的 password/salt 会被采集器的敏感字段黑名单过滤掉
+    this.auditUpdate(before, data)
     return this.findOneDetail(id) as Promise<UserEntity>
   }
 

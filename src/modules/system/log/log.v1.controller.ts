@@ -14,6 +14,7 @@ import { readImportFile } from '../../../helper/import/import-file'
 import { formatDateTime } from '../../../utils/csv.util'
 import { setDownloadHeaders } from '../../../utils/download.util'
 import { buildImportTemplateXlsx } from '../../../utils/xlsx.util'
+import { ChangeLogService } from './change-log.service'
 import { LogService } from './log.service'
 import { SysLogEntity } from './entities/sys-log.entity'
 
@@ -82,6 +83,43 @@ class DeleteLogsDto {
   ids: string[]
 }
 
+/** 变更审计过滤条件：表名/记录 ID/字段都是精确匹配（排查时基本都知道自己在找哪条） */
+class QueryChangeLogDto extends PagerDto {
+  @ApiPropertyOptional({ description: '物理表名，精确匹配', example: 'sys_user' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  tableName?: string
+
+  @ApiPropertyOptional({ description: '记录 ID，精确匹配', example: 'e9ca23d68d884d4ebb19d07889727dae' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  recordId?: string
+
+  @ApiPropertyOptional({ description: '字段属性名，精确匹配', example: 'realname' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  field?: string
+
+  @ApiPropertyOptional({ description: '操作人用户 ID，精确匹配', example: 'e9ca23d68d884d4ebb19d07889727dae' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  operateUserId?: string
+
+  @ApiPropertyOptional({ description: '起始时间（ISO 8601，含）', example: '2026-11-01T00:00:00Z' })
+  @IsOptional()
+  @IsDateString({}, { message: 'startTime 须为 ISO 8601 日期' })
+  startTime?: string
+
+  @ApiPropertyOptional({ description: '结束时间（ISO 8601，含）', example: '2026-11-30T23:59:59Z' })
+  @IsOptional()
+  @IsDateString({}, { message: 'endTime 须为 ISO 8601 日期' })
+  endTime?: string
+}
+
 /**
  * 日志管理接口 V1：/api/v1/logs/**
  *
@@ -92,7 +130,32 @@ class DeleteLogsDto {
 @ApiBearerAuth('jwt')
 @Controller('v1/logs')
 export class LogV1Controller {
-  constructor(private readonly logService: LogService) {}
+  constructor(
+    private readonly logService: LogService,
+    private readonly changeLogService: ChangeLogService
+  ) {}
+
+  @ApiOperation({
+    summary: '字段级变更审计分页列表（v1）',
+    description:
+      '谁在什么时候把哪个字段从 A 改成 B。支持按表名/记录 ID/字段/操作人/时间范围过滤；' +
+      '与操作日志的区别：操作日志记"调了哪个接口"，这里记"数据本身变了什么"（含改前值）'
+  })
+  @Perms('system:log:change')
+  @Get('changes')
+  listChangeLog(@Query() query: QueryChangeLogDto) {
+    return this.changeLogService.list(query)
+  }
+
+  @ApiOperation({
+    summary: '某条记录的变更历史（v1）',
+    description: '按表名 + 记录 ID 查，时间正序，供详情页/弹窗展示"这条数据被谁改过"'
+  })
+  @Perms('system:log:change')
+  @Get('changes/:tableName/:recordId')
+  listChangeLogByRecord(@Param('tableName') tableName: string, @Param('recordId') recordId: string) {
+    return this.changeLogService.listByRecord(tableName, recordId)
+  }
 
   @ApiOperation({ summary: '登录日志分页列表（v1）', description: '支持用户名/结果/时间范围过滤；status 0 成功 1 失败' })
   @ApiOkResponse({ description: '登录日志分页', type: SysLogEntity })

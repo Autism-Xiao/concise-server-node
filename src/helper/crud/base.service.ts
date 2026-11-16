@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common'
 import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository, SelectQueryBuilder } from 'typeorm'
 
 import { randomId32 } from '../../utils/password.util'
+import { emitChanges, shouldSkipField, toComparable, type ChangeItem } from '../../shared/audit/change-recorder'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { tenantRawCondition } from '../../shared/tenant/tenant-scope.util'
 import { paginate, type PaginateOptions, type Pagination } from '../paginate'
@@ -109,7 +110,7 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
 
   /** 按 id 更新：实体有 updateTime 列且调用方未显式传入时自动补当前时间 */
   async update(id: number | string, dto: DeepPartial<T>): Promise<T> {
-    await this.findOne(id)
+    const before = await this.findOne(id)
     const shouldStamp = this.hasProperty('updateTime') && (dto as Record<string, unknown>).updateTime === undefined
     const payload = shouldStamp ? ({ ...dto, updateTime: new Date() } as DeepPartial<T>) : dto
     const qb = this.repository
@@ -122,7 +123,52 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
       if (condition) qb.andWhere(condition.clause, condition.params)
     }
     await qb.execute()
+    this.emitChangeDiff(before, payload)
     return this.findOne(id)
+  }
+
+  /**
+   * 子类自己写 update（不走 super.update）时，手动调一下这个把变更交给审计。
+   *
+   * 必须显式调的原因：`emitChangeDiff` 挂在 `super.update()` 里，凡是自己用
+   * QueryBuilder/事务直接写库、没调 super 的子类（如 UserService）都不会自动触发。
+   * 参数 before 是**更新前**查出来的实体，patch 是实际要写库的字段集合。
+   */
+  protected auditUpdate(before: T, patch: Partial<T>): void {
+    this.emitChangeDiff(before, patch as DeepPartial<T>)
+  }
+
+  /**
+   * 把「改了哪些字段、改前改后是什么」交给审计采集器。
+   *
+   * 只处理本次 payload 里出现过的字段（没传的字段 = 没改，不算变更）；
+   * 敏感字段（password/salt/secret/token 等）在采集器里被过滤掉，不会落库。
+   * 采集是即发即忘，失败不影响这次更新。
+   */
+  private emitChangeDiff(before: T, payload: DeepPartial<T>): void {
+    const patch = payload as Record<string, unknown>
+    const fields = Object.keys(patch)
+    if (!fields.length) return
+    const recordId = (before as unknown as { id: number | string }).id
+    const items: ChangeItem[] = []
+    for (const field of fields) {
+      if (shouldSkipField(field)) continue
+      const next = patch[field]
+      if (next === undefined) continue
+      const oldText = toComparable((before as Record<string, unknown>)[field])
+      const newText = toComparable(next)
+      if (oldText === newText) continue
+      items.push({
+        table: this.repository.metadata.tableName,
+        recordId: String(recordId),
+        field,
+        // 列上的 comment 就是中文名（建表/实体里都写了），顺手当标签用
+        label: this.repository.metadata.findColumnWithPropertyName(field)?.comment ?? undefined,
+        oldValue: oldText,
+        newValue: newText
+      })
+    }
+    emitChanges(items)
   }
 
   /** 按 id 删除，不存在时抛 404（同样带租户条件，避免跨租户误删） */
