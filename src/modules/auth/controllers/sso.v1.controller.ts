@@ -101,11 +101,16 @@ export class SsoV1Controller {
     @Body() dto: ExchangeSsoCodeDto,
     @Request() req: { ip: string; headers: Record<string, string | string[] | undefined> }
   ): Promise<LoginResult> {
-    const userId = this.ssoService.consumeSsoCode(dto.code)
-    const user = userId ? await this.ssoService.loadUserById(userId) : null
+    // 两阶段：先 peek 做两步验证，通过后才消费 code。
+    // 反过来会在「缺码报 2105」时把 code 烧掉，用户带码重试必然失败。
+    const peekedId = this.ssoService.peekSsoCode(dto.code)
+    const user = peekedId ? await this.ssoService.loadUserById(peekedId) : null
     if (!user) {
       throw new BizException(BizErrorCode.SSO_CREDENTIAL_INVALID, 'SSO 登录凭证无效或已过期，请重新发起登录', HttpStatus.BAD_REQUEST)
     }
+    await this.authService.assertSsoTotp(user.id, dto.totpCode)
+    // 验码通过，此时才真正烧掉一次性 code（防重放）
+    this.ssoService.consumeSsoCode(dto.code)
     const userAgent = req.headers['user-agent']
     return this.authService.ssoLogin(user, { ip: req.ip ?? '', userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent })
   }

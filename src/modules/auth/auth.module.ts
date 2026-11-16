@@ -18,6 +18,7 @@ import { AuthService } from './services/auth.service'
 import { CaptchaService } from './services/captcha.service'
 import { SsoService } from './services/sso.service'
 import { TotpService } from './services/totp.service'
+import { UserBackupCodeEntity } from './entities/user-backup-code.entity'
 import { JwtStrategy } from './strategies/jwt.strategy'
 
 @Module({
@@ -27,7 +28,7 @@ import { JwtStrategy } from './strategies/jwt.strategy'
     LogModule,
     RedisModule,
     // TotpService 直接读写 sys_user 的 totp 两列：跨模块注入仓库需本模块 forFeature 注册实体
-    TypeOrmModule.forFeature([UserEntity]),
+    TypeOrmModule.forFeature([UserEntity, UserBackupCodeEntity]),
     // 在线用户/强制下线：JwtStrategy 用它的会话登记与令牌黑名单
     OnlineModule,
     JwtModule.registerAsync({

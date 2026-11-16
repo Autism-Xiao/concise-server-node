@@ -17,6 +17,7 @@ import { MenuService, buildMenuTree, type MenuTreeItem } from '../../menu/menu.s
 import { OnlineService } from '../../ops/online/online.service'
 import type { MenuEntity } from '../../menu/entities/menu.entity'
 import { CaptchaService } from './captcha.service'
+import { TotpService } from './totp.service'
 import { LoginDto } from '../dto/login.dto'
 
 /**
@@ -126,7 +127,9 @@ export class AuthService {
     private readonly captchaService: CaptchaService,
     private readonly menuService: MenuService,
     private readonly onlineService: OnlineService,
-    private readonly rateLimitService: RateLimitService
+    private readonly rateLimitService: RateLimitService,
+    // 备份码兜底校验：TOTP 不通过时允许用一次性备份码登录
+    private readonly totpService: TotpService
   ) {}
 
   /**
@@ -158,8 +161,11 @@ export class AuthService {
         if (!dto.totpCode) {
           throw new BizException(BizErrorCode.TOTP_REQUIRED, '该账号已开启两步验证，请输入 6 位动态验证码', HttpStatus.BAD_REQUEST)
         }
-        if (!verifyTotpCode(user.totpSecret ?? '', dto.totpCode)) {
-          throw new BizException(BizErrorCode.TOTP_INVALID, '两步验证码不正确或已过期，请重试', HttpStatus.BAD_REQUEST)
+        // 先验 TOTP；不通过再试一次性备份码（认证器丢失时的唯一后路，用后即失效）
+        const totpOk = verifyTotpCode(user.totpSecret ?? '', dto.totpCode)
+        const backupOk = totpOk ? false : await this.totpService.consumeBackupCode(user.id, dto.totpCode)
+        if (!totpOk && !backupOk) {
+          throw new BizException(BizErrorCode.TOTP_INVALID, '动态验证码或备份码不正确，请重试', HttpStatus.BAD_REQUEST)
         }
       }
       if (!user) {
@@ -212,8 +218,32 @@ export class AuthService {
   }
 
   /**
+   * SSO 登录的两步验证门禁：与密码登录同口径（2105 缺码 / 2106 错码）。
+   *
+   * 为什么单独成方法而不是塞进 ssoLogin：一次性 code 是「用后即焚」，
+   * 必须在消费 code **之前**验码。否则第一次不带码的请求会烧掉 code，
+   * 用户带着验证码重试必然失败。
+   */
+  async assertSsoTotp(userId: string, totpCode?: string): Promise<void> {
+    const state = await this.userService.findTotpState(userId)
+    if (!state || state.totpEnabled !== 1) {
+      return
+    }
+    if (!totpCode) {
+      throw new BizException(BizErrorCode.TOTP_REQUIRED, '该账号已开启两步验证，请输入 6 位动态验证码', HttpStatus.BAD_REQUEST)
+    }
+    // 与密码登录同口径：动态码不通过时允许一次性备份码
+    const totpOk = verifyTotpCode(state.totpSecret ?? '', totpCode)
+    const backupOk = totpOk ? false : await this.totpService.consumeBackupCode(userId, totpCode)
+    if (!totpOk && !backupOk) {
+      throw new BizException(BizErrorCode.TOTP_INVALID, '动态验证码或备份码不正确，请重试', HttpStatus.BAD_REQUEST)
+    }
+  }
+
+  /**
    * SSO 登录：身份已在 IdP 侧验证通过，跳过密码/验证码/锁定逻辑直接签发令牌。
    * 仍记登录日志（message=SSO 登录成功）并沿用强制改密标记，审计口径与密码登录一致。
+   * 两步验证由调用方在消费 code 之前用 assertSsoTotp 把关（见该方法的说明）。
    */
   async ssoLogin(user: import('../../user/entities/user.entity').UserEntity, meta: { ip: string; userAgent?: string }): Promise<LoginResult> {
     await this.logService.recordLogin({ userId: user.id, username: user.username, status: 0, message: 'SSO 登录成功', ip: meta.ip, userAgent: meta.userAgent })
@@ -351,6 +381,8 @@ export class AuthService {
     if (dto.oldPassword === dto.newPassword) {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '新密码不能与原密码相同', HttpStatus.BAD_REQUEST)
     }
+    // 策略校验与新建用户/管理员重置同源（sys_config），避免「改密能绕过复杂度」的漏洞
+    await this.userService.assertPassword(dto.newPassword, user.username)
     await this.userService.updatePasswordOnly(userId, dto.newPassword)
     // 自助改密成功：解除「下次登录强制改密」与密码过期标记（新有效期由管理员另行设置）
     await this.userService.clearPasswordFlags(userId)

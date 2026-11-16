@@ -16,6 +16,8 @@ import { OnlineService } from '../ops/online/online.service'
 import { randomToken } from '../../utils/random-token.util'
 import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
 import { encryptPassword, hashPassword, isArgon2Hash, randomId32, verifyArgon2Password } from '../../utils/password.util'
+import { assertPasswordStrength } from '../../utils/password-policy.util'
+import { SystemConfigService } from '../system/config/system-config.service'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
 import { PostEntity } from '../system/post/entities/post.entity'
 import { LevelEntity } from '../system/level/entities/level.entity'
@@ -208,7 +210,8 @@ export class UserService extends BaseService<UserEntity> {
     private readonly onlineService: OnlineService,
     private readonly permissionCacheService: PermissionCacheService,
     private readonly userSettingService: UserSettingService,
-    private readonly authUserCache: AuthUserCacheService
+    private readonly authUserCache: AuthUserCacheService,
+    private readonly systemConfig: SystemConfigService
   ) {
     super(repository, '用户')
   }
@@ -224,8 +227,11 @@ export class UserService extends BaseService<UserEntity> {
     await this.assertUniqueFields(data)
     data.id = data.id || randomId32()
     if (data.password) {
+      // 强度校验放在哈希之前：策略来自 sys_config，改配置即时生效
+      await this.assertPassword(data.password, data.username)
       data.password = await hashPassword(data.password)
       data.salt = null
+      data.passwordExpireAt = data.passwordExpireAt ?? (await this.resolvePasswordExpireAt())
     }
     data.status = data.status || USER_STATUS.NORMAL
     data.delFlag = 0
@@ -281,9 +287,12 @@ export class UserService extends BaseService<UserEntity> {
     await this.findOne(id)
     await this.assertUniqueFields(data, id)
     if (data.password) {
+      // 改密码同样过策略；用户名不可改，用原用户名校验「不能包含用户名」
+      await this.assertPassword(data.password, data.username)
       // argon2id 自带盐，顺手把历史盐清空，避免后续误按旧算法校验
       data.password = await hashPassword(data.password)
       data.salt = null
+      data.passwordExpireAt = data.passwordExpireAt ?? (await this.resolvePasswordExpireAt())
     }
     if (operator) {
       data.updateBy = operator
@@ -837,8 +846,21 @@ export class UserService extends BaseService<UserEntity> {
       .getOne()
   }
 
-  /** 按用户名查找并带出角色、部门（登录用，密码与盐显式加查；过滤已软删） */
-  async findByUsername(username: string): Promise<UserEntity | null> {
+  /**
+   * 只取两步验证状态（SSO 登录门禁用）
+   * totpSecret 是 select:false，必须显式 addSelect，否则门禁会静默失效
+   */
+  async findTotpState(id: string): Promise<{ totpEnabled: number; totpSecret: string | null } | null> {
+    const user = await this.repository
+      .createQueryBuilder('user')
+      .addSelect(['user.totpSecret', 'user.totpEnabled'])
+      .where('user.id = :id', { id })
+      .andWhere('user.del_flag = 0')
+      .getOne()
+    return user ? { totpEnabled: Number(user.totpEnabled ?? 0), totpSecret: user.totpSecret ?? null } : null
+  }
+
+  /** 按用户名查找并带出角色、部门（登录用，密码与盐显式加查；过滤已软删） */ async findByUsername(username: string): Promise<UserEntity | null> {
     const user = await this.repository
       .createQueryBuilder('user')
       // totp 两列是 select:false（防密钥随接口外泄），登录门禁要读，认证专用查询里显式带回
@@ -900,8 +922,10 @@ export class UserService extends BaseService<UserEntity> {
    * 重置后该用户全部在线会话立即失效（旧密码可能已泄露的假设下不能让旧登录态续命）
    */
   async resetPassword(id: string, plainPassword?: string): Promise<{ password: string }> {
-    await this.findOne(id)
+    const user = await this.findOne(id)
     const password = plainPassword?.trim() || randomToken(12)
+    // 管理员手填的临时口令同样要过策略：否则「重置成 123456」会让全站密码基线形同虚设
+    await this.assertPassword(password, user.username)
     await this.updatePasswordOnly(id, password)
     // 管理员重置的密码视为临时口令：强制用户下次登录自行改密（安全基线）
     await this.repository.update(id, { mustChangePassword: 1 })
@@ -909,14 +933,36 @@ export class UserService extends BaseService<UserEntity> {
     return { password }
   }
 
-  /** 只改密码哈希（自助改密与重置密码共用）：argon2id 自带盐，顺手清历史盐 */
+  /**
+   * 只改密码哈希（自助改密与重置密码共用）：
+   * - argon2id 自带盐，顺手清历史盐
+   * - 按策略重算过期时间，并解除「强制改密」标记（刚改完不该再被拦一次）
+   */
   async updatePasswordOnly(id: string, plainPassword: string): Promise<void> {
-    await this.repository.update(id, { password: await hashPassword(plainPassword), salt: null, updateTime: new Date() })
+    await this.repository.update(id, {
+      password: await hashPassword(plainPassword),
+      salt: null,
+      passwordExpireAt: await this.resolvePasswordExpireAt(),
+      mustChangePassword: 0,
+      updateTime: new Date()
+    })
   }
 
-  /** 自助改密成功后调用：解除「下次登录强制改密」标记并清空过期时间（下次有效期由管理员再设） */
+  /** 按当前策略校验密码强度；auth 的自助改密复用这个方法，保证口径一致 */
+  async assertPassword(plainPassword: string, username?: string): Promise<void> {
+    const policy = await this.systemConfig.getPasswordPolicy()
+    assertPasswordStrength(plainPassword, policy, username)
+  }
+
+  /** 按策略算密码过期时间：expireDays <= 0 表示永不过期（返回 null） */
+  private async resolvePasswordExpireAt(): Promise<Date | null> {
+    const days = await this.systemConfig.getNumber('security.password.expireDays', 90)
+    return days > 0 ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : null
+  }
+
+  /** 自助改密成功后调用：只解除「强制改密」标记（过期时间已由 updatePasswordOnly 重算） */
   async clearPasswordFlags(id: string): Promise<void> {
-    await this.repository.update(id, { mustChangePassword: 0, passwordExpireAt: null })
+    await this.repository.update(id, { mustChangePassword: 0 })
   }
 
   /** 用户是否命中「强制改密」：管理员显式标记，或密码已过有效期 */

@@ -203,6 +203,13 @@ export class SsoService {
     return code
   }
 
+  /** 只查不消费：用于「先做两步验证、通过后再烧掉 code」的两阶段流程 */
+  peekSsoCode(code: string): string | null {
+    const entry = this.ssoCodes.get(code)
+    if (!entry) return null
+    return entry.expiresAt > Date.now() ? entry.userId : null
+  }
+
   /** 消费一次性 code：返回用户 id；无效/过期/已用返回 null（code 立即失效，防重放） */
   consumeSsoCode(code: string): string | null {
     const entry = this.ssoCodes.get(code)

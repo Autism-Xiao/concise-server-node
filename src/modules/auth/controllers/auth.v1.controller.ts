@@ -140,6 +140,14 @@ export class AuthV1Controller {
     return this.totpService.deactivate(req.user.id, dto.code)
   }
 
+  @ApiOperation({ summary: '重新生成备份恢复码', description: '需当前动态码；旧码全部作废，明文只返回一次' })
+  @RateLimit({ limit: 10, window: 300, message: '操作过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('2fa/backup-codes')
+  twoFactorBackupCodes(@Request() req: { user: { id: string } }, @Body() dto: TwoFactorCodeDto) {
+    return this.totpService.regenerateBackupCodes(req.user.id, dto.code)
+  }
+
   @ApiBearerAuth('jwt')
   @ApiOperation({ summary: '当前登录用户信息（v1）', description: '返回脱敏后的用户信息（不含 password / salt）' })
   @Get('profile')

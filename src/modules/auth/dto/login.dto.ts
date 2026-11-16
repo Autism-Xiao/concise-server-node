@@ -26,7 +26,8 @@ export class LoginDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^\d{6}$/, { message: '两步验证码须为 6 位数字' })
+  // 两种形态：6 位动态码，或 8 位备份码（可带分隔符，如 A3F9-K2MP）
+  @Matches(/^(\d{6}|[A-Za-z0-9]{4}-?[A-Za-z0-9]{4})$/, { message: '验证码须为 6 位动态码，或 8 位备份码（如 A3F9-K2MP）' })
   totpCode?: string
 }
 

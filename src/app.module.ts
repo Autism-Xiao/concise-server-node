@@ -36,6 +36,7 @@ import { NoticeModule } from './modules/system/notice/notice.module'
 import { TaskModule } from './modules/system/task/task.module'
 import { WatermarkModule } from './modules/system/watermark/watermark.module'
 import { UserSettingModule } from './modules/system/user-setting/user-setting.module'
+import { SystemConfigModule } from './modules/system/config/config.module'
 import { LevelModule } from './modules/system/level/level.module'
 import { PostModule } from './modules/system/post/post.module'
 import { JobModule } from './modules/ops/job/job.module'
@@ -106,6 +107,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     MonitorModule,
     // 公共工具模块（上传/存储）
     ToolsModule,
+    // 系统参数配置（sys_config：密码策略等运行时可调项，改完即时生效）
+    SystemConfigModule,
     CustomerModule,
     BizOrderModule,
     // Distributed tracing, auto-correlated logs, request/job metrics, error
