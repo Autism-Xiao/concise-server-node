@@ -49,3 +49,13 @@ server: { host: FRONTEND_HOST, port: FRONTEND_PORT, ... }
 - 需要局域网真机调试：`FRONTEND_HOST=0.0.0.0 pnpm dev`（等价于旧 vite 的 `--host`），启动横幅会打印 Network 地址
 - 同一坑的另一个面：**后端探活别用 `127.0.0.1` 判死 vite**。本轮之前就有一次把「127.0.0.1 打不通」误判成 dev server 挂了、多起了一个实例挤到 5174。现在双栈后两种写法都通，但判断服务存活仍应以 `netstat` 的 LISTENING 行 + 任一地址的 HTTP 码为准
 - 生产不受影响：构建产物由 Nginx 托管，与 dev server 监听地址无关
+
+## 附带：消除 `routeTree.gen.ts` 的行尾假改动
+
+排查过程中工作区一直挂着一个「已修改」但 `git diff` 为空的文件 `src/routeTree.gen.ts`：TanStack Router 插件每次启动 / 改路由都会重写它（内容一致、行尾为 LF），而仓库无 `.gitattributes`、走 `text=auto` 会在检出时转成 CRLF，于是内容相同却被判成改动，容易误认为还有未提交代码。
+
+| 文件 | 类型 | 说明 |
+| --- | --- | --- |
+| `.gitattributes` | 新增 | `* text=auto` 保持既有行为；`src/routeTree.gen.ts -text` 让该自动生成文件只比内容、不比行尾 |
+
+提交后 `git status` 归零（前端 `961d0c5`）。
