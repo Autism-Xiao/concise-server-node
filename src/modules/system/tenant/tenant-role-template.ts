@@ -112,7 +112,13 @@ export function acceptsByLevel(level: TenantRoleLevel, perms?: string | null): b
  *
  * 选人控件不受影响：`GET /v1/users/lookup` 与 `/v1/users/me` 不挂任何 @Perms，登录即可用。
  */
-export const TENANT_RESTRICTED_MODULES: Array<{ urlPrefix: string; permsPrefix?: string }> = [{ urlPrefix: '/system/users', permsPrefix: 'system:user' }]
+export const TENANT_RESTRICTED_MODULES: Array<{ urlPrefix: string; permsPrefix?: string }> = [
+  { urlPrefix: '/system/users', permsPrefix: 'system:user' },
+  // 菜单是全平台共享的配置：编辑者拿到 `system:menu:update` 就能改所有租户的侧边栏，必须拦在模板层
+  { urlPrefix: '/system/menu', permsPrefix: 'system:menu' },
+  // 角色权限页是「谁能干什么」的配置表，租户内也只该由管理员看
+  { urlPrefix: '/system/role', permsPrefix: 'system:role' }
+]
 
 /** 租户级菜单节点（本文件只关心定位子树需要的字段） */
 export interface TenantMenuNode {
