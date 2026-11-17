@@ -1,8 +1,9 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Ip, Post, Put, Request } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Ip, Post, Put, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
+import { captchaConfig, type CaptchaConfig } from '../../../config/captcha.config'
 import { ChangePasswordDto } from '../dto/change-password.dto'
 import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
 import { ForgotPasswordDto, ResetByCodeDto } from '../dto/password-reset.dto'
@@ -29,15 +30,25 @@ export class AuthV1Controller {
     private readonly authService: AuthService,
     private readonly captchaService: CaptchaService,
     private readonly totpService: TotpService,
-    private readonly passwordResetService: PasswordResetService
+    private readonly passwordResetService: PasswordResetService,
+    @Inject(captchaConfig.KEY) private readonly captcha: CaptchaConfig
   ) {}
 
-  @ApiOperation({ summary: '获取滑块验证码（v1）', description: '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId；答案存 Redis，5 分钟有效' })
+  @ApiOperation({
+    summary: '获取滑块验证码（v1）',
+    description:
+      '返回带缺口的背景图与拼图条（PNG dataURL）及 captchaId；答案存 Redis，5 分钟有效。' +
+      'CAPTCHA_ENABLED=false 时返回 { enabled: false } 且不出图：前端据此隐藏滑块、登录不传 captchaTicket。' +
+      '否则关闭了验证码（尤其同时没启 Redis）的部署会卡在「取不到验证码就不许提交」，登录页进不去'
+  })
   @Public()
   @RateLimit({ limit: 30, window: 60, message: '验证码获取过于频繁，请稍后再试' })
   @Get('captcha')
-  captcha() {
-    return this.captchaService.create()
+  async captchaChallenge() {
+    // 关闭验证码时完全不碰 Redis：直接告诉前端「不需要验证」，而不是抛 503 让前端卡死
+    if (!this.captcha.enabled) return { enabled: false }
+    const data = await this.captchaService.create()
+    return { enabled: true, ...data }
   }
 
   @ApiOperation({
