@@ -56,4 +56,9 @@ export class UpdateMyProfileDto {
   @IsString()
   @MaxLength(255, { message: '个人简介最多 255 个字符' })
   bio?: string | null
+
+  @ApiPropertyOptional({ description: '当前密码（修改邮箱时必填 —— 邮箱是忘记密码链路的收件凭证，改动需密码二次确认）' })
+  @IsOptional()
+  @IsString({ message: '密码必须是字符串' })
+  password?: string
 }

@@ -4,7 +4,7 @@ import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository, SelectQu
 import { randomId32 } from '../../utils/password.util'
 import { emitChanges, shouldSkipField, toComparable, type ChangeItem } from '../../shared/audit/change-recorder'
 import { TenantContext } from '../../shared/tenant/tenant.context'
-import { tenantRawCondition } from '../../shared/tenant/tenant-scope.util'
+import { tenantRawCondition, tenantWriteCondition } from '../../shared/tenant/tenant-scope.util'
 import { paginate, type PaginateOptions, type Pagination } from '../paginate'
 
 /**
@@ -118,11 +118,17 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
       .update()
       .set(payload as never)
       .where('id = :id', { id })
+    // 写路径用严格租户条件（不含 tenant_id=0 共享行）：共享数据只有平台视角能改，
+    // 否则租户管理员能通过「先读到共享行再按 id 写」改掉平台数据
     if (this.hasTenantColumn()) {
-      const condition = tenantRawCondition()
+      const condition = tenantWriteCondition()
       if (condition) qb.andWhere(condition.clause, condition.params)
     }
-    await qb.execute()
+    const result = await qb.execute()
+    if (!result.affected) {
+      // 没写进去 = 行不存在或不在本租户可写范围内，按 404 处理（不能返回没变化的旧数据假装成功）
+      throw new NotFoundException(`${this.entityName}不存在`)
+    }
     this.emitChangeDiff(before, payload)
     return this.findOne(id)
   }
@@ -171,11 +177,11 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
     emitChanges(items)
   }
 
-  /** 按 id 删除，不存在时抛 404（同样带租户条件，避免跨租户误删） */
+  /** 按 id 删除，不存在时抛 404（严格租户条件：共享行 / 跨租户行一律不可删） */
   async delete(id: number | string): Promise<void> {
     const qb = this.repository.createQueryBuilder().delete().where('id = :id', { id })
     if (this.hasTenantColumn()) {
-      const condition = tenantRawCondition()
+      const condition = tenantWriteCondition()
       if (condition) qb.andWhere(condition.clause, condition.params)
     }
     const result = await qb.execute()

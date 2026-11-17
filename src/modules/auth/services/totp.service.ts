@@ -9,6 +9,7 @@ import { BizException } from '../../../common/exceptions/biz.exception'
 import { buildOtpauthUri, generateTotpSecret, verifyTotpCode } from '../../../shared/totp/totp.util'
 import { randomId32 } from '../../../utils/password.util'
 import { UserEntity } from '../../user/entities/user.entity'
+import { UserService } from '../../user/user.service'
 import { UserBackupCodeEntity } from '../entities/user-backup-code.entity'
 
 /** 备份码字符集：去掉容易看错的 0/O/1/I */
@@ -45,8 +46,27 @@ function digestBackupCode(code: string): string {
 export class TotpService {
   constructor(
     @InjectRepository(UserEntity) private readonly userRepository: Repository<UserEntity>,
-    @InjectRepository(UserBackupCodeEntity) private readonly backupRepository: Repository<UserBackupCodeEntity>
+    @InjectRepository(UserBackupCodeEntity) private readonly backupRepository: Repository<UserBackupCodeEntity>,
+    private readonly userService: UserService
   ) {}
+
+  /**
+   * 敏感操作（绑定/解绑 2FA）的密码二次确认
+   * 会话令牌可能被盗（token 泄露、借设备），密码是 token 之外的第二道闸；
+   * setup 是覆盖式写密钥，没有这道闸等于被盗会话可以直接接管账号的 2FA
+   */
+  private async assertPassword(userId: string, password?: string): Promise<void> {
+    if (!password) {
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, '请输入当前密码确认操作', HttpStatus.BAD_REQUEST)
+    }
+    const user = await this.userService.findOneWithPassword(userId)
+    if (!user || user.delFlag === 1) {
+      throw new BizException(BizErrorCode.UNAUTHORIZED, '账号不存在', HttpStatus.UNAUTHORIZED)
+    }
+    if (!(await this.userService.verifyPassword(user, password))) {
+      throw new BizException(BizErrorCode.OLD_PASSWORD_INVALID, '密码不正确，操作已拒绝', HttpStatus.BAD_REQUEST)
+    }
+  }
 
   /** 当前账号是否已开启两步验证 + 剩余可用备份码数量 */
   async getStatus(userId: string): Promise<{ enabled: boolean; remainingBackupCodes: number }> {
@@ -60,7 +80,8 @@ export class TotpService {
    * 覆盖式：重复调用会换新密钥，旧二维码立即作废（防「扫了旧码激活出未知密钥」）。
    * 对已开启的账号也允许重扫（换手机场景），但旧密钥在新 activate 成功前仍然有效。
    */
-  async setup(userId: string, username: string): Promise<{ otpauthUrl: string }> {
+  async setup(userId: string, username: string, password?: string): Promise<{ otpauthUrl: string }> {
+    await this.assertPassword(userId, password)
     const secret = generateTotpSecret()
     await this.userRepository.update({ id: userId }, { totpSecret: secret })
     return { otpauthUrl: buildOtpauthUri(username, secret) }
@@ -83,8 +104,9 @@ export class TotpService {
     return { enabled: true, backupCodes }
   }
 
-  /** 验码关闭：清空密钥与备份码，登录恢复为仅密码 */
-  async deactivate(userId: string, code: string): Promise<{ enabled: false }> {
+  /** 验码关闭：清空密钥与备份码，登录恢复为仅密码。密码 + 动态码双确认（解绑是高危操作） */
+  async deactivate(userId: string, code: string, password?: string): Promise<{ enabled: false }> {
+    await this.assertPassword(userId, password)
     const user = await this.userRepository.findOne({ where: { id: userId }, select: { id: true, totpSecret: true, totpEnabled: true } })
     if (!user || Number(user.totpEnabled ?? 0) !== 1) {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '该账号未开启两步验证', HttpStatus.BAD_REQUEST)

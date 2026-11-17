@@ -82,9 +82,11 @@ export class AppService {
     return new Pagination(withPrefix, total, page, pageSize)
   }
 
-  /** 单个应用（编辑弹窗用） */
+  /** 单个应用（编辑弹窗用）：严格按归属租户隔离，防止跨租户按 id 摸到别人的应用（IDOR） */
   async findOne(id: string): Promise<SysAppEntity> {
-    const app = await this.appRepo.findOne({ where: { id, delFlag: '0' } })
+    const base = { id, delFlag: '0' } as const
+    const tenantId = TenantContext.filterTenantId()
+    const app = await this.appRepo.findOne({ where: tenantId === null ? base : { ...base, tenantId } })
     if (!app) throw new NotFoundException('应用不存在')
     return app
   }

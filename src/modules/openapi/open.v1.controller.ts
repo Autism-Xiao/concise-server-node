@@ -1,9 +1,10 @@
-import { Controller, Get, Param, Query } from '@nestjs/common'
+import { Controller, Get, Param, Query, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 import { InjectRepository } from '@nestjs/typeorm'
 import type { Repository } from 'typeorm'
 
 import { ApiScope } from '../../common/decorators/api-scope.decorator'
+import type { AppTokenUser } from '../../common/guards/api-scope.guard'
 import { Pagination } from '../../helper/paginate'
 import { UserEntity } from '../user/entities/user.entity'
 
@@ -37,11 +38,22 @@ export class OpenV1Controller {
     }))
   }
 
-  @ApiOperation({ summary: '用户分页列表（应用令牌）', description: '需要 scope user:read；只返回白名单字段，不含租户/加密等内部信息' })
+  /**
+   * 应用租户过滤：tenantId > 0 的应用只看得到本租户用户；tenantId = 0（平台应用）可见全平台。
+   * 之前两个接口都不带租户条件 —— 租户 A 的应用能拉到租户 B 的用户（含姓名/邮箱）。
+   */
+  private applyAppTenantScope(qb: ReturnType<Repository<UserEntity>['createQueryBuilder']>, tenantId: number): void {
+    if (tenantId > 0) {
+      qb.andWhere('u.tenant_id = :tenantId', { tenantId })
+    }
+  }
+
+  @ApiOperation({ summary: '用户分页列表（应用令牌）', description: '需要 scope user:read；按应用归属租户过滤，只返回白名单字段' })
   @ApiScope('user:read')
   @Get('users')
-  async listUsers(@Query('page') page = '1', @Query('pageSize') pageSize = '20') {
+  async listUsers(@Request() req: { user: AppTokenUser }, @Query('page') page = '1', @Query('pageSize') pageSize = '20') {
     const qb = this.userRepo.createQueryBuilder('u').where('u.del_flag = :del', { del: '0' }).orderBy('u.create_time', 'DESC')
+    this.applyAppTenantScope(qb, Number(req.user?.tenantId ?? 0))
     const total = await qb.getCount()
     const p = Math.max(1, Math.trunc(Number(page) || 1))
     const size = Math.min(100, Math.max(1, Math.trunc(Number(pageSize) || 20)))
@@ -52,11 +64,13 @@ export class OpenV1Controller {
     return new Pagination(this.pickUsers(rows), total, p, size)
   }
 
-  @ApiOperation({ summary: '用户详情（应用令牌）', description: '需要 scope user:read' })
+  @ApiOperation({ summary: '用户详情（应用令牌）', description: '需要 scope user:read；只能查应用归属租户（或平台）内的用户' })
   @ApiScope('user:read')
   @Get('users/:id')
-  async getUser(@Param('id') id: string) {
-    const row = await this.userRepo.findOne({ where: { id, delFlag: 0 } })
+  async getUser(@Request() req: { user: AppTokenUser }, @Param('id') id: string) {
+    const qb = this.userRepo.createQueryBuilder('u').where('u.id = :id', { id }).andWhere('u.del_flag = :del', { del: '0' })
+    this.applyAppTenantScope(qb, Number(req.user?.tenantId ?? 0))
+    const row = await qb.getOne()
     if (!row) return null
     return this.pickUsers([row])[0]
   }

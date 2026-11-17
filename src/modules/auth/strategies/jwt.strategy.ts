@@ -65,6 +65,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         id: app.id,
         username: app.appName,
         isApp: true,
+        // 应用归属租户：开放接口按它过滤数据（tenantId=0 的平台应用可见全平台数据）
+        tenantId: app.tenantId,
         scopes: this.appService.parseScopes(app),
         roles: [],
         isPlatformAdmin: 0

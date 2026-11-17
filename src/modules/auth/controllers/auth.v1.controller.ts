@@ -7,6 +7,7 @@ import { ChangePasswordDto } from '../dto/change-password.dto'
 import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
 import { ForgotPasswordDto, ResetByCodeDto } from '../dto/password-reset.dto'
 import { TwoFactorCodeDto } from '../dto/two-factor.dto'
+import { TwoFactorDeactivateDto, TwoFactorPasswordDto } from '../dto/two-factor-password.dto'
 import { VerifyPasswordDto } from '../dto/verify-password.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
@@ -41,9 +42,12 @@ export class AuthV1Controller {
 
   @ApiOperation({
     summary: '校验滑块位置（v1）',
-    description: '拖动误差 ±5px 内通过，返回一次性 ticket（2 分钟有效），登录时作为 captchaTicket 传入'
+    description: '拖动误差 ±3px 内通过，返回一次性 ticket（2 分钟有效），登录时作为 captchaTicket 传入'
   })
   @Public()
+  // verify 有独立限流（30 次/分钟/IP）：每次验证要申请新挑战 + 出图，没有这层的话
+  // 脚本可以高频「取图→瞎拖」撞概率（±3 容差约 4.6% 中奖率，限流后撞不开）
+  @RateLimit({ limit: 30, window: 60, message: '验证尝试过于频繁，请稍后再试' })
   @Post('captcha/verify')
   verifyCaptcha(@Body() dto: VerifyCaptchaDto) {
     return this.captchaService.verify(dto.captchaId, dto.x)
@@ -90,20 +94,14 @@ export class AuthV1Controller {
   @ApiBearerAuth('jwt')
   @ApiOperation({
     summary: '修改当前用户密码（v1）',
-    description: '校验原密码后写入新密码；其他端全部下线，当前会话保留。新密码不能与原密码相同'
+    description: '校验原密码后写入新密码；改密成功后所有端（含当前设备）全部下线，前端应引导重新登录。新密码不能与原密码相同'
   })
   // 限流守卫在认证之前执行，req.user 还不存在，by:'account' 拿不到账号会退化成按 IP；
   // 这里只做防滥用兜底（20 次/5 分钟/IP），真正的安全闸门是「原密码校验」
   @RateLimit({ limit: 20, window: 300, message: '修改密码过于频繁，请稍后再试' })
   @Put('password')
-  async changePassword(
-    @Request() req: { user: { id: string; username: string }; headers: Record<string, string | string[] | undefined> },
-    @Body() dto: ChangePasswordDto
-  ) {
-    const header = req.headers.authorization
-    const raw = Array.isArray(header) ? header[0] : header
-    const token = raw?.split(' ')[1] ?? ''
-    return this.authService.changePassword(req.user.id, dto, token)
+  async changePassword(@Request() req: { user: { id: string; username: string } }, @Body() dto: ChangePasswordDto) {
+    return this.authService.changePassword(req.user.id, dto)
   }
 
   @ApiOperation({
@@ -147,8 +145,8 @@ export class AuthV1Controller {
   @RateLimit({ limit: 10, window: 300, message: '操作过于频繁，请稍后再试' })
   @HttpCode(HttpStatus.OK)
   @Post('2fa/setup')
-  twoFactorSetup(@Request() req: { user: { id: string; username: string } }) {
-    return this.totpService.setup(req.user.id, req.user.username)
+  twoFactorSetup(@Request() req: { user: { id: string; username: string } }, @Body() dto: TwoFactorPasswordDto) {
+    return this.totpService.setup(req.user.id, req.user.username, dto.password)
   }
 
   @ApiBearerAuth('jwt')
@@ -165,8 +163,8 @@ export class AuthV1Controller {
   @RateLimit({ limit: 10, window: 300, message: '验证码尝试过于频繁，请稍后再试' })
   @HttpCode(HttpStatus.OK)
   @Post('2fa/deactivate')
-  twoFactorDeactivate(@Request() req: { user: { id: string } }, @Body() dto: TwoFactorCodeDto) {
-    return this.totpService.deactivate(req.user.id, dto.code)
+  twoFactorDeactivate(@Request() req: { user: { id: string } }, @Body() dto: TwoFactorDeactivateDto) {
+    return this.totpService.deactivate(req.user.id, dto.code, dto.password)
   }
 
   @ApiOperation({ summary: '重新生成备份恢复码', description: '需当前动态码；旧码全部作废，明文只返回一次' })

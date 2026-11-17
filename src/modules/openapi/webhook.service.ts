@@ -1,4 +1,6 @@
 import { createHmac } from 'crypto'
+import { isIP } from 'net'
+import { lookup as dnsLookup } from 'dns/promises'
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import type { Repository } from 'typeorm'
@@ -27,9 +29,75 @@ export interface WebhookWriteInput {
   status?: string
 }
 
-/** 仅 https：签名密钥的验证场景在明文 http 下会被中间人拆掉 */
-function assertHttpsUrl(url: string): void {
-  if (!url.startsWith('https://')) throw new BadRequestException('回调地址必须是 https://')
+/**
+ * 回调地址合法性（含 SSRF 防护）：只允许 https 公网地址。
+ *
+ * 之前只查 `startsWith('https://')` —— 任何人把订阅 URL 填成
+ * `https://169.254.169.254/...`（云元数据）或内网服务地址，就能让服务器替他发内网请求
+ * （响应码还进投递流水，等于一个可以盲扫内网的探针）。现在三层拦截：
+ *  1. 协议必须 https（签名密钥的验证场景在明文 http 下会被中间人拆掉）；
+ *  2. 主机名是 IP 字面量时直接判段（RFC1918 / 环回 / 链路本地 169.254 / CGNAT / 保留段全拒）；
+ *  3. 域名先 DNS 解析，解析结果里有任何一个私网地址就整条拒绝（覆盖多记录域名）。
+ * 注：派发时 fetch 用 redirect: 'manual' 不跟随重定向（3xx 一律按投递失败处理），
+ * 否则公网地址 302 跳内网就把前面的校验绕光了。
+ */
+async function assertPublicCallbackUrl(url: string): Promise<void> {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new BadRequestException('回调地址不是合法的 URL')
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new BadRequestException('回调地址必须是 https://')
+  }
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (hostname === 'localhost' || isPrivateAddress(hostname)) {
+    throw new BadRequestException('回调地址不允许指向内网 / 环回 / 链路本地地址')
+  }
+  if (isIP(hostname)) return
+  let records: Array<{ address: string }>
+  try {
+    records = await dnsLookup(hostname, { all: true, verbatim: true })
+  } catch {
+    throw new BadRequestException('回调域名无法解析，请检查拼写')
+  }
+  if (records.some(record => isPrivateAddress(record.address))) {
+    throw new BadRequestException('回调域名解析到内网 / 保留地址，已拒绝')
+  }
+}
+
+/** IPv4/IPv6 是否属于私网 / 环回 / 链路本地 / 保留段（SSRF 黑名单） */
+function isPrivateAddress(address: string): boolean {
+  const v4 = isIP(address)
+  if (v4 === 4) {
+    const parts = address.split('.').map(Number)
+    const [a, b] = [parts[0]!, parts[1]!]
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) || // CGNAT 100.64/10
+      (a === 169 && b === 254) || // 链路本地（含云元数据 169.254.169.254）
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 192 && b === 0) || // 192.0.0/24 与 192.0.2/24 测试段
+      (a === 198 && (b === 18 || b === 19)) || // 198.18/15 基准测试段
+      a >= 224 // 组播 + 保留段
+    )
+  }
+  if (v4 === 6) {
+    const lower = address.toLowerCase()
+    if (lower.startsWith('::ffff:')) return isPrivateAddress(lower.slice(7)) // IPv4 映射地址
+    if (lower === '::' || lower === '::1') return true // 未指定 / 环回
+    const first = lower.split(':')[0] ?? ''
+    const head = parseInt(first.slice(0, 4) || '0', 16)
+    if ((head & 0xfe00) === 0xfc00) return true // fc00::/7 唯一本地
+    if ((head & 0xffc0) === 0xfe80) return true // fe80::/10 链路本地
+    if ((head & 0xff00) === 0xff00) return true // ff00::/8 组播
+    return head === 0x2001 && (lower.startsWith('2001:db8') || lower.startsWith('2001:db7')) // 文档段
+  }
+  return false
 }
 
 /**
@@ -70,14 +138,17 @@ export class WebhookService {
     return new Pagination(rows, total, page, pageSize)
   }
 
+  /** 单个订阅：严格按归属租户隔离（update/delete/流水/测试派发都从这里过），防跨租户 IDOR */
   async findOne(id: string): Promise<SysWebhookEntity> {
-    const hook = await this.hookRepo.findOne({ where: { id, delFlag: '0' } })
+    const base = { id, delFlag: '0' } as const
+    const tenantId = TenantContext.filterTenantId()
+    const hook = await this.hookRepo.findOne({ where: tenantId === null ? base : { ...base, tenantId } })
     if (!hook) throw new NotFoundException('订阅不存在')
     return hook
   }
 
   async create(input: WebhookWriteInput): Promise<SysWebhookEntity> {
-    assertHttpsUrl(input.url)
+    await assertPublicCallbackUrl(input.url)
     this.assertEvent(input.event)
     const hook = this.hookRepo.create({
       id: randomId32(),
@@ -99,7 +170,7 @@ export class WebhookService {
     await this.findOne(id)
     const patch: Partial<SysWebhookEntity> = { updateTime: new Date() }
     if (input.url !== undefined) {
-      assertHttpsUrl(input.url)
+      await assertPublicCallbackUrl(input.url)
       patch.url = input.url
     }
     if (input.event !== undefined) {
@@ -137,15 +208,31 @@ export class WebhookService {
   /**
    * 派发事件给所有启用的订阅（fire-and-forget，业务侧直接调用不用 await）
    * 没有订阅就一行流水都不写 —— 别让"没人订阅"这件事污染投递日志。
+   *
+   * 租户隔离：业务事件必须带 opts.tenantId（事件主体的归属租户）——
+   * 订阅只收到「自己租户（或平台 tenant_id=0）」的事件，之前是全库广播，
+   * A 租户的用户变更（含姓名）会推给 B 租户填的回调地址。
    */
-  dispatch(event: WebhookEventKey, data: Record<string, unknown>): void {
-    void this.dispatchAsync(event, data)
+  dispatch(event: WebhookEventKey, data: Record<string, unknown>, opts?: { tenantId?: number | null }): void {
+    void this.dispatchAsync(event, data, opts?.tenantId)
   }
 
-  private async dispatchAsync(event: WebhookEventKey, data: Record<string, unknown>): Promise<void> {
+  private async dispatchAsync(event: WebhookEventKey, data: Record<string, unknown>, eventTenantId?: number | null): Promise<void> {
     let hooks: SysWebhookEntity[]
     try {
-      hooks = await this.hookRepo.find({ where: { event, status: '0', delFlag: '0' } })
+      const qb = this.hookRepo
+        .createQueryBuilder('h')
+        .where('h.event = :event', { event })
+        .andWhere('h.status = :status', { status: '0' })
+        .andWhere('h.del_flag = :del', { del: '0' })
+      if (eventTenantId != null && Number(eventTenantId) > 0) {
+        // 本租户的事件：发给归属租户相同的订阅 + 平台级订阅（tenant_id = 0）
+        qb.andWhere('(h.tenant_id = :tid OR h.tenant_id = 0)', { tid: Number(eventTenantId) })
+      } else {
+        // 拿不到归属租户的事件只发平台级订阅，宁缺勿滥
+        qb.andWhere('h.tenant_id = 0')
+      }
+      hooks = await qb.getMany()
     } catch (error) {
       this.logger.warn(`webhook 派发查订阅失败：${error instanceof Error ? error.message : String(error)}`)
       return
@@ -182,6 +269,9 @@ export class WebhookService {
             'User-Agent': 'concise-server-webhook/1.0'
           },
           body,
+          // 不跟随重定向：公网回调 302 跳内网/元数据地址会把地址校验整个绕掉（SSRF），
+          // 3xx 一律按投递失败处理，对接方请直接填最终地址
+          redirect: 'manual',
           signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS)
         })
         lastCode = response.status
@@ -190,7 +280,8 @@ export class WebhookService {
           await this.recordDelivery(hook, event, '0', attempts, lastCode, null, body)
           return
         }
-        lastError = `HTTP ${response.status}`
+        lastError =
+          response.status >= 300 && response.status < 400 ? `HTTP ${response.status}（不允许重定向，请直接填最终回调地址）` : `HTTP ${response.status}`
       } catch (error) {
         lastCode = null
         lastError = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 490) : String(error)

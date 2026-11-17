@@ -124,7 +124,10 @@ export class PasswordResetService {
 
     await this.delRaw(key)
     await this.userService.updatePasswordOnly(user.id, newPassword)
-    this.logger.log(`重置密码成功（userId=${user.id}）`)
+    // 重置成功 = 旧密码可能已泄露：全量下线 + 用户级吊销标记，
+    // 不然攻击者手里的旧 refreshToken 还能继续换新令牌（forgot 链路接管账号的最后一环）
+    await this.userService.forceOffline(user.id)
+    this.logger.log(`重置密码成功（userId=${user.id}），已下线该账号全部会话`)
     return { ok: true }
   }
 

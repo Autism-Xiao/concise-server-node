@@ -271,7 +271,11 @@ export class UserService extends BaseService<UserEntity> {
     })
     const created = (await this.findOneDetail(id)) as UserEntity
     // 开放平台事件：创建成功才发，失败静默（订阅方靠 user.id 幂等）
-    this.webhookService.dispatch('user.created', { id: created.id, username: created.username, realname: created.realname ?? null })
+    this.webhookService.dispatch(
+      'user.created',
+      { id: created.id, username: created.username, realname: created.realname ?? null },
+      { tenantId: this.resolveJoinTenantId() }
+    )
     return created
   }
 
@@ -687,6 +691,15 @@ export class UserService extends BaseService<UserEntity> {
   async updateMyProfile(id: string, dto: UpdateMyProfileDto): Promise<UserEntity> {
     await this.findOne(id) // 不存在 / 已软删 → 404
 
+    // 改邮箱必须验证密码：邮箱是「忘记密码」的收件凭证，只凭会话就能改邮箱的话，
+    // 被盗 token 可以把邮箱换成攻击者的 → 再走 forgot 链路接管整个账号
+    if (dto.email !== undefined && String(dto.email).trim() !== '') {
+      const withPassword = await this.findOneWithPassword(id)
+      if (!withPassword || !dto.password || !(await this.verifyPassword(withPassword, dto.password))) {
+        throw new BizException(BizErrorCode.BUSINESS_ERROR, '修改邮箱需要验证当前密码，请输入密码后重试', HttpStatus.BAD_REQUEST)
+      }
+    }
+
     const patch: Record<string, string | number | null> = {}
     const assignText = (field: 'realname' | 'email' | 'phone' | 'telephone' | 'bio', value?: string | null) => {
       if (value === undefined) return
@@ -743,13 +756,28 @@ export class UserService extends BaseService<UserEntity> {
     }
   }
 
-  /** 单查覆盖：过滤已软删用户 */
+  /** 单查覆盖：过滤已软删用户；**写路径语义** —— 租户视角只能命中本租户（sys_user_tenant 有归属记录）的账号 */
   async findOne(id: string): Promise<UserEntity> {
-    const user = await this.repository.findOne({ where: { id, delFlag: 0 } })
+    // 严格租户条件（applyTenantToUsers）：平台视角不过滤。之前这里不带租户条件，
+    // update/delete/resetPassword/setStatus/批量全部先走 findOne 再按 id 写 ——
+    // 租户管理员拿任意 id 就能接管别家租户的账号（跨租户用户接管链）。
+    const qb = this.repository.createQueryBuilder('user').where('user.id = :id', { id }).andWhere('user.del_flag = 0')
+    this.applyTenantToUsers(qb)
+    const user = await qb.getOne()
     if (!user) {
       throw new NotFoundException('用户不存在')
     }
     return user
+  }
+
+  /**
+   * 批量按 id 取「本租户可写」的账号（与 findOne 同语义）：给批量操作的 find 用。
+   * 租户视角严格只命中 sys_user_tenant 有归属记录的账号；平台视角（null）不过滤。
+   */
+  private async findWritableByIds(ids: string[]): Promise<UserEntity[]> {
+    const qb = this.repository.createQueryBuilder('user').where('user.id IN (:...ids)', { ids }).andWhere('user.del_flag = 0')
+    this.applyTenantToUsers(qb)
+    return qb.getMany()
   }
 
   /** 按 id 查找并带出角色（过滤已软删） */
@@ -907,12 +935,14 @@ export class UserService extends BaseService<UserEntity> {
     // 删号即失效：缓存里若还留着这个人，鉴权会继续放行到下次过期
     this.authUserCache.invalidate(id)
     // 开放平台事件：软删也通知（订阅方一般用于同步通讯录/回收站）
-    this.webhookService.dispatch('user.deleted', { id, username: user.username })
+    // 事件归属租户：取被删账号在 sys_user_tenant 的主归属（拿不到就按 0 平台事件，只发平台级订阅）
+    const tenantRows = await this.repository.query('SELECT tenant_id FROM `sys_user_tenant` WHERE user_id = ? AND status = 0 ORDER BY id LIMIT 1', [user.id])
+    this.webhookService.dispatch('user.deleted', { id, username: user.username }, { tenantId: Number(tenantRows?.[0]?.tenant_id ?? 0) })
   }
 
   /** 批量删除用户：逐条走 delete，保留「内置管理员不可删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
-    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: 0 } })
+    const targets = await this.findWritableByIds(normalizeBatchIds(ids))
     return runBatchDelete(
       targets,
       {
@@ -1063,7 +1093,7 @@ export class UserService extends BaseService<UserEntity> {
     status: number,
     reason?: string
   ): Promise<{ updated: number; kicked: number; skipped: Array<{ id: string; username: string; reason: string }> }> {
-    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: 0 } })
+    const targets = await this.findWritableByIds(normalizeBatchIds(ids))
     const foundIds = new Set(targets.map(user => user.id))
     const skipped: Array<{ id: string; username: string; reason: string }> = ids
       .filter(id => !foundIds.has(id))
@@ -1092,7 +1122,23 @@ export class UserService extends BaseService<UserEntity> {
       const found = new Set(roles.map(role => role.id))
       throw new BizException(BizErrorCode.BUSINESS_ERROR, `角色不存在：${uniqueIds.filter(roleId => !found.has(roleId)).join(',')}`)
     }
-    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: 0 } })
+    // 与 assignRoles 同源的角色租户边界：批量入口之前漏了这层校验，
+    // 租户管理员可以把别家租户的角色批量绑给自己的人（等于跨租户拿权限）
+    const currentTenant = TenantContext.filterTenantId()
+    if (currentTenant !== null) {
+      const illegal = roles.filter(role => {
+        const owner = Number(role.tenantId ?? 0)
+        return owner !== 0 && owner !== currentTenant
+      })
+      if (illegal.length) {
+        throw new BizException(
+          BizErrorCode.TENANT_ROLE_BOUNDARY,
+          `角色「${illegal.map(role => role.roleName ?? role.roleCode).join('、')}」不属于当前租户，不能分配`,
+          HttpStatus.BAD_REQUEST
+        )
+      }
+    }
+    const targets = await this.findWritableByIds(normalizeBatchIds(ids))
     await this.runInTransaction(async manager => {
       for (const user of targets) {
         await this.assignRoles(user.id, roleIds, manager)

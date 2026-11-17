@@ -202,6 +202,28 @@ export class OnlineService {
     }
   }
 
+  /**
+   * 用户级下线标记是否早于令牌签发时间（refreshToken 续命链路的专用检查）。
+   *
+   * 为什么必须有它：refreshToken 换新令牌走的是 `getRevocation`（只查令牌级黑名单），
+   * 而用户级吊销（改密/重置密码/冻结时 kickUser 全量写入）只挂在 JwtStrategy 的
+   * isSessionInvalid 上 —— 结果是旧 accessToken 死了，旧 refreshToken 却还能换出新令牌，
+   * 「重置密码踢下线」对持有 refreshToken 的设备形同虚设。
+   */
+  async isUserRevokedSince(userId: string, issuedAtSeconds?: number): Promise<boolean> {
+    const client = this.client()
+    if (!client || !issuedAtSeconds) return false
+    try {
+      const value = await client.get(USER_REVOKED_PREFIX + userId)
+      if (value === null) return false
+      const at = Number(value)
+      return Number.isFinite(at) && issuedAtSeconds * 1000 < at
+    } catch (error) {
+      this.warnOnce(`用户级下线状态查询失败：${(error as Error).message}`)
+      return false
+    }
+  }
+
   /** 在线用户列表（Redis SCAN 后按关键字过滤、按登录时间倒序、内存分页） */
   async list(query: QueryOnlineDto): Promise<Pagination<OnlineSession>> {
     const client = this.client()

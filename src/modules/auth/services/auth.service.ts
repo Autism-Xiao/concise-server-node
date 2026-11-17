@@ -337,6 +337,14 @@ export class AuthService {
       throw new BizException(BizErrorCode.REFRESH_TOKEN_INVALID, '登录状态已失效，请重新登录', HttpStatus.UNAUTHORIZED)
     }
 
+    // 用户级吊销（改密/重置密码/冻结时 kickUser 全量写入的标记）：签发时间早于吊销时刻的
+    // refreshToken 一并作废。之前只查令牌级黑名单 —— 管理员重置密码后，其他设备的
+    // refreshToken 还能继续换新令牌续命 7 天，「踢下线」对它们形同虚设。
+    const issuedAt = (payload as JwtPayload & { iat?: number }).iat
+    if (await this.onlineService.isUserRevokedSince(String(payload.id), issuedAt)) {
+      throw new BizException(BizErrorCode.REFRESH_TOKEN_INVALID, '登录状态已失效，请重新登录', HttpStatus.UNAUTHORIZED)
+    }
+
     // 认证专用查询：refresh 请求无 accessToken，租户上下文是 0，走 findOneDetail 会被可见性断言误杀
     const user = await this.userService.findOneDetailForAuth(String(payload.id))
     const result = await this.issueTokens(user)
@@ -367,10 +375,12 @@ export class AuthService {
   }
 
   /**
-   * 自助修改密码：验旧密码 → 写新密码 → 其他端全部下线（保留当前会话）
-   * 为什么踢下线：密码改了意味着「旧凭证可能已泄露」，别的登录态不能续命
+   * 自助修改密码：验旧密码 → 写新密码 → **全部端下线（含当前设备）**
+   * 为什么不保留当前会话：之前 kickUser(keepToken) 只踢「已登记的会话」，其他端手里的
+   * refreshToken 不经过会话黑名单，7 天内照样能刷新续命 —— 改密等于没改。
+   * 现在全量下线 + 用户级吊销标记（refreshToken 轮换时会校验），前端改密成功后引导重新登录。
    */
-  async changePassword(userId: string, dto: { oldPassword: string; newPassword: string }, currentToken: string): Promise<{ changed: true }> {
+  async changePassword(userId: string, dto: { oldPassword: string; newPassword: string }): Promise<{ changed: true }> {
     const user = await this.userService.findOneWithPassword(userId)
     if (!user || user.delFlag === 1) {
       throw new BizException(BizErrorCode.UNAUTHORIZED, '账号不存在', HttpStatus.UNAUTHORIZED)
@@ -386,7 +396,8 @@ export class AuthService {
     await this.userService.updatePasswordOnly(userId, dto.newPassword)
     // 自助改密成功：解除「下次登录强制改密」与密码过期标记（新有效期由管理员另行设置）
     await this.userService.clearPasswordFlags(userId)
-    await this.onlineService.kickUser(userId, { keepToken: currentToken })
+    // 全量下线：踢会话 + 拉 refreshToken 黑名单 + 写用户级吊销标记（旧 accessToken 立即 401）
+    await this.onlineService.kickUser(userId)
     return { changed: true }
   }
 

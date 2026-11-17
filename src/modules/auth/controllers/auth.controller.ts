@@ -27,8 +27,10 @@ export class AuthController {
     return this.captchaService.create()
   }
 
-  @ApiOperation({ summary: '校验滑块位置', description: '误差 ±5px 内通过，返回一次性 ticket，登录时作为 captchaTicket 传入' })
+  @ApiOperation({ summary: '校验滑块位置', description: '误差 ±3px 内通过，返回一次性 ticket，登录时作为 captchaTicket 传入' })
   @Public()
+  // 与 v1 同源：verify 独立限流，防「取图→瞎拖」高频撞概率
+  @RateLimit({ limit: 30, window: 60, message: '验证尝试过于频繁，请稍后再试' })
   @Post('captcha/verify')
   verifyCaptcha(@Body() dto: VerifyCaptchaDto) {
     return this.captchaService.verify(dto.captchaId, dto.x)
