@@ -38,6 +38,8 @@ export interface OperLogInput {
   elapsed: number
   /** 归属租户：0 表示平台视角下的操作（仅平台管理员可见） */
   tenantId?: number
+  /** 代维标记：不传时按 TenantContext.isProxy() 自动推导 */
+  isProxy?: number
 }
 
 /** 无租户归属时的兜底租户（默认租户） */
@@ -111,13 +113,18 @@ export class LogService {
     }
   }
 
-  /** 记录一次写操作；log_content 记「模块 - 动作」 */
+  /** 记录一次写操作；log_content 记「模块 - 动作」
+   *
+   * 代维标记自动推导：平台管理员切在具体租户里（TenantContext.isProxy()）→ is_proxy=1；
+   * 调用方显式传入 isProxy 时以传入值为准（如平台视角审计的 GET 记录）。
+   */
   async recordOper(input: OperLogInput): Promise<void> {
     try {
       await this.logRepository.save(
         this.logRepository.create({
           id: randomId32(),
           tenantId: input.tenantId ?? TenantContext.currentTenantId() ?? 0,
+          isProxy: input.isProxy ?? (TenantContext.isProxy() ? 1 : 0),
           logContent: `${input.module} - ${input.action}`.slice(0, 1000),
           logType: 1,
           operateType: input.operateType,

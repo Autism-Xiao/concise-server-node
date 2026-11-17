@@ -244,6 +244,20 @@ export class RoleService extends BaseService<RoleEntity> {
         throw new BadRequestException(`「${platformNode.name}」是平台级菜单，仅平台管理员可授权`)
       }
     }
+    // 功能套餐上限：租户角色只能授「已开通给该租户」的菜单（平台管理员编辑租户角色同样受限——
+    // 想加菜单先调 PUT /v1/tenants/:id/menus 扩套餐）。套餐来自 sys_tenant_menu（开通/初始化租户时写入）；
+    // 平台级角色（tenant_id=0/null）无套餐概念。这是「租户管理员偷偷给自己加未购买功能」的最后一道闸。
+    const roleTenantId = Number(role.tenantId ?? 0)
+    if (roleTenantId > 0) {
+      const packageRows = await roleRepo.manager.query<Array<{ pid: string }>>('SELECT permission_id AS pid FROM sys_tenant_menu WHERE tenant_id = ?', [
+        roleTenantId
+      ])
+      const packageIds = new Set(packageRows.map(row => row.pid))
+      const outside = menus.filter(menu => !packageIds.has(menu.id))
+      if (outside.length) {
+        throw new BadRequestException(`「${outside[0].name}」未开通给该租户，请先由平台管理员调整功能套餐`)
+      }
+    }
     const nextIds = new Set(menuIds)
     const current = await roleRepo.createQueryBuilder().relation(RoleEntity, 'permissions').of(id).loadMany<MenuEntity>()
     const currentIds = new Set(current.map(menu => menu.id))

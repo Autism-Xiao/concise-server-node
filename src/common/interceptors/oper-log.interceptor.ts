@@ -6,13 +6,26 @@ import { catchError, concatMap, mergeMap } from 'rxjs/operators'
 
 import { OPER_LOG_KEY } from '../decorators/oper-log.decorator'
 import { LogService } from '../../modules/system/log/log.service'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 
 /** 需要记录操作日志的 HTTP 方法 → operate_type（2 添加 / 3 更新 / 4 删除） */
 const METHOD_OPERATE_TYPE: Record<string, number> = { POST: 2, PUT: 3, PATCH: 3, DELETE: 4 }
-/** 不记录操作日志的路径（登录/刷新由登录日志单独记录） */
-const SKIPPED_PATHS = ['/auth/login', '/auth/refresh']
+/**
+ * 不记录操作日志的路径：登录/刷新由登录日志单独记录；
+ * 切换租户由 TenantService.switch 写语义化日志（「切换租户 → #19」「→ 平台视角」），
+ * 走拦截器只会多一条看不懂的「TenantV1 - POST /api/v1/tenants/switch」。
+ */
+const SKIPPED_PATHS = ['/auth/login', '/auth/refresh', '/tenants/switch']
 /** 参数序列化的最大长度，超出截断 */
 const MAX_PARAMS_LENGTH = 2000
+
+/**
+ * 平台视角审计路径：平台管理员在「平台视角」（tenant_id=0）下读取这些业务数据时强制留痕。
+ * 规范要求：平台超管看不到租户业务数据，除非代维并留审计——平台视角看全量数据本身就是
+ * 敏感动作，读取也必须可追溯。写入型请求本来就全量落日志（tenant_id=0 已天然隔离），
+ * 这里只补 GET 的空档。
+ */
+const PLATFORM_VIEW_AUDIT_PATHS = ['/v1/biz_order', '/v1/customer', '/v1/supplier', '/v1/tasks', '/v1/notices', '/v1/messages', '/v1/files']
 
 /** 递归脱敏：密码类字段的值替换为 *** */
 function sanitize(value: unknown): unknown {
@@ -62,15 +75,44 @@ export class OperLogInterceptor implements NestInterceptor {
     const method = request.method.toUpperCase()
 
     const operateType = METHOD_OPERATE_TYPE[method]
-    if (!operateType) {
-      return next.handle()
-    }
     if (SKIPPED_PATHS.some(path => request.path.includes(path))) {
       return next.handle()
     }
 
     const user = (request as Request & { user?: { id?: string; username?: string } }).user
     if (!user?.id) {
+      return next.handle()
+    }
+
+    // 平台视角读业务数据：平台管理员未切租户（tenant_id=0）时访问业务模块的 GET 强制审计
+    if (!operateType && method === 'GET' && TenantContext.isSuper() && TenantContext.currentTenantId() === null) {
+      const audited = PLATFORM_VIEW_AUDIT_PATHS.find(path => request.path.includes(path))
+      if (audited) {
+        const startedAt = Date.now()
+        const action = `${method} ${request.path}`
+        const params = JSON.stringify({ query: sanitize(request.query) }).slice(0, MAX_PARAMS_LENGTH)
+        return next.handle().pipe(
+          concatMap(async (data: unknown) => {
+            await this.logService.recordOper({
+              userId: user.id,
+              username: user.username,
+              module: '平台视角审计',
+              action: `平台视角查看业务数据 - ${action}`,
+              operateType: 1,
+              ip: request.ip ?? '',
+              params,
+              tenantId: 0,
+              isProxy: 1,
+              status: 0,
+              elapsed: Date.now() - startedAt
+            })
+            return data
+          })
+        )
+      }
+    }
+
+    if (!operateType) {
       return next.handle()
     }
 

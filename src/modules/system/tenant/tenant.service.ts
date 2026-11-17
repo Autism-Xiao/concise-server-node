@@ -21,6 +21,7 @@ import { UpdateTenantDto } from './dto/update-tenant.dto'
 import { TenantEntity } from './entities/tenant.entity'
 import { UserTenantEntity } from './entities/user-tenant.entity'
 import { TenantProvisionService } from './tenant-provision.service'
+import { LogService } from '../log/log.service'
 
 /** 租户下的用户（只暴露安全字段，密码/盐不出现在这里） */
 export interface TenantUserItem {
@@ -59,7 +60,8 @@ export class TenantService {
     private readonly provision: TenantProvisionService,
     private readonly permissionCache: PermissionCacheService,
     private readonly config: SystemConfigService,
-    private readonly userService: UserService
+    private readonly userService: UserService,
+    private readonly logService: LogService
   ) {}
 
   /** 分页列表（租户是平台级数据，不参与租户隔离） */
@@ -352,8 +354,13 @@ export class TenantService {
     return rows.map(row => ({ ...row, id: Number(row.id), status: Number(row.status) }))
   }
 
-  /** 切换当前租户：校验归属后记住选择，后续请求由请求头生效 */
-  async switch(userId: string, tenantId: number): Promise<{ tenantId: number | null }> {
+  /**
+   * 切换当前租户：校验归属后记住选择，后续请求由请求头生效
+   *
+   * 代维审计：切换动作写 sys_log（operateType=3）。平台管理员切进任意租户属于「代维」，
+   * 切到平台视角（0）则记录为 tenant_id=0 的平台级日志，仅平台管理员可见。
+   */
+  async switch(userId: string, tenantId: number, username?: string): Promise<{ tenantId: number | null }> {
     // 0 = 回到平台视角（不过滤），只对超管开放
     if (tenantId <= 0) {
       const membership = await this.tenantAccess.loadMembership(userId)
@@ -361,11 +368,33 @@ export class TenantService {
         throw new BadRequestException('只有平台管理员可以切换到平台视角')
       }
       await this.dataSource.query('UPDATE sys_user SET login_tenant_id = NULL WHERE id = ?', [userId])
+      await this.logService.recordOper({
+        userId,
+        username,
+        module: '租户管理',
+        action: `切换租户 → 平台视角（不过滤，可看全部租户数据）`,
+        operateType: 3,
+        ip: '-',
+        tenantId: 0,
+        status: 0,
+        elapsed: 0
+      })
       return { tenantId: null }
     }
     const resolved = await this.tenantAccess.resolveTenant(userId, tenantId)
     // 记住选择，下次不带请求头时用它做默认
     await this.dataSource.query('UPDATE sys_user SET login_tenant_id = ? WHERE id = ?', [tenantId, userId])
+    await this.logService.recordOper({
+      userId,
+      username,
+      module: '租户管理',
+      action: `切换租户 → #${tenantId}${resolved.tenantId === tenantId ? '' : `（解析为 #${resolved.tenantId}）`}`,
+      operateType: 3,
+      ip: '-',
+      tenantId: resolved.tenantId ?? 0,
+      status: 0,
+      elapsed: 0
+    })
     return { tenantId: resolved.tenantId }
   }
 

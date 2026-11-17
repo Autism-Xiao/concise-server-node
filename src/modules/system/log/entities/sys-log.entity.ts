@@ -24,6 +24,14 @@ export class SysLogEntity {
   @Column({ type: 'int', default: 0, name: 'tenant_id', comment: '租户ID(0=平台级操作)' })
   tenantId: number
 
+  /**
+   * 平台管理员代维标记：1 = 该操作由平台管理员在租户内（或平台视角查业务数据时）做出。
+   * 租户自己的操作恒为 0；租户侧日志列表据此展示「代维」徽标。
+   */
+  @ApiProperty({ description: '平台管理员代维标记（1=代维/平台视角审计）', example: 0, enum: [0, 1] })
+  @Column({ type: 'tinyint', default: 0, name: 'is_proxy', comment: '平台管理员代维标记(1=代维/平台视角操作)' })
+  isProxy: number
+
   @ApiPropertyOptional({ description: '定时任务 ID', nullable: true })
   @Column({ type: 'varchar', length: 32, nullable: true, comment: '定时任务id' })
   jobId?: string

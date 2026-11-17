@@ -1,4 +1,6 @@
 import { Injectable, Inject, HttpException, HttpStatus, Logger } from '@nestjs/common'
+import { InjectDataSource } from '@nestjs/typeorm'
+import { DataSource } from 'typeorm'
 import { JwtService } from '@nestjs/jwt'
 import { randomUUID } from 'node:crypto'
 
@@ -128,6 +130,9 @@ export class AuthService {
     private readonly menuService: MenuService,
     private readonly onlineService: OnlineService,
     private readonly rateLimitService: RateLimitService,
+    // 套餐交集查询（sys_tenant_menu）：只读 DataSource，不走 forFeature
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     // 备份码兜底校验：TOTP 不通过时允许用一次性备份码登录
     private readonly totpService: TotpService
   ) {}
@@ -280,6 +285,21 @@ export class AuthService {
       return { roles, permissions: ['*'], menus: withHomeMenu(buildMenuTree(allMenus, null), allMenus) }
     }
 
+    // 功能套餐交集：租户用户可见的菜单 ⊆ 该租户已开通菜单（sys_tenant_menu）。
+    // 与 RoleService.assignMenus 的写入端校验构成双保险——就算关联表里有超套餐的脏授权，
+    // 也不会出现在侧边栏、不下发权限码。套餐行缺失时按未受限处理（升级窗口兜底，避免把租户锁死）。
+    let scopedMenus = allMenus
+    const currentTenantId = TenantContext.currentTenantId()
+    if (currentTenantId !== null && currentTenantId > 0) {
+      const packageRows = await this.dataSource.query<Array<{ pid: string }>>('SELECT permission_id AS pid FROM sys_tenant_menu WHERE tenant_id = ?', [
+        currentTenantId
+      ])
+      if (packageRows.length > 0) {
+        const packageIds = new Set(packageRows.map((row: { pid: string }) => row.pid))
+        scopedMenus = allMenus.filter(menu => packageIds.has(menu.id))
+      }
+    }
+
     // 非超管：汇总各角色授权的菜单/按钮 id
     const allowedIds = new Set<string>()
     for (const role of enabledRoles) {
@@ -290,11 +310,11 @@ export class AuthService {
 
     // 权限码：菜单节点（决定能否进页面/调列表接口）与按钮节点（决定能否增删改）都算；
     // 只用 allowedIds 判定，祖先补齐出来的目录不授予权限码
-    const permissions = [...new Set(allMenus.filter(menu => allowedIds.has(menu.id)).flatMap(menu => (menu.perms ? [menu.perms] : [])))]
+    const permissions = [...new Set(scopedMenus.filter(menu => allowedIds.has(menu.id)).flatMap(menu => (menu.perms ? [menu.perms] : [])))]
 
     // 菜单树：授权节点 + 补齐祖先链（子菜单可见则父级目录必须可见），按钮节点不进树
     const keepIds = new Set<string>()
-    for (const menu of allMenus) {
+    for (const menu of scopedMenus) {
       if (menu.menuType === 2 || !allowedIds.has(menu.id)) continue
       let current: MenuEntity | undefined = menu
       while (current) {
@@ -303,7 +323,7 @@ export class AuthService {
       }
     }
     const menus = buildMenuTree(
-      allMenus.filter(menu => menu.menuType !== 2 && keepIds.has(menu.id)),
+      scopedMenus.filter(menu => menu.menuType !== 2 && keepIds.has(menu.id)),
       null
     )
 

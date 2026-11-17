@@ -47,6 +47,15 @@ export const TenantContext = {
     return storage.getStore()?.isSuper ?? false
   },
 
+  /**
+   * 是否「代维」：平台管理员切进了某个具体租户（isSuper && tenantId > 0）。
+   * 操作日志据此打代维标记；平台视角（tenantId = null）不算代维，由审计单独留痕。
+   */
+  isProxy(): boolean {
+    const store = storage.getStore()
+    return !!store && store.isSuper && (store.tenantId ?? 0) > 0
+  },
+
   userId(): string | undefined {
     return storage.getStore()?.userId
   },

@@ -23,6 +23,10 @@ export interface TenantProvisionRoleResult {
 export interface TenantProvisionResult {
   tenantId: number
   roles: TenantProvisionRoleResult[]
+  /** 本租户的套餐菜单总数（sys_tenant_menu 行数口径：开通时角色应得菜单的并集） */
+  packageTotal: number
+  /** 本次套餐新增的菜单数（幂等重跑时为 0；>0 时调用方必须失效鉴权用户缓存） */
+  packageAdded: number
 }
 
 export interface TenantProvisionAllResult {
@@ -103,6 +107,10 @@ export class TenantProvisionService {
     const roles: TenantProvisionRoleResult[] = []
     // 排除集合按档位算一次：三个模板角色共用同一棵树
     const blockedByLevel = new Map<string, Set<string>>()
+    // 套餐 = 三个模板角色应得菜单的并集（admin 档是超集，实际等于 admin 的 targetIds）；
+    // 只增不减：INSERT IGNORE，平台新增租户级菜单后重跑 provision 会自动扩容
+    const packageIds = new Set<string>()
+    let packageAddedTotal = 0
 
     for (const template of TENANT_ROLE_TEMPLATES) {
       let roleId = existing.get(template.roleCode)
@@ -120,11 +128,37 @@ export class TenantProvisionService {
       // 两轮过滤：先按档位排除模块，再剔除「子节点全被排掉」的目录（否则侧边栏留一个点进去 404 的分组）
       const accepted = menuRows.filter(menu => !blocked.has(menu.id) && acceptsByLevel(template.level, menu.perms))
       const targetIds = [...pruneEmptyDirs(new Set(accepted.map(menu => menu.id)), menuRows)]
+      for (const id of targetIds) packageIds.add(id)
       const added = await this.grant(manager, roleId, targetIds)
       roles.push({ roleCode: template.roleCode, roleId, created, added, total: targetIds.length })
     }
 
-    return { tenantId, roles }
+    packageAddedTotal += await this.upsertPackage(manager, tenantId, packageIds)
+
+    return { tenantId, roles, packageTotal: packageIds.size, packageAdded: packageAddedTotal }
+  }
+
+  /**
+   * 套餐只增不减：与既有 sys_tenant_menu 行取并集后落库
+   *
+   * 注意不能全量覆盖——平台管理员可能已经收窄过套餐（PUT /v1/tenants/:id/menus），
+   * 重跑 provision（补角色/补新菜单）不该把套餐偷偷放大回全量。
+   */
+  private async upsertPackage(manager: EntityManager, tenantId: number, menuIds: Set<string>): Promise<number> {
+    const ownedRows = await manager.query<Array<{ pid: string }>>('SELECT permission_id AS pid FROM sys_tenant_menu WHERE tenant_id = ?', [tenantId])
+    const owned = new Set(ownedRows.map(row => row.pid))
+    const toAdd = [...menuIds].filter(id => !owned.has(id))
+    if (!toAdd.length) return 0
+
+    for (let index = 0; index < toAdd.length; index += GRANT_CHUNK) {
+      const chunk = toAdd.slice(index, index + GRANT_CHUNK)
+      const placeholders = chunk.map(() => '(?, ?, ?, NOW())').join(', ')
+      await manager.query(
+        `INSERT IGNORE INTO sys_tenant_menu (id, tenant_id, permission_id, create_time) VALUES ${placeholders}`,
+        chunk.flatMap(id => [randomId32(), tenantId, id])
+      )
+    }
+    return toAdd.length
   }
 
   /** 租户级有效菜单（platform 级的绝不能进租户角色，见 tenant-role-template.ts 注释） */
@@ -172,6 +206,10 @@ export class TenantProvisionService {
       for (const role of result.roles) {
         if (!role.created && role.added === 0) continue
         await this.permissionCache.invalidateRole(role.roleId)
+        changed = true
+      }
+      // 套餐扩容会改变登录菜单树的交集结果，鉴权用户缓存同样要失效
+      if (result.packageAdded > 0) {
         changed = true
       }
     }

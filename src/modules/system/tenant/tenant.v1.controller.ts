@@ -11,8 +11,10 @@ import { AssignUsersDto, QueryTenantUserDto, SwitchTenantDto } from './dto/tenan
 import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto'
 import { CreateTenantDto } from './dto/create-tenant.dto'
 import { QueryTenantDto } from './dto/query-tenant.dto'
+import { SetTenantPackageDto } from './dto/set-tenant-package.dto'
 import { UpdateTenantDto } from './dto/update-tenant.dto'
 import { TenantEntity } from './entities/tenant.entity'
+import { TenantPackageService } from './tenant-package.service'
 import { TenantProvisionService } from './tenant-provision.service'
 import { TenantService } from './tenant.service'
 
@@ -32,7 +34,8 @@ interface AuthedRequest extends Request {
 export class TenantV1Controller {
   constructor(
     private readonly tenantService: TenantService,
-    private readonly provisionService: TenantProvisionService
+    private readonly provisionService: TenantProvisionService,
+    private readonly packageService: TenantPackageService
   ) {}
 
   @ApiOperation({ summary: '租户列表（分页）', description: 'keyword 模糊匹配名称/编码/联系人；需 system:tenant:list' })
@@ -52,7 +55,28 @@ export class TenantV1Controller {
   @ApiOperation({ summary: '切换当前租户', description: '校验归属后记住选择；后续请求用 X-Tenant-Id 请求头生效' })
   @Post('switch')
   switch(@Req() req: AuthedRequest, @Body() dto: SwitchTenantDto) {
-    return this.tenantService.switch(req.user!.id, dto.tenantId)
+    return this.tenantService.switch(req.user!.id, dto.tenantId, req.user?.username)
+  }
+
+  @ApiOperation({
+    summary: '租户功能套餐详情',
+    description: '已开通菜单 id 集合 + 可勾选的租户级菜单树（功能套餐弹窗回显）；需 system:tenant:list'
+  })
+  @Get(':id/menus')
+  @Perms('system:tenant:list')
+  getPackage(@Param('id', ParseIntPipe) id: number) {
+    return this.packageService.getPackageDetail(id)
+  }
+
+  @ApiOperation({
+    summary: '全量重设租户功能套餐',
+    description: 'menuIds 为完整勾选列表（租户级菜单+按钮，空数组即清空）；收窄不回收角色既有授权，读取端按交集生效；需 system:tenant:edit'
+  })
+  @Put(':id/menus')
+  @Perms('system:tenant:edit')
+  @OperLog('租户管理')
+  setPackage(@Param('id', ParseIntPipe) id: number, @Body() dto: SetTenantPackageDto) {
+    return this.packageService.setPackage(id, dto.menuIds)
   }
 
   @ApiOperation({
