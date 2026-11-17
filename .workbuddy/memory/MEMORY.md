@@ -34,6 +34,7 @@
 - **数据权限**：`sys_role.data_scope` 走 `UserService.countScoped`；`scope === ALL(1)` 必须直接放行（漏了会 `1=0` 一条查不到）。首页 `GET /v1/dashboard/overview` 不挂 `@Perms`，**无权限的块返回 null 不是 0**，降级块带 `scope:'all'|'self'`；前端只判 null 不判权限。
 - **水印**：`resolveWatermarkState` 是唯一判定入口（off > enforced=2 > enforced=1 > forced > 用户??全局）；用户侧只能改 enabled/content/density，样式参数仅全局可改。
 - **界面设置上云**：`sys_user_setting`（**故意无 tenant_id**）+ `GET|PUT /v1/users/me/settings`；白名单唯一入口 `user-setting.util.ts`，**加设置项必须同步改**；库里只存差异（`stripDefaultSettings`）；前端 `lib/settings.ts` 不能用 `getApiResult`（401 会踢登录页）。
+- **参数配置（租户两级，2026-11-17）**：`sys_config` 有 `tenant_id`（0=平台级）+ `allow_tenant`（1=租户可覆盖），唯一键 `(tenant_id, config_key)`。读取回退链：租户覆盖行 → 平台行 → 代码 `DEFAULTS`；缓存键 `${tenantId}::${key}`，**任何写入后整表清缓存**（逐键失效会漏平台行变更对租户回退的影响）。租户只能写 allow_tenant=1 的键（首次写入按平台行元数据生成覆盖行），`DELETE /v1/configs/override?configKey=` 取消覆盖。开放参数给租户 = 把该行 allow_tenant 置 1，零代码。
 - **数据库约定**：新表显式 `COLLATE=utf8mb4_unicode_ci`（sys_user 是 unicode_ci，默认 0900_ai_ci JOIN 会炸）；`@Column({length})` 可空要显式 `type:'varchar'`（否则推断成 Object）；`Pagination` 无链式方法，列表一律 `toPagination()`，数据源类（tree/options/code）才返数组。
 - **前端弹框规约**（concise-admin）：DialogContent 默认固定头尾（自动分拣 Header/Footer），Footer 必须是 DialogContent 直接子元素——写进 `<form>` 会被划进滚动区；表单写法 `form id="x-form"` + 提交按钮 `form="x-form"`；自绘满幅布局传 `layout="free"`。互斥少选项切换用 `ui/segmented.tsx`。
 
@@ -50,3 +51,4 @@
 - 任务 `assignee_id` 已迁 varchar；`GET /v1/tasks/mine` 刻意不加租户隔离。
 - 可选：字典/公告/任务按钮权限录入菜单、操作日志导出。~~验证码接 Redis~~ **已实现**（challenge/ticket 走 Redis MULTI GET+DEL 一次性，支持多实例）；sys_log 时间索引也已齐全，勿再当优化项。
 - 设计未落地：「个人权限可监管别的部门」→ 建议新表 `sys_user_supervise_dept`，`applyDataScope` 合并 own ∪ supervise（用户中断未确认，未开发）。
+- 说明书挂账（未做）：套餐/配额体系、代维审计标记；参数配置租户级已完成默认版（参数页「已覆盖/跟随平台」标签+取消覆盖按钮、平台查看各租户覆盖列表属可选前端增强）。

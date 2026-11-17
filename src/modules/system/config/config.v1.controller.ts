@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Post, Put, Query } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
@@ -49,5 +49,17 @@ export class ConfigV1Controller {
   async reload() {
     await this.configService.reload()
     return { reloaded: true }
+  }
+
+  @ApiOperation({
+    summary: '取消租户覆盖',
+    description: '需 system:config:update；仅租户视角——删除本租户的覆盖行，恢复跟随平台默认值'
+  })
+  @Perms('system:config:update')
+  @OperLog('系统参数')
+  @Delete('override')
+  async resetOverride(@Query('configKey') configKey: string) {
+    await this.configService.resetOverride(configKey)
+    return { reset: true }
   }
 }

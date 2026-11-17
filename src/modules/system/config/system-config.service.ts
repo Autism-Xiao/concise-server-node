@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository } from 'typeorm'
+import { EntityManager, Repository } from 'typeorm'
+import { isDuplicateEntryError } from '../../../utils/db-error.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import type { BatchUpdateConfigDto, UpdateConfigItemDto } from './dto/config.dto'
 import { SysConfigEntity } from './entities/sys-config.entity'
 
@@ -32,21 +34,34 @@ const DEFAULTS: Record<string, string> = {
   // 邮件通道：SMTP 连接信息走环境变量（MAIL_SMTP_*），这里只有开关与展示项
   'mail.enabled': 'false',
   'mail.from': '',
-  'mail.resetCode.ttlMinutes': '5'
+  'mail.resetCode.ttlMinutes': '5',
+  // 租户级参数（allow_tenant=1，租户覆盖为空串等同跟随平台）
+  'tenant.ui.themeColor': '',
+  'tenant.login.welcomeText': ''
 }
 
 /** 进程内缓存有效期（毫秒）：多实例部署时，别处改的值最多这么久后本实例生效 */
 const CACHE_TTL_MS = 30_000
 
 /**
- * 系统参数配置服务
+ * 系统参数配置服务（租户两级）
  *
- * 读取路径：进程缓存（30s）→ 数据库 → 代码默认值，三级兜底。
- * 写入后会立即清空本地缓存，但其他实例要等 TTL 过期（参数类配置对此不敏感）。
+ * 读取回退链：租户覆盖行（tenant_id=本租户）→ 平台行（tenant_id=0）→ 代码默认值 → 调用方 fallback。
+ * 平台视角（tenantId=null/0）读写都落在平台行；租户视角只能改 allow_tenant=1 的参数，
+ * 首次写入会按平台行的元数据生成一条租户覆盖行（联合唯一 (tenant_id, config_key) 兜底）。
  */
+/** 写目标：平台行必查（键元数据来源），租户视角额外定位已有覆盖行 */
+interface WriteTarget {
+  /** 生效租户：0=平台视角，>0=租户视角 */
+  tenantId: number
+  platformRow: SysConfigEntity
+  tenantRow: SysConfigEntity | null
+}
+
 @Injectable()
 export class SystemConfigService {
   private readonly logger = new Logger(SystemConfigService.name)
+  /** 缓存键 = `${tenantId}::${configKey}`，一次加载全量（参数行数少，含各租户覆盖行） */
   private cache = new Map<string, SysConfigEntity>()
   private loadedAt = 0
 
@@ -55,24 +70,36 @@ export class SystemConfigService {
     private readonly repo: Repository<SysConfigEntity>
   ) {}
 
-  /** 管理端列表：按分组聚合，附带默认值（库里缺失的也列出来，标 isBuiltin=0 便于发现） */
+  /** 管理端列表：平台视角列平台行；租户视角列生效值（租户覆盖优先）并标注覆盖状态 */
   async list(group?: string): Promise<Array<Record<string, unknown>>> {
-    const rows = await this.repo.find({ where: { delFlag: 0 }, order: { configGroup: 'ASC', id: 'ASC' } })
-    const filtered = group ? rows.filter(row => row.configGroup === group) : rows
-    return filtered.map(row => ({
-      configKey: row.configKey,
-      configValue: row.configValue ?? DEFAULTS[row.configKey] ?? '',
-      valueType: row.valueType,
-      configGroup: row.configGroup,
-      name: row.name,
-      remark: row.remark,
-      isBuiltin: row.isBuiltin
-    }))
+    const platformRows = await this.repo.find({ where: { delFlag: 0, tenantId: 0 }, order: { configGroup: 'ASC', id: 'ASC' } })
+    const tenantId = this.currentTenantId()
+    const tenantRows = tenantId > 0 ? await this.repo.find({ where: { delFlag: 0, tenantId } }) : []
+    const tenantByKey = new Map(tenantRows.map(row => [row.configKey, row]))
+
+    const filtered = group ? platformRows.filter(row => row.configGroup === group) : platformRows
+    return filtered.map(row => {
+      const tenantRow = tenantByKey.get(row.configKey)
+      const platformValue = row.configValue ?? DEFAULTS[row.configKey] ?? ''
+      return {
+        configKey: row.configKey,
+        configValue: tenantRow ? (tenantRow.configValue ?? '') : platformValue,
+        valueType: row.valueType,
+        configGroup: row.configGroup,
+        name: row.name,
+        remark: row.remark,
+        isBuiltin: row.isBuiltin,
+        allowTenant: row.allowTenant,
+        // 租户视角附带：平台参考值 + 是否已覆盖（便于前端展示「已覆盖/跟随平台」）
+        platformValue,
+        tenantConfigured: Boolean(tenantRow)
+      }
+    })
   }
 
-  /** 分组名列表（前端渲染 Tab 用） */
+  /** 分组名列表（前端渲染 Tab 用，只看平台行——租户覆盖不会产生新分组） */
   async groups(): Promise<string[]> {
-    const rows = await this.repo.find({ where: { delFlag: 0 }, select: { configGroup: true } })
+    const rows = await this.repo.find({ where: { delFlag: 0, tenantId: 0 }, select: { configGroup: true } })
     return [...new Set(rows.map(row => row.configGroup))]
   }
 
@@ -121,39 +148,42 @@ export class SystemConfigService {
     }
   }
 
-  /** 单条更新：键必须已存在（内置参数），值要符合声明的类型 */
+  /** 单条更新：平台视角改平台行；租户视角改/建自己的覆盖行（仅 allow_tenant=1） */
   async updateOne(dto: UpdateConfigItemDto): Promise<void> {
-    const row = await this.repo.findOne({ where: { configKey: dto.configKey, delFlag: 0 } })
-    if (!row) throw new BadRequestException(`参数 ${dto.configKey} 不存在`)
+    const target = await this.resolveWrite(dto.configKey)
     const value = dto.configValue ?? ''
-    this.assertType(row.valueType, value, row.name)
-    await this.repo.update(row.id, { configValue: value })
-    this.cache.delete(row.configKey)
-    this.loadedAt = 0
-    this.logger.log(`参数已更新：${row.configKey} = ${value}`)
+    this.assertType(target.platformRow.valueType, value, target.platformRow.name)
+    await this.writeValue(target, value, this.repo.manager)
+    this.invalidate()
+    this.logger.log(`参数已更新（tenant=${target.tenantId}）：${dto.configKey} = ${value}`)
   }
 
   /** 批量更新：整批校验通过才写，避免一半成功一半失败 */
   async updateBatch(dto: BatchUpdateConfigDto): Promise<{ updated: number }> {
     if (!dto.items?.length) throw new BadRequestException('没有要更新的参数')
-    const keys = dto.items.map(item => item.configKey)
-    const rows = await this.repo.find({ where: { delFlag: 0 } })
-    const byKey = new Map(rows.map(row => [row.configKey, row]))
+    const targets = [] as Array<{ target: WriteTarget; value: string }>
     for (const item of dto.items) {
-      const row = byKey.get(item.configKey)
-      if (!row) throw new BadRequestException(`参数 ${item.configKey} 不存在`)
-      this.assertType(row.valueType, item.configValue ?? '', row.name)
+      const target = await this.resolveWrite(item.configKey)
+      const value = item.configValue ?? ''
+      this.assertType(target.platformRow.valueType, value, target.platformRow.name)
+      targets.push({ target, value })
     }
     await this.repo.manager.transaction(async manager => {
-      for (const item of dto.items) {
-        const row = byKey.get(item.configKey)
-        if (!row) continue
-        await manager.update(SysConfigEntity, row.id, { configValue: item.configValue ?? '' })
+      for (const { target, value } of targets) {
+        await this.writeValue(target, value, manager)
       }
     })
-    keys.forEach(key => this.cache.delete(key))
-    this.loadedAt = 0
+    this.invalidate()
     return { updated: dto.items.length }
+  }
+
+  /** 租户视角取消覆盖（删除自己的覆盖行，回到跟随平台）；平台视角无可重置 */
+  async resetOverride(configKey: string): Promise<void> {
+    const tenantId = this.currentTenantId()
+    if (tenantId <= 0) throw new BadRequestException('平台视角没有租户覆盖，无需重置')
+    const result = await this.repo.delete({ configKey, tenantId })
+    if (!result.affected) throw new BadRequestException(`参数 ${configKey} 没有租户覆盖值`)
+    this.invalidate()
   }
 
   private assertType(valueType: string, value: string, name: string): void {
@@ -174,15 +204,75 @@ export class SystemConfigService {
     }
   }
 
+  /** 写目标定位：平台行必查（键元数据来源），租户视角额外定位已有覆盖行 */
+  private async resolveWrite(configKey: string): Promise<WriteTarget> {
+    const platformRow = await this.repo.findOne({ where: { configKey, tenantId: 0, delFlag: 0 } })
+    if (!platformRow) throw new BadRequestException(`参数 ${configKey} 不存在`)
+    const tenantId = this.currentTenantId()
+    if (tenantId <= 0) {
+      return { tenantId: 0, platformRow, tenantRow: null }
+    }
+    if (platformRow.allowTenant !== 1) {
+      throw new BadRequestException(`参数「${platformRow.name}」为平台级参数，租户不可修改`)
+    }
+    const tenantRow = await this.repo.findOne({ where: { configKey, tenantId, delFlag: 0 } })
+    return { tenantId, platformRow, tenantRow }
+  }
+
+  /** 执行写入：租户视角 upsert 覆盖行（元数据抄平台行），平台视角直接更新平台行 */
+  private async writeValue(target: WriteTarget, value: string, manager: EntityManager): Promise<void> {
+    if (target.tenantId <= 0) {
+      await manager.update(SysConfigEntity, target.platformRow.id, { configValue: value })
+      return
+    }
+    if (target.tenantRow) {
+      await manager.update(SysConfigEntity, target.tenantRow.id, { configValue: value })
+      return
+    }
+    const src = target.platformRow
+    try {
+      await manager.insert(SysConfigEntity, {
+        configKey: src.configKey,
+        tenantId: target.tenantId,
+        configValue: value,
+        valueType: src.valueType,
+        configGroup: src.configGroup,
+        name: src.name,
+        remark: src.remark,
+        isBuiltin: 0,
+        allowTenant: 0,
+        delFlag: 0
+      })
+    } catch (error) {
+      // 并发下撞 (tenant_id, config_key) 联合唯一：转可读报错
+      if (isDuplicateEntryError(error)) {
+        throw new BadRequestException(`参数 ${src.configKey} 已有租户覆盖值，请勿重复创建`)
+      }
+      throw error
+    }
+  }
+
+  /** 当前生效租户：null（平台超管未指定）/ 0（无归属账号）都按平台 0 处理 */
+  private currentTenantId(): number {
+    return TenantContext.filterTenantId() ?? 0
+  }
+
   private async getRow(key: string): Promise<SysConfigEntity | undefined> {
     await this.ensureLoaded()
-    return this.cache.get(key)
+    const tenantId = this.currentTenantId()
+    return this.cache.get(`${tenantId}::${key}`) ?? (tenantId > 0 ? this.cache.get(`0::${key}`) : undefined)
   }
 
   private async ensureLoaded(force = false): Promise<void> {
     if (!force && this.loadedAt && Date.now() - this.loadedAt < CACHE_TTL_MS) return
     const rows = await this.repo.find({ where: { delFlag: 0 } })
-    this.cache = new Map(rows.map(row => [row.configKey, row]))
+    this.cache = new Map(rows.map(row => [`${row.tenantId}::${row.configKey}`, row]))
     this.loadedAt = Date.now()
+  }
+
+  /** 任何写入后整表失效（参数行数少，整表重建成本可忽略；平台行变更会影响所有租户的回退结果） */
+  private invalidate(): void {
+    this.cache = new Map()
+    this.loadedAt = 0
   }
 }
