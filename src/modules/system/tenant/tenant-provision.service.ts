@@ -4,7 +4,7 @@ import { DataSource, type EntityManager } from 'typeorm'
 import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
 import { PermissionCacheService } from '../../../shared/permission-cache/permission-cache.service'
 import { randomId32 } from '../../../utils/password.util'
-import { acceptsByLevel, restrictedMenuIds, TENANT_ROLE_TEMPLATES, type TenantMenuNode, type TenantRoleTemplate } from './tenant-role-template'
+import { acceptsByLevel, pruneEmptyDirs, restrictedMenuIds, TENANT_ROLE_TEMPLATES, type TenantMenuNode, type TenantRoleTemplate } from './tenant-role-template'
 
 /** 单条 INSERT 拼多少组值：权限多时避免超长 SQL 被 MySQL 截断 */
 const GRANT_CHUNK = 200
@@ -117,7 +117,9 @@ export class TenantProvisionService {
         blocked = restrictedMenuIds(template.level, menuRows)
         blockedByLevel.set(template.level, blocked)
       }
-      const targetIds = menuRows.filter(menu => !blocked.has(menu.id) && acceptsByLevel(template.level, menu.perms)).map(menu => menu.id)
+      // 两轮过滤：先按档位排除模块，再剔除「子节点全被排掉」的目录（否则侧边栏留一个点进去 404 的分组）
+      const accepted = menuRows.filter(menu => !blocked.has(menu.id) && acceptsByLevel(template.level, menu.perms))
+      const targetIds = [...pruneEmptyDirs(new Set(accepted.map(menu => menu.id)), menuRows)]
       const added = await this.grant(manager, roleId, targetIds)
       roles.push({ roleCode: template.roleCode, roleId, created, added, total: targetIds.length })
     }

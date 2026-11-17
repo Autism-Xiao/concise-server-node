@@ -112,12 +112,34 @@ export function acceptsByLevel(level: TenantRoleLevel, perms?: string | null): b
  *
  * 选人控件不受影响：`GET /v1/users/lookup` 与 `/v1/users/me` 不挂任何 @Perms，登录即可用。
  */
-export const TENANT_RESTRICTED_MODULES: Array<{ urlPrefix: string; permsPrefix?: string }> = [
+export interface TenantRestrictedModule {
+  urlPrefix: string
+  permsPrefix?: string
+  /**
+   * 只对哪些档位生效；不写 = `read` 与 `write` 两档都排除（管理类模块的默认行为）
+   *
+   * 为什么需要按档位细分：部门/字典/文件这些是「业务基础设施」—— 编辑者要维护基础数据、
+   * 上传下载任务附件，收掉会把编辑者打瘸；但只读访客没有任何理由需要它们。
+   */
+  levels?: TenantRoleLevel[]
+}
+
+export const TENANT_RESTRICTED_MODULES: TenantRestrictedModule[] = [
   { urlPrefix: '/system/users', permsPrefix: 'system:user' },
   // 菜单是全平台共享的配置：编辑者拿到 `system:menu:update` 就能改所有租户的侧边栏，必须拦在模板层
   { urlPrefix: '/system/menu', permsPrefix: 'system:menu' },
   // 角色权限页是「谁能干什么」的配置表，租户内也只该由管理员看
-  { urlPrefix: '/system/role', permsPrefix: 'system:role' }
+  { urlPrefix: '/system/role', permsPrefix: 'system:role' },
+  // ---- 以下只对只读档排除 ----
+  // 组织架构（部门/岗位/职级）是配置数据，属管理职责。选部门控件走 GET /depts/tree（不挂 @Perms），不受影响
+  { urlPrefix: '/system/dept', permsPrefix: 'system:dept', levels: ['read'] },
+  { urlPrefix: '/system/post', permsPrefix: 'system:post', levels: ['read'] },
+  { urlPrefix: '/system/level', permsPrefix: 'system:level', levels: ['read'] },
+  // 字典页是配置入口；所有下拉走 GET /dict-items/code/:code（不挂 @Perms），收回不影响表单
+  { urlPrefix: '/system/dict', permsPrefix: 'system:dict', levels: ['read'] },
+  { urlPrefix: '/system/region', permsPrefix: 'system:region', levels: ['read'] },
+  // 文件库是全租户共享的：`system:file:list` 能列出所有人上传的附件，`system:file:download` 能下载任意一个
+  { urlPrefix: '/system/file', permsPrefix: 'system:file', levels: ['read'] }
 ]
 
 /** 租户级菜单节点（本文件只关心定位子树需要的字段） */
@@ -136,7 +158,10 @@ export interface TenantMenuNode {
  */
 export function restrictedMenuIds(level: TenantRoleLevel, nodes: TenantMenuNode[]): Set<string> {
   const blocked = new Set<string>()
-  if (level === 'all' || !TENANT_RESTRICTED_MODULES.length) return blocked
+  if (level === 'all') return blocked
+  // 按档位取本次生效的模块：`levels` 未声明的按「只读 + 编辑都排除」处理
+  const modules = TENANT_RESTRICTED_MODULES.filter(module => !module.levels || module.levels.includes(level))
+  if (!modules.length) return blocked
 
   const childrenOf = new Map<string, string[]>()
   for (const node of nodes) {
@@ -147,7 +172,7 @@ export function restrictedMenuIds(level: TenantRoleLevel, nodes: TenantMenuNode[
   }
 
   const isRestricted = (node: TenantMenuNode): boolean =>
-    TENANT_RESTRICTED_MODULES.some(module => {
+    modules.some(module => {
       const url = (node.url ?? '').trim()
       const byUrl = url === module.urlPrefix || url.startsWith(`${module.urlPrefix}/`)
       const perms = (node.perms ?? '').trim()
@@ -163,4 +188,40 @@ export function restrictedMenuIds(level: TenantRoleLevel, nodes: TenantMenuNode[
     for (const child of childrenOf.get(id) ?? []) queue.push(child)
   }
   return blocked
+}
+
+/**
+ * 剔除「过滤后变空」的目录
+ *
+ * 目录节点本身没有权限码，`acceptsByLevel` 会一律放行，但它是否有意义取决于下面还有没有可见子页面。
+ * 若一个目录的子节点全被排除（例如访客没有日志页权限 → 「安全审计」下 6 个子页面一条不剩），
+ * 这条授权就成了一条死链：前端 `treeToGroups` 会把空分组当普通菜单项渲染，点进去 404。
+ *
+ * 判定用**子节点关系**而不是 menu_type：仪表盘是 `menu_type=0` 的顶级单页菜单、没有子节点，
+ * 按类型判会把它当空目录误删；按「有子节点但过滤后一个不剩」判则绝不会碰它。
+ *
+ * 自底向上迭代到稳定：多层目录（A 装 B，B 的子页面全丢）需要先删 B 才能发现 A 也空了。
+ */
+export function pruneEmptyDirs(kept: Set<string>, nodes: TenantMenuNode[]): Set<string> {
+  const childrenOf = new Map<string, string[]>()
+  for (const node of nodes) {
+    if (!node.parentId) continue
+    const kids = childrenOf.get(node.parentId)
+    if (kids) kids.push(node.id)
+    else childrenOf.set(node.parentId, [node.id])
+  }
+  if (!childrenOf.size) return kept
+
+  const result = new Set(kept)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [parentId, children] of childrenOf) {
+      if (!result.has(parentId)) continue
+      if (children.some(id => result.has(id))) continue
+      result.delete(parentId)
+      changed = true
+    }
+  }
+  return result
 }
