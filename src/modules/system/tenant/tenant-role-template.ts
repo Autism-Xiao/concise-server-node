@@ -99,3 +99,62 @@ export function acceptsByLevel(level: TenantRoleLevel, perms?: string | null): b
   if (level === 'read') return READ_SUFFIXES.has(suffix)
   return !DANGEROUS_SUFFIXES.has(suffix)
 }
+
+/**
+ * 只读/编辑档一律不授予的模块（连同页面节点、子菜单、按钮整棵子树）
+ *
+ * 为什么需要「模块级排除」，只靠后缀白名单不够：用户管理的按钮恰好叫 `list` / `export`，
+ * 后缀白名单把它们当成「只读能力」放给了访客，结果访客能翻遍全租户的手机号、邮箱并整表导出。
+ * 成员管理是管理员职责，不因为「只读」就该给 —— 只读只该作用于业务数据，不该作用于「谁能看到人」。
+ *
+ * 匹配规则：权限码前缀命中，或菜单 url 精确命中（含子路径）。命中后向下递归收集所有子孙，
+ * 所以页面节点即使哪天去掉了 perms，也靠 url 兜住 —— 否则侧边栏还留着入口，点进去 403。
+ *
+ * 选人控件不受影响：`GET /v1/users/lookup` 与 `/v1/users/me` 不挂任何 @Perms，登录即可用。
+ */
+export const TENANT_RESTRICTED_MODULES: Array<{ urlPrefix: string; permsPrefix?: string }> = [{ urlPrefix: '/system/users', permsPrefix: 'system:user' }]
+
+/** 租户级菜单节点（本文件只关心定位子树需要的字段） */
+export interface TenantMenuNode {
+  id: string
+  parentId: string | null
+  perms: string | null
+  url: string | null
+}
+
+/**
+ * 计算某档位必须排除的菜单节点 id 集合
+ *
+ * `all` 档返回空集（租户管理员本来就要管成员）；read/write 档按 TENANT_RESTRICTED_MODULES 排除。
+ * 传整棵菜单树进来算一次即可，三个模板角色共用，避免每档重复遍历。
+ */
+export function restrictedMenuIds(level: TenantRoleLevel, nodes: TenantMenuNode[]): Set<string> {
+  const blocked = new Set<string>()
+  if (level === 'all' || !TENANT_RESTRICTED_MODULES.length) return blocked
+
+  const childrenOf = new Map<string, string[]>()
+  for (const node of nodes) {
+    if (!node.parentId) continue
+    const siblings = childrenOf.get(node.parentId) ?? []
+    siblings.push(node.id)
+    childrenOf.set(node.parentId, siblings)
+  }
+
+  const isRestricted = (node: TenantMenuNode): boolean =>
+    TENANT_RESTRICTED_MODULES.some(module => {
+      const url = (node.url ?? '').trim()
+      const byUrl = url === module.urlPrefix || url.startsWith(`${module.urlPrefix}/`)
+      const perms = (node.perms ?? '').trim()
+      const byPerms = !!module.permsPrefix && perms.startsWith(module.permsPrefix)
+      return byUrl || byPerms
+    })
+
+  const queue = nodes.filter(isRestricted).map(node => node.id)
+  while (queue.length) {
+    const id = queue.pop() as string
+    if (blocked.has(id)) continue
+    blocked.add(id)
+    for (const child of childrenOf.get(id) ?? []) queue.push(child)
+  }
+  return blocked
+}

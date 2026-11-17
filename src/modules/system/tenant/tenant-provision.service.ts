@@ -4,16 +4,10 @@ import { DataSource, type EntityManager } from 'typeorm'
 import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
 import { PermissionCacheService } from '../../../shared/permission-cache/permission-cache.service'
 import { randomId32 } from '../../../utils/password.util'
-import { acceptsByLevel, TENANT_ROLE_TEMPLATES, type TenantRoleTemplate } from './tenant-role-template'
+import { acceptsByLevel, restrictedMenuIds, TENANT_ROLE_TEMPLATES, type TenantMenuNode, type TenantRoleTemplate } from './tenant-role-template'
 
 /** 单条 INSERT 拼多少组值：权限多时避免超长 SQL 被 MySQL 截断 */
 const GRANT_CHUNK = 200
-
-/** 租户级菜单（本服务只关心 id 与权限码） */
-interface TenantMenuRow {
-  id: string
-  perms: string | null
-}
 
 export interface TenantProvisionRoleResult {
   roleCode: string
@@ -100,13 +94,15 @@ export class TenantProvisionService {
    *
    * @param menus 预先查好的租户级菜单，批量场景下复用，避免 N 次全表查询；不传则现查
    */
-  async provisionIn(manager: EntityManager, tenantId: number, operator?: string, menus?: TenantMenuRow[]): Promise<TenantProvisionResult> {
+  async provisionIn(manager: EntityManager, tenantId: number, operator?: string, menus?: TenantMenuNode[]): Promise<TenantProvisionResult> {
     const menuRows = menus ?? (await this.loadTenantMenus(manager))
     const existingRows = await manager.query<Array<{ id: string; roleCode: string }>>('SELECT id, role_code AS roleCode FROM sys_role WHERE tenant_id = ?', [
       tenantId
     ])
     const existing = new Map(existingRows.map(row => [row.roleCode, row.id]))
     const roles: TenantProvisionRoleResult[] = []
+    // 排除集合按档位算一次：三个模板角色共用同一棵树
+    const blockedByLevel = new Map<string, Set<string>>()
 
     for (const template of TENANT_ROLE_TEMPLATES) {
       let roleId = existing.get(template.roleCode)
@@ -116,7 +112,12 @@ export class TenantProvisionService {
         await this.insertRole(manager, roleId, tenantId, template, operator)
         created = true
       }
-      const targetIds = menuRows.filter(menu => acceptsByLevel(template.level, menu.perms)).map(menu => menu.id)
+      let blocked = blockedByLevel.get(template.level)
+      if (!blocked) {
+        blocked = restrictedMenuIds(template.level, menuRows)
+        blockedByLevel.set(template.level, blocked)
+      }
+      const targetIds = menuRows.filter(menu => !blocked.has(menu.id) && acceptsByLevel(template.level, menu.perms)).map(menu => menu.id)
       const added = await this.grant(manager, roleId, targetIds)
       roles.push({ roleCode: template.roleCode, roleId, created, added, total: targetIds.length })
     }
@@ -125,12 +126,14 @@ export class TenantProvisionService {
   }
 
   /** 租户级有效菜单（platform 级的绝不能进租户角色，见 tenant-role-template.ts 注释） */
-  private async loadTenantMenus(manager: EntityManager): Promise<TenantMenuRow[]> {
-    return manager.query<TenantMenuRow[]>(
-      `SELECT id, perms FROM sys_permission
+  private async loadTenantMenus(manager: EntityManager): Promise<TenantMenuNode[]> {
+    const rows = await manager.query<Array<{ id: string; parentId: string | null; perms: string | null; url: string | null }>>(
+      `SELECT id, parent_id AS parentId, perms, url FROM sys_permission
         WHERE del_flag = 0 AND status = '1' AND scope = 'tenant'
         ORDER BY sort_no, id`
     )
+    // parent_id 可能是空串（历史数据），统一成 null，否则会被当成一个「叫空串的父节点」
+    return rows.map(row => ({ id: row.id, parentId: row.parentId ? String(row.parentId) : null, perms: row.perms, url: row.url }))
   }
 
   private async insertRole(manager: EntityManager, roleId: string, tenantId: number, template: TenantRoleTemplate, operator?: string): Promise<void> {
