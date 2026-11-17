@@ -17,6 +17,7 @@ import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
 import { MenuService, buildMenuTree, type MenuTreeItem } from '../../menu/menu.service'
 import { OnlineService } from '../../ops/online/online.service'
+import { SystemConfigService } from '../../system/config/system-config.service'
 import type { MenuEntity } from '../../menu/entities/menu.entity'
 import { CaptchaService } from './captcha.service'
 import { TotpService } from './totp.service'
@@ -38,6 +39,11 @@ const REFRESH_REUSE_GRACE_MS = 10 * 1000
 export interface JwtPayload {
   id: string
   username: string
+  /**
+   * 平台超管尚未绑定两步验证（且平台已开启强制策略）时置 true。
+   * 令牌照发（否则超管永远进不去开 2FA），但 PermsGuard 会拦掉所有平台级权限。
+   */
+  mfaPending?: boolean
 }
 
 export interface LoginResult {
@@ -47,6 +53,8 @@ export interface LoginResult {
   userInfo: Record<string, unknown>
   /** 密码已过期或被管理员标记：前端须先弹强制改密，改完才放行进入系统 */
   mustChangePassword?: boolean
+  /** 超管未绑定 2FA 且平台开启了强制策略：前端应引导去「安全设置」绑定 */
+  mfaPending?: boolean
 }
 
 /** 登录后权限汇总 */
@@ -134,7 +142,9 @@ export class AuthService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     // 备份码兜底校验：TOTP 不通过时允许用一次性备份码登录
-    private readonly totpService: TotpService
+    private readonly totpService: TotpService,
+    // 强制 2FA 策略开关（security.platformAdmin.require2fa）走系统参数，默认关闭
+    private readonly systemConfig: SystemConfigService
   ) {}
 
   /**
@@ -508,9 +518,24 @@ export class AuthService {
     return { loggedOut: true }
   }
 
+  /**
+   * 平台超管是否处于「必须先绑定两步验证」状态
+   *
+   * 开关是平台级参数 `security.platformAdmin.require2fa`（默认 false）。开启后**不拒绝登录**
+   * —— 否则新装的系统里超管还没绑 2FA 就永远进不去，形成死锁。做法是给令牌打 mfaPending
+   * 标记，PermsGuard 见到该标记就拦掉所有 scope='platform' 的权限（建租户/改套餐/看监控等），
+   * 但登录、浏览、以及 /auth/2fa/* 绑定流程仍然可用，绑完重新签发即恢复正常。
+   */
+  private async needsSuperMfa(user: import('../../user/entities/user.entity').UserEntity): Promise<boolean> {
+    if (Number(user.isPlatformAdmin ?? 0) !== 1) return false
+    if (Number(user.totpEnabled ?? 0) === 1) return false
+    return this.systemConfig.getBoolean('security.platformAdmin.require2fa', false)
+  }
+
   /** 签发 accessToken + refreshToken */
   private async issueTokens(user: import('../../user/entities/user.entity').UserEntity): Promise<LoginResult> {
-    const base = { id: user.id, username: user.username }
+    const mfaPending = await this.needsSuperMfa(user)
+    const base = { id: user.id, username: user.username, ...(mfaPending ? { mfaPending: true } : {}) }
     const { secret, refreshSecret, expiresIn, refreshExpiresIn } = this.jwt
 
     // jti 必加：JWT 的 payload 只有 id/username/iat（秒级），同一秒内签发的两个令牌完全相同。
@@ -524,7 +549,8 @@ export class AuthService {
       accessToken,
       refreshToken,
       expiresIn: this.parseExpiresIn(expiresIn),
-      userInfo: this.userService.stripPassword(user)
+      userInfo: this.userService.stripPassword(user),
+      ...(mfaPending ? { mfaPending: true } : {})
     }
   }
 

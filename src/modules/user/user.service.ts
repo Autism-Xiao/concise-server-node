@@ -11,6 +11,7 @@ import { PermissionCacheService } from '../../shared/permission-cache/permission
 import { AuthUserCacheService } from '../../shared/auth-cache/auth-user-cache.service'
 import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../shared/rate-limit/login-fail.util'
+import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { OnlineService } from '../ops/online/online.service'
 import { randomToken } from '../../utils/random-token.util'
@@ -400,6 +401,22 @@ export class UserService extends BaseService<UserEntity> {
       const found = new Set(depts.map(dept => dept.id))
       throw new BizException(BizErrorCode.BUSINESS_ERROR, `部门不存在或已删除：${ids.filter(depId => !found.has(depId)).join(',')}`)
     }
+    // 部门也是租户级资产：租户 A 的账号不能被绑到租户 B 的部门上（否则按部门的数据范围
+    // 会把 B 的组织结构带进 A 的可见范围）。平台共享部门（tenant_id=0）允许，与角色同口径。
+    const deptTenantId = TenantContext.filterTenantId()
+    if (deptTenantId !== null) {
+      const illegal = depts.filter(dept => {
+        const owner = Number(dept.tenantId ?? 0)
+        return owner !== 0 && owner !== deptTenantId
+      })
+      if (illegal.length) {
+        throw new BizException(
+          BizErrorCode.BUSINESS_ERROR,
+          `部门「${illegal.map(dept => dept.departName).join('、')}」不属于当前租户，不能分配`,
+          HttpStatus.BAD_REQUEST
+        )
+      }
+    }
     const deptMap = new Map(depts.map(dept => [dept.id, dept]))
     const ordered = ids.map(depId => deptMap.get(depId) as DeptEntity)
 
@@ -429,6 +446,21 @@ export class UserService extends BaseService<UserEntity> {
     if (posts.length !== ids.length) {
       const found = new Set(posts.map(post => post.id))
       throw new BizException(BizErrorCode.BUSINESS_ERROR, `岗位不存在：${ids.filter(postId => !found.has(postId)).join(',')}`)
+    }
+    // 岗位同样是租户级资产，理由同 assignDepts（共享岗位 tenant_id=0 例外）
+    const postTenantId = TenantContext.filterTenantId()
+    if (postTenantId !== null) {
+      const illegal = posts.filter(post => {
+        const owner = Number(post.tenantId ?? 0)
+        return owner !== 0 && owner !== postTenantId
+      })
+      if (illegal.length) {
+        throw new BizException(
+          BizErrorCode.BUSINESS_ERROR,
+          `岗位「${illegal.map(post => post.postName).join('、')}」不属于当前租户，不能分配`,
+          HttpStatus.BAD_REQUEST
+        )
+      }
     }
     const current = await repo.createQueryBuilder().relation(UserEntity, 'posts').of(id).loadMany<PostEntity>()
     const currentIds = new Set(current.map(post => post.id))
@@ -616,13 +648,29 @@ export class UserService extends BaseService<UserEntity> {
    *    本部门(3) → 命中自己任一部门；本部门及以下(2) → 部门树递归展开
    *  - 用户没有任何部门时，「本部门」档看不到任何人（1=0），避免误放成全量
    */
+  /**
+   * 参与数据范围计算的角色：只算**当前租户**的角色（+ 平台共享角色）。
+   *
+   * 同一个账号在 A 租户是管理员(data_scope=1)、在 B 租户是访客(data_scope=4)，
+   * 若把两边的角色一起取 Math.min，在 B 也会得到 1 = 看全部数据。
+   * JwtStrategy 已经把 req.user.roles 收窄过，这里是第二道（Dashboard 等自己拼 actor 的路径）。
+   */
+  private scopedRoles(roles: RoleEntity[]): RoleEntity[] {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return roles
+    return roles.filter(role => {
+      const owner = Number(role.tenantId ?? 0)
+      return owner === 0 || owner === tenantId
+    })
+  }
+
   private async applyDataScope(qb: SelectQueryBuilder<UserEntity>, actor?: DataScopeActor): Promise<void> {
     const roles = actor?.roles ?? []
     // 平台管理员不受数据范围限制（按 is_platform_admin 判定，不看 role_code：角色是租户级的）
     if (!actor || Number(actor.isPlatformAdmin ?? 0) === 1) {
       return
     }
-    const scopes = roles.map(role => role.dataScope ?? DATA_SCOPE.ALL)
+    const scopes = this.scopedRoles(roles).map(role => role.dataScope ?? DATA_SCOPE.ALL)
     if (!scopes.length) {
       return
     }
@@ -646,8 +694,11 @@ export class UserService extends BaseService<UserEntity> {
     }
     let deptIds = ownDeptIds
     if (scope === DATA_SCOPE.DEPT_AND_CHILDREN) {
-      // 部门表量级小（组织架构），一次性载入内存做父子展开，避免递归 SQL
-      const all = await this.deptRepository.find({ where: { delFlag: '0' as never }, select: { id: true, parentId: true } })
+      // 部门表量级小（组织架构），一次性载入内存做父子展开，避免递归 SQL。
+      // 必须按当前租户收窄：全表载入会把别家租户挂在同名父节点下的部门也展开进来。
+      const deptQb = this.deptRepository.createQueryBuilder('d').where('d.del_flag = :delFlag', { delFlag: '0' }).select(['d.id', 'd.parentId'])
+      applyTenantScope(deptQb, 'd')
+      const all = await deptQb.getMany()
       const childrenOf = new Map<string, string[]>()
       for (const dept of all) {
         if (!dept.parentId) continue

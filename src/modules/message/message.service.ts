@@ -1,4 +1,4 @@
-import { BadRequestException, HttpStatus, Injectable, Logger } from '@nestjs/common'
+import { BadRequestException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm'
 import { DataSource, Repository } from 'typeorm'
 
@@ -6,7 +6,7 @@ import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
 import { paginate, Pagination, type Pagination as PaginationType } from '../../helper/paginate'
 import { RealtimeService, WS_EVENTS, type MessageNewPayload } from '../../shared/realtime/realtime.service'
-import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
+import { applyTenantScope, SHARED_TENANT_ID, tenantWriteCondition } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { SysMessageEntity } from './entities/sys-message.entity'
 import { SysMessageUserEntity } from './entities/sys-message-user.entity'
@@ -49,11 +49,24 @@ export class MessageService {
     if (entries.length === 0) {
       throw new BadRequestException('接收人不能为空')
     }
-    // 每个条目既可能是 ID 也可能是用户名，一并查出后按入参位置对回真实 ID
+    // 每个条目既可能是 ID 也可能是用户名，一并查出后按入参位置对回真实 ID。
+    // 接收人必须落在**当前租户**内：站内信是租户资产，能按 id/用户名直接给别家租户的用户发信
+    // 等于开了一条跨租户骚扰/钓鱼通道（发送方列表看不到对方，对方收件箱里却会出现这条消息）。
+    // 平台视角（null）不加限制 —— 平台管理员给指定租户的用户发通知是正常业务。
+    const scopeTenantId = TenantContext.filterTenantId()
+    let tenantClause = ''
+    const queryParams: Array<string | number> = [...entries, ...entries]
+    if (scopeTenantId === SHARED_TENANT_ID) {
+      // 没有租户归属的账号只发给平台账号（没有任何租户成员关系的人）
+      tenantClause = ' AND NOT EXISTS (SELECT 1 FROM sys_user_tenant ut WHERE ut.user_id = u.id)'
+    } else if (scopeTenantId !== null) {
+      tenantClause = ' AND EXISTS (SELECT 1 FROM sys_user_tenant ut WHERE ut.user_id = u.id AND ut.tenant_id = ? AND ut.status = 0)'
+      queryParams.push(scopeTenantId)
+    }
     const placeholders = entries.map(() => '?').join(',')
     const existings = await this.dataSource.query<Array<{ id: string; username: string }>>(
-      `SELECT id, username FROM sys_user WHERE (id IN (${placeholders}) OR username IN (${placeholders})) AND del_flag = 0`,
-      [...entries, ...entries]
+      `SELECT u.id, u.username FROM sys_user u WHERE (u.id IN (${placeholders}) OR u.username IN (${placeholders})) AND u.del_flag = 0${tenantClause}`,
+      queryParams
     )
     const byKey = new Map<string, string>()
     for (const row of existings) {
@@ -76,7 +89,9 @@ export class MessageService {
         content: dto.content,
         msgType: dto.msgType ?? 'send',
         senderId: senderId ?? null,
-        tenantId: TenantContext.currentTenantId() ?? 1,
+        // 平台视角（筛选上下文 null）落 tenant_id=0 = 平台共享，所有租户的接收人可见；
+        // 以前写 `?? 1` 会把平台公告错归到 1 号租户，既广播不出去又污染该租户收件箱
+        tenantId: TenantContext.filterTenantId() ?? SHARED_TENANT_ID,
         receiverCount: validIds.length
       })
       // 分批插入关联行：500 一批防超参；orIgnore 对重复 (message_id, user_id) 幂等
@@ -129,10 +144,25 @@ export class MessageService {
     return paginate(qb, { page: query.page, pageSize: query.pageSize })
   }
 
-  /** 删除发送记录（管理端）：连同接收人关联一起删 */
+  /**
+   * 删除发送记录（管理端）：连同接收人关联一起删
+   *
+   * 删除必须带**写租户条件**（严格本租户，不含 tenant_id=0 的平台共享消息）：
+   * 之前只按 id 删，租户管理员拿到别家的 messageId 就能把对方的发送记录连同
+   * 接收人关联一起清掉（实测可复现）。
+   */
   async remove(id: string): Promise<void> {
     await this.dataSource.transaction(async manager => {
-      await manager.getRepository(SysMessageEntity).delete(id)
+      const qb = manager.getRepository(SysMessageEntity).createQueryBuilder().delete().from(SysMessageEntity).where('id = :id', { id })
+      const writeCondition = tenantWriteCondition()
+      if (writeCondition) {
+        qb.andWhere(writeCondition.clause, writeCondition.params)
+      }
+      const affected = (await qb.execute()).affected ?? 0
+      if (affected === 0) {
+        // 不在可见范围与不存在同样处理，不泄漏「这条消息存在但不属于你」
+        throw new NotFoundException('消息不存在')
+      }
       await manager.getRepository(SysMessageUserEntity).delete({ messageId: id })
     })
   }
@@ -214,6 +244,14 @@ export class MessageService {
 
   /** 消息详情（管理端查看接收名单的已读情况） */
   async receivers(id: string): Promise<Array<{ userId: string; isRead: number; readAt: Date | null }>> {
+    // 先按读范围确认这条消息对当前租户可见：sys_message_user 上没有租户列，
+    // 只按 messageId 查等于把任意租户的接收名单（含已读状态）暴露出去
+    const visibleQb = this.messageRepo.createQueryBuilder('m').where('m.id = :id', { id })
+    applyTenantScope(visibleQb, 'm')
+    const message = await visibleQb.getOne()
+    if (!message) {
+      throw new NotFoundException('消息不存在')
+    }
     const rows = await this.messageUserRepo.find({
       where: { messageId: id },
       select: { userId: true, isRead: true, readAt: true }

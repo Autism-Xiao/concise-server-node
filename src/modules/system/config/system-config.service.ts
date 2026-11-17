@@ -31,6 +31,8 @@ const DEFAULTS: Record<string, string> = {
   'security.password.expireDays': '90',
   'security.password.forceChangeOnFirstLogin': 'false',
   'security.login.maxFailCount': '5',
+  // 平台级：未绑定 TOTP 的超管是否只能登录不能执行平台级操作（详情见 PermsGuard / AuthService.needsSuperMfa）
+  'security.platformAdmin.require2fa': 'false',
   // 邮件通道：SMTP 连接信息走环境变量（MAIL_SMTP_*），这里只有开关与展示项
   'mail.enabled': 'false',
   'mail.from': '',

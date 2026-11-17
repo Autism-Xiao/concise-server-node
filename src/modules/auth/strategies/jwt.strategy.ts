@@ -4,6 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt'
 
 import { jwtConfig, type JwtConfig } from '../../../config'
 import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { AppService } from '../../openapi/app.service'
 import { UserService } from '../../user/user.service'
 import { OnlineService, type SessionRequest } from '../../ops/online/online.service'
@@ -82,13 +83,27 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user || user.status !== 1) {
       throw new UnauthorizedException('账号不存在或已被冻结')
     }
-    // 停用角色不参与鉴权：RolesGuard / @Roles 匹配的 req.user.roles 在这里统一裁剪
-    user.roles = (user.roles ?? []).filter(role => role.status !== 0)
+    // 角色按**当前租户**收窄，不能只过滤停用标记：
+    // 一个账号可能同时是 A 公司管理员、B 公司访客（同一个人属于两家公司很常见）。
+    // X-Tenant-Id 切到 B 时，req.user.roles 若还带着 A 的 admin 角色：
+    //  - PermsGuard 按 roleIds 取权限并集 → 在 B 里拿到了 A 的按钮权限；
+    //  - RolesGuard 按 roleCode 匹配 → 在 B 里被当成 admin；
+    //  - UserService.applyDataScope 取 data_scope 最小值 → 在 B 里拿到 A 的全量数据范围。
+    // 平台共享角色（tenant_id=0）始终有效；平台视角（null）不过滤。
+    // 注意：findUserCached 返回的是缓存里的同一个对象，必须复制后再改，不能就地赋值。
+    const scopedTenantId = TenantContext.filterTenantId()
+    const scopedRoles = (user.roles ?? []).filter(role => {
+      if (role.status === 0) return false
+      if (scopedTenantId === null) return true
+      const owner = Number(role.tenantId ?? 0)
+      return owner === 0 || owner === scopedTenantId
+    })
+    const scopedUser = { ...user, roles: scopedRoles, mfaPending: (payload as { mfaPending?: boolean }).mfaPending === true }
 
     if (token) {
-      await this.onlineService.touch(token, { id: payload.id, username: payload.username, exp: (payload as { exp?: number }).exp }, request, user)
+      await this.onlineService.touch(token, { id: payload.id, username: payload.username, exp: (payload as { exp?: number }).exp }, request, scopedUser)
     }
-    return user
+    return scopedUser
   }
 
   /**

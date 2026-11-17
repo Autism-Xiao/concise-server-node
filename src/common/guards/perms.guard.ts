@@ -34,14 +34,19 @@ export class PermsGuard implements CanActivate {
 
     const { user } = context.switchToHttp().getRequest()
     const isPlatformAdmin = Number(user?.isPlatformAdmin ?? 0) === 1
+    const platformPerms = await this.permissionCache.getPlatformPerms()
+    const requiresPlatformPerm = required.some(perm => platformPerms.has(perm))
 
     // 平台级权限前置拦截：先判作用域，再判是否持有（给租户管理员一个说得清的原因，而不是笼统的「无权限」）
-    if (!isPlatformAdmin) {
-      const platformPerms = await this.permissionCache.getPlatformPerms()
-      const blocked = required.find(perm => platformPerms.has(perm))
-      if (blocked) {
-        throw new ForbiddenException(`「${blocked}」是平台级权限，仅平台管理员可操作`)
-      }
+    if (!isPlatformAdmin && requiresPlatformPerm) {
+      const blocked = required.find(perm => platformPerms.has(perm)) as string
+      throw new ForbiddenException(`「${blocked}」是平台级权限，仅平台管理员可操作`)
+    }
+
+    // 强制两步验证：超管未绑定 2FA 时令牌带 mfaPending，平台级操作一律拦下
+    // （登录/浏览/绑定 2FA 不受影响，避免「必须绑 2FA 才能进系统、进系统才能绑 2FA」的死锁）
+    if (user?.mfaPending === true && requiresPlatformPerm) {
+      throw new ForbiddenException('平台账号需先绑定两步验证（右上角头像 → 安全设置）后才能执行该操作')
     }
 
     if (isPlatformAdmin) {

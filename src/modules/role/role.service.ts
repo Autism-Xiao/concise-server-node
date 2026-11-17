@@ -141,6 +141,11 @@ export class RoleService extends BaseService<RoleEntity> {
     if (dto.status === 0 && role.isBuiltin === 1) {
       throw new BizException(BizErrorCode.BUILTIN_ROLE_PROTECTED, '内置管理员角色不允许停用', HttpStatus.BAD_REQUEST)
     }
+    // 数据范围同理：内置管理员一旦被改成「仅本人」，租户里就再没有能管全部数据的人了，
+    // 而且页面上没有任何入口能改回来（只能改库）。停用拦了、数据范围也得拦。
+    if (dto.dataScope !== undefined && role.isBuiltin === 1 && dto.dataScope !== 1) {
+      throw new BizException(BizErrorCode.BUILTIN_ROLE_PROTECTED, '内置管理员角色的数据范围固定为「全部」，不允许修改', HttpStatus.BAD_REQUEST)
+    }
     await this.roleRepository.manager.transaction(async manager => {
       await manager.getRepository(RoleEntity).update(id, {
         roleName: dto.roleName,
@@ -271,9 +276,11 @@ export class RoleService extends BaseService<RoleEntity> {
     await this.permissionCache.invalidateRole(id)
   }
 
-  /** 查角色详情（含菜单权限） */
+  /** 查角色详情（含菜单权限）—— 按 id 直读必须带租户范围，否则拿到别家 roleId 就能读到对方角色 */
   async findOneWithMenus(id: string): Promise<RoleEntity> {
-    const role = await this.roleRepository.findOne({ where: { id }, relations: { permissions: true } })
+    const qb = this.roleRepository.createQueryBuilder('role').leftJoinAndSelect('role.permissions', 'perm').where('role.id = :id', { id })
+    applyTenantScope(qb, 'role')
+    const role = await qb.getOne()
     if (!role) {
       throw new NotFoundException('角色不存在')
     }
@@ -335,8 +342,14 @@ export class RoleService extends BaseService<RoleEntity> {
       throw new BadRequestException(`单次最多导入 ${ROLE_IMPORT_MAX_ROWS} 行，当前 ${dataRows.length} 行，请拆分后重试`)
     }
 
-    const existing = await this.roleRepository.find()
+    // 匹配范围必须收进「当前租户可见」（本租户 + 平台共享）：原来 find() 全表，
+    // 租户 B 导入一个与租户 A 同码的角色会直接 update 到 A 的行上（实测可复现）。
+    const scopeQb = this.roleRepository.createQueryBuilder('role')
+    applyTenantScope(scopeQb, 'role')
+    const existing = await scopeQb.getMany()
     const existingByCode = new Map(existing.map(role => [role.roleCode, role]))
+    /** 当前租户：>0 时命中 tenant_id=0 的平台角色属于「撞内置编码」，只能报错不能改 */
+    const importTenantId = TenantContext.filterTenantId()
     /** 文件内已处理过的编码，重复行直接跳过（避免同一份文件里互相覆盖） */
     const seenCodes = new Set<string>()
     const result: RoleImportResult = { total: dataRows.length, created: 0, updated: 0, skipped: 0, failed: 0, errors: [] }
@@ -367,6 +380,11 @@ export class RoleService extends BaseService<RoleEntity> {
         continue
       }
       seenCodes.add(roleCode)
+      // 命中平台共享角色（tenant_id=0）时不能改：那是全平台共用的内置定义，改一处等于改所有租户
+      if (current && importTenantId !== null && Number(current.tenantId ?? 0) !== importTenantId) {
+        fail('与平台内置角色编码冲突，请更换编码')
+        continue
+      }
       try {
         if (current) {
           await this.roleRepository.update(current.id, {

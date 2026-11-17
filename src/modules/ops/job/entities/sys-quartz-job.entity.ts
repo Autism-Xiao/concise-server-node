@@ -29,6 +29,10 @@ export class SysQuartzJobEntity {
   @Column({ type: 'varchar', length: 255, nullable: true, comment: '描述' })
   description?: string
 
+  @ApiPropertyOptional({ description: '租户 ID（0 = 平台级任务，执行时不带租户上下文）', example: 0 })
+  @Column({ name: 'tenant_id', type: 'int', default: 0, comment: '租户ID(0=平台级任务)' })
+  tenantId?: number
+
   @ApiProperty({ description: '状态：0 正常（运行中）/ -1 停止', example: 0, enum: [0, -1] })
   @Column({ type: 'int', nullable: true, default: 0, comment: '状态（0正常 -1停止）' })
   status: number

@@ -5,6 +5,7 @@ import { Repository } from 'typeorm'
 
 import { RedisService } from '../../../shared/redis/redis.service'
 import { withRedisLock } from '../../../shared/redis/redis-lock.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
 import { JobHandlerRegistry, type JobTrigger } from './job.handlers'
 
@@ -158,7 +159,12 @@ export class JobScheduler implements OnModuleInit, OnModuleDestroy {
       if (!handler) {
         throw new Error(`执行器「${job.jobClassName ?? ''}」未注册`)
       }
-      message = (await handler({ job, parameter: job.parameter ?? '', trigger })) || '执行成功'
+      // 定时任务不在任何 HTTP 请求里，ALS 里没有租户上下文：直接跑的话
+      // filterTenantId() 返回 null = 不过滤 → 任务里查业务表就是**全租户**读写，
+      // 写库还会被 stampTenant 打成 tenant_id=0（平台共享）。
+      // 按任务归属注入：tenant_id > 0 用该租户；0 = 平台级任务，保持平台视角（不过滤）。
+      const taskTenantId = Number(job.tenantId ?? 0) > 0 ? Number(job.tenantId) : null
+      message = (await TenantContext.withTenant(taskTenantId, () => handler({ job, parameter: job.parameter ?? '', trigger }))) || '执行成功'
     } catch (error) {
       success = false
       message = (error as Error).message

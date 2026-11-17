@@ -392,6 +392,9 @@ export class TenantService {
       operateType: 3,
       ip: '-',
       tenantId: resolved.tenantId ?? 0,
+      // 必须显式传：这条日志是在**切换前**的上下文里写的，从平台视角切入租户时
+      // TenantContext.isProxy() 还是 false（tenantId 仍为 null），靠它推导会漏掉代维标记
+      isProxy: resolved.membership?.isSuper ? 1 : 0,
       status: 0,
       elapsed: 0
     })

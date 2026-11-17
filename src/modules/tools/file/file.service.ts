@@ -190,7 +190,13 @@ export class FileService {
     const chain: Array<{ id: number; name: string }> = []
     let currentId = folderId
     for (let depth = 0; depth < FILE_MAX_DEPTH && currentId !== FILE_ROOT_ID; depth++) {
-      const folder = await this.fileRepository.findOne({ where: { id: currentId, ownerId, isDeleted: 0 } })
+      const folderQb = this.fileRepository
+        .createQueryBuilder('f')
+        .where('f.id = :currentId', { currentId })
+        .andWhere('f.owner_id = :ownerId', { ownerId })
+        .andWhere('f.is_deleted = 0')
+      applyTenantScope(folderQb, 'f')
+      const folder = await folderQb.getOne()
       if (!folder) break
       chain.unshift({ id: folder.id, name: folder.name })
       currentId = folder.parentId
@@ -434,7 +440,11 @@ export class FileService {
   async softDelete(ownerId: string, ids: number[]): Promise<{ deleted: number }> {
     const allIds = await this.collectSubtreeIds(ownerId, ids)
     if (!allIds.length) return { deleted: 0 }
-    const result = await this.fileRepository.update({ id: In(allIds), ownerId, isDeleted: 0 }, { isDeleted: 1, deletedAt: new Date(), updateTime: new Date() })
+    // 批量写同样要带租户条件：ids 来自请求体，一个账号属于多租户时可以塞别家租户的文件 id
+    const result = await this.fileRepository.update(
+      { id: In(allIds), ownerId, isDeleted: 0, ...this.tenantWhere() },
+      { isDeleted: 1, deletedAt: new Date(), updateTime: new Date() }
+    )
     return { deleted: result.affected ?? 0 }
   }
 
@@ -457,7 +467,7 @@ export class FileService {
    * 冲突的按 `报告(1).pdf` 自动改名，并在返回值里报告数量。
    */
   async restore(ownerId: string, ids: number[]): Promise<{ restored: number; renamed: number }> {
-    const items = await this.fileRepository.find({ where: { id: In(ids), ownerId, isDeleted: 1 } })
+    const items = await this.fileRepository.find({ where: { id: In(ids), ownerId, isDeleted: 1, ...this.tenantWhere() } })
     if (!items.length) return { restored: 0, renamed: 0 }
 
     const restoreIds = new Set<number>()
@@ -482,17 +492,21 @@ export class FileService {
       renamed++
     }
 
-    const result = await this.fileRepository.update({ id: In([...restoreIds]), ownerId }, { isDeleted: 0, deletedAt: null, updateTime: new Date() })
+    const result = await this.fileRepository.update(
+      { id: In([...restoreIds]), ownerId, ...this.tenantWhere() },
+      { isDeleted: 0, deletedAt: null, updateTime: new Date() }
+    )
     return { restored: result.affected ?? 0, renamed }
   }
 
   /** 彻底删除：先删记录，再按 hash 判断物理文件是否还有别的引用，没有才删磁盘 */
   async purge(ownerId: string, ids: number[]): Promise<{ purged: number }> {
     const allIds = await this.collectSubtreeIds(ownerId, ids, true)
-    const items = allIds.length ? await this.fileRepository.find({ where: { id: In(allIds), ownerId } }) : []
+    const tenantWhere = this.tenantWhere()
+    const items = allIds.length ? await this.fileRepository.find({ where: { id: In(allIds), ownerId, ...tenantWhere } }) : []
     if (!items.length) return { purged: 0 }
 
-    await this.fileRepository.delete({ id: In(items.map(item => item.id)), ownerId })
+    await this.fileRepository.delete({ id: In(items.map(item => item.id)), ownerId, ...tenantWhere })
 
     const storageKeys = [...new Set(items.map(item => item.storageKey).filter(Boolean))]
     for (const key of storageKeys) {
@@ -619,19 +633,48 @@ export class FileService {
   // 内部工具
   // ---------------------------------------------------------------------------
 
-  /** 按 id 取（必须属于当前用户且未删除），否则 404 */
+  /**
+   * 批量读写用的租户 where 片段
+   *
+   * 写路径严格只命中本租户（不含 tenant_id = 0 的平台共享行）；平台视角（null）不加条件。
+   * 返回空对象而不是 undefined：TypeORM 的 where 对象里 spread 一个 {} 是无副作用写法。
+   */
+  private tenantWhere(): { tenantId?: number } {
+    const tenantId = TenantContext.filterTenantId()
+    return tenantId === null ? {} : { tenantId }
+  }
+
+  /**
+   * 按 id 取（必须属于当前用户**且属于当前租户**且未删除），否则 404
+   *
+   * 租户条件不能省：file 表是按租户打标的，但一个账号可以同时属于多个租户
+   * （A 公司管理员 + B 公司员工很常见）。只按 ownerId 查的话，他在 A 上传的文件
+   * 切到 B 的上下文后仍能按 id 下载/改名/删除 —— 实测确实能拿到。
+   */
   private async findOneOrFail(ownerId: string, id: number): Promise<FileEntity> {
-    const item = await this.fileRepository.findOne({ where: { id, ownerId, isDeleted: 0 } })
+    const qb = this.fileRepository
+      .createQueryBuilder('f')
+      .where('f.id = :id', { id })
+      .andWhere('f.owner_id = :ownerId', { ownerId })
+      .andWhere('f.is_deleted = 0')
+    applyTenantScope(qb, 'f')
+    const item = await qb.getOne()
     if (!item) {
       throw new NotFoundException('文件不存在或已删除')
     }
     return item
   }
 
-  /** 父目录必须存在、属于当前用户、且是文件夹；0 表示根目录直接放行 */
+  /** 父目录必须存在、属于当前用户与当前租户、且是文件夹；0 表示根目录直接放行 */
   private async assertFolderExists(ownerId: string, parentId: number): Promise<void> {
     if (parentId === FILE_ROOT_ID) return
-    const parent = await this.fileRepository.findOne({ where: { id: parentId, ownerId, isDeleted: 0 } })
+    const qb = this.fileRepository
+      .createQueryBuilder('f')
+      .where('f.id = :parentId', { parentId })
+      .andWhere('f.owner_id = :ownerId', { ownerId })
+      .andWhere('f.is_deleted = 0')
+    applyTenantScope(qb, 'f')
+    const parent = await qb.getOne()
     if (!parent) {
       throw new BadRequestException('目标目录不存在或已删除')
     }
@@ -686,9 +729,10 @@ export class FileService {
     const collected = new Set<number>()
     let frontier = [...new Set(ids.filter(id => Number.isFinite(id) && id > 0))]
     const aliveFilter = includeDeleted ? {} : { isDeleted: 0 as const }
+    const tenantFilter = this.tenantWhere()
 
     for (let depth = 0; depth < FILE_MAX_DEPTH && frontier.length; depth++) {
-      const rows = await this.fileRepository.find({ where: { id: In(frontier), ownerId, ...aliveFilter } })
+      const rows = await this.fileRepository.find({ where: { id: In(frontier), ownerId, ...aliveFilter, ...tenantFilter } })
       const folders: number[] = []
       for (const row of rows) {
         if (collected.has(row.id)) continue
@@ -696,7 +740,7 @@ export class FileService {
         if (row.isFolder === 1) folders.push(row.id)
       }
       if (!folders.length) break
-      const children = await this.fileRepository.find({ where: { parentId: In(folders), ownerId, ...aliveFilter } })
+      const children = await this.fileRepository.find({ where: { parentId: In(folders), ownerId, ...aliveFilter, ...tenantFilter } })
       frontier = children.map(child => child.id).filter(id => !collected.has(id))
     }
     return [...collected]

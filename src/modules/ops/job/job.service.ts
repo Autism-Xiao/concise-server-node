@@ -6,6 +6,8 @@ import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { paginate, Pagination } from '../../../helper/paginate'
 import { randomId32 } from '../../../utils/password.util'
+import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
 import { JobHandlerRegistry } from './job.handlers'
 import { JobScheduler, type JobExecutionResult, type JobRunRecord } from './job.scheduler'
@@ -28,6 +30,7 @@ export class JobService {
   /** 分页列表（keyword 模糊匹配任务类名/描述，可按状态过滤） */
   async listByQuery(query: QueryJobDto): Promise<Pagination<JobView>> {
     const qb = this.jobRepository.createQueryBuilder('job').where('job.del_flag = 0').orderBy('job.create_time', 'DESC').addOrderBy('job.id', 'DESC')
+    applyTenantScope(qb, 'job')
 
     const keyword = query.keyword?.trim()
     if (keyword) {
@@ -49,6 +52,7 @@ export class JobService {
   /** 导出：与列表同筛选条件，单次最多 5000 条（配置备份/跨环境对照用） */
   async exportJobs(query: QueryJobDto): Promise<JobView[]> {
     const qb = this.jobRepository.createQueryBuilder('job').where('job.del_flag = 0').orderBy('job.create_time', 'DESC').addOrderBy('job.id', 'DESC')
+    applyTenantScope(qb, 'job')
     const keyword = query.keyword?.trim()
     if (keyword) {
       qb.andWhere('(job.job_class_name LIKE :kw OR job.description LIKE :kw)', { kw: `%${keyword}%` })
@@ -94,6 +98,8 @@ export class JobService {
       cronExpression: dto.cronExpression,
       parameter: dto.parameter,
       description: dto.description,
+      // 平台视角创建 = 0（平台级任务，执行时不带租户上下文）；租户视角创建 = 该租户
+      tenantId: TenantContext.filterTenantId() ?? 0,
       // 新建默认停止，避免误配 cron 后立刻开跑
       status: dto.status ?? -1,
       delFlag: 0,
