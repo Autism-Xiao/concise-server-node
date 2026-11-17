@@ -3,7 +3,7 @@ import { Column, Entity, PrimaryColumn } from 'typeorm'
 
 /**
  * 职级表（无对应原表，按同风格自建 sys_level）
- * - 主键 32 位字符串；level_name 唯一（P6 / M1 / T3 ...）
+ * - 主键 32 位字符串；level_name 由联合唯一键 (tenant_id, level_name) 保证同租户内唯一（P6 / M1 / T3 ...）
  * - level_rank 数字越大级别越高；status varchar：'1' 正常 / '0' 停用（沿用既有惯例）
  */
 @Entity('sys_level')
@@ -12,8 +12,8 @@ export class LevelEntity {
   @PrimaryColumn({ type: 'varchar', length: 32, comment: '主键id' })
   id: string
 
-  @ApiProperty({ description: '职级名称（如 P6 / M1）', example: 'P6' })
-  @Column({ length: 100, unique: true, comment: '职级名称' })
+  @ApiProperty({ description: '职级名称（如 P6 / M1，同一租户内唯一）', example: 'P6' })
+  @Column({ length: 100, comment: '职级名称（唯一性由联合键 (tenant_id, level_name) 保证）' })
   levelName: string
 
   @ApiProperty({ description: '等级数值，数字越大级别越高', example: 6 })

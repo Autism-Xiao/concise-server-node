@@ -5,6 +5,7 @@ import { Brackets, In, Repository } from 'typeorm'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { BaseService } from '../../../helper/crud/base.service'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import {
@@ -56,7 +57,7 @@ export class LevelService extends BaseService<LevelEntity> {
     return qb.getMany()
   }
 
-  /** 创建职级：level_name 唯一（数据库唯一索引兜底，前置拦截给可读报错） */
+  /** 创建职级：level_name 在「本租户 ∪ 平台共享」内唯一（数据库联合唯一键兜底，前置拦截给可读报错） */
   async createLevel(dto: CreateLevelDto, operator?: string): Promise<LevelEntity> {
     await this.assertNameAvailable(dto.levelName)
     return this.create({
@@ -75,9 +76,11 @@ export class LevelService extends BaseService<LevelEntity> {
     return this.update(id, { ...dto, updateBy: operator, updateTime: new Date() })
   }
 
+  /** 名称唯一校验（租户语义：本租户 ∪ 平台共享行内唯一；软删行仍占联合唯一键） */
   private async assertNameAvailable(levelName: string): Promise<void> {
-    const exists = await this.levelRepository.findOne({ where: { levelName } })
-    if (exists) {
+    const qb = this.levelRepository.createQueryBuilder('level').where('level.levelName = :levelName', { levelName })
+    applyTenantScope(qb, 'level')
+    if (await qb.getExists()) {
       throw new BadRequestException(`职级「${levelName}」已存在`)
     }
   }
@@ -103,8 +106,14 @@ export class LevelService extends BaseService<LevelEntity> {
     }
     assertImportRows(dataRows)
 
-    const existing = await this.levelRepository.find()
+    // 名称只在当前租户可见范围内匹配（本租户 ∪ 平台共享），跨租户数据不参与导入判定
+    const existingQb = this.levelRepository.createQueryBuilder('level')
+    applyTenantScope(existingQb, 'level')
+    const existing = await existingQb.getMany()
     const byName = new Map(existing.map(level => [level.levelName.trim().toLowerCase(), level]))
+    // 租户视角匹配到共享行（平台内置职级）不能更新，按冲突处理；平台视角全可写
+    const ctxTenantId = TenantContext.filterTenantId()
+    const canWriteRow = (level: LevelEntity): boolean => ctxTenantId === null || level.tenantId === ctxTenantId
     const seen = new Set<string>()
     const result = createImportResult(dataRows.length)
 
@@ -143,6 +152,10 @@ export class LevelService extends BaseService<LevelEntity> {
 
       const current = byName.get(nameKey)
       if (current) {
+        if (!canWriteRow(current)) {
+          failImportRow(result, rowNumber, `职级名称「${levelName}」与平台内置职级冲突，请更换名称`, levelName)
+          continue
+        }
         await this.levelRepository.update(current.id, {
           levelRank,
           ...(status ? { status } : {}),

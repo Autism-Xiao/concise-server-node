@@ -6,7 +6,8 @@ import { BaseService } from '../../../helper/crud/base.service'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
-import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
+import { applyTenantScope, tenantWriteCondition } from '../../../shared/tenant/tenant-scope.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { paginate, type Pagination } from '../../../helper/paginate'
 import { SysDictEntity } from './entities/sys-dict.entity'
 import { SysDictItemEntity } from './entities/sys-dict-item.entity'
@@ -57,7 +58,11 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
    * 字典不存在或已删除抛 400，便于前端拿到明确提示
    */
   async listByCode(code: string): Promise<{ dictId: string; dictCode: string; dictName: string; type: number; items: DictItemOption[] }> {
-    const dict = await this.dictRepository.findOne({ where: { dictCode: code, delFlag: 0 } })
+    // 按编码取字典要带租户范围：联合唯一键 (tenant_id, dict_code) 允许租户间重码，
+    // 不加范围的话撞码时取到哪条全凭运气；租户视角「本租户 ∪ 平台共享」内编码不会歧义
+    const dictQb = this.dictRepository.createQueryBuilder('dict').where('dict.dict_code = :code', { code }).andWhere('dict.del_flag = 0')
+    applyTenantScope(dictQb, 'dict')
+    const dict = await dictQb.getOne()
     if (!dict) {
       throw new BadRequestException(`字典「${code}」不存在或已删除`)
     }
@@ -76,9 +81,11 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
     }
   }
 
-  /** 字典项详情（排除已删除字典下的项） */
+  /** 字典项详情（排除已删除字典下的项；按租户范围过滤，跨租户的项视为不存在） */
   async findDetail(id: string): Promise<SysDictItemEntity> {
-    const item = await this.itemRepository.findOne({ where: { id }, relations: { dict: true } })
+    const itemQb = this.itemRepository.createQueryBuilder('item').leftJoinAndSelect('item.dict', 'dict').where('item.id = :id', { id })
+    applyTenantScope(itemQb, 'item')
+    const item = await itemQb.getOne()
     if (!item || item.dict?.delFlag === 1) {
       throw new NotFoundException('字典项不存在')
     }
@@ -125,21 +132,40 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
     patch.updateBy = operator ?? null
     patch.updateTime = new Date()
 
-    await this.itemRepository.createQueryBuilder().update(SysDictItemEntity).set(patch).where('id = :id', { id }).execute()
+    const updateQb = this.itemRepository.createQueryBuilder().update(SysDictItemEntity).set(patch).where('id = :id', { id })
+    // 写路径加严格租户条件：共享行只有平台视角能改
+    const writeCondition = tenantWriteCondition()
+    if (writeCondition) updateQb.andWhere(writeCondition.clause, writeCondition.params)
+    const updateResult = await updateQb.execute()
+    if (!updateResult.affected) {
+      throw new NotFoundException('字典项不存在')
+    }
     return this.findDetail(id)
   }
 
-  /** 删除字典项（硬删：sys_dict_item 无 del_flag 列） */
+  /** 删除字典项（硬删：sys_dict_item 无 del_flag 列；严格租户条件，跨租户/共享行不可删） */
   async deleteItem(id: string): Promise<void> {
     await this.findDetail(id)
-    await this.itemRepository.delete(id)
+    const deleteQb = this.itemRepository.createQueryBuilder().delete().where('id = :id', { id })
+    const writeCondition = tenantWriteCondition()
+    if (writeCondition) deleteQb.andWhere(writeCondition.clause, writeCondition.params)
+    const deleteResult = await deleteQb.execute()
+    if (!deleteResult.affected) {
+      throw new NotFoundException('字典项不存在')
+    }
   }
 
-  /** 所属字典必须存在且未删除 */
+  /** 所属字典必须存在、未删除且当前上下文可写（平台内置字典的字典项由平台维护） */
   private async assertDictExists(dictId: string): Promise<void> {
-    const dict = await this.dictRepository.findOne({ where: { id: dictId, delFlag: 0 } })
+    const dictQb = this.dictRepository.createQueryBuilder('dict').where('dict.id = :dictId', { dictId }).andWhere('dict.del_flag = 0')
+    applyTenantScope(dictQb, 'dict')
+    const dict = await dictQb.getOne()
     if (!dict) {
       throw new BadRequestException('所属字典不存在或已删除')
+    }
+    const ctxTenantId = TenantContext.filterTenantId()
+    if (ctxTenantId !== null && dict.tenantId !== ctxTenantId) {
+      throw new BadRequestException('平台内置字典的字典项由平台维护，如需定制请创建租户自有字典')
     }
   }
 

@@ -5,6 +5,7 @@ import { Brackets, In, Repository } from 'typeorm'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { BaseService } from '../../../helper/crud/base.service'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import {
@@ -67,7 +68,7 @@ export class PostService extends BaseService<PostEntity> {
     return qb.getMany()
   }
 
-  /** 创建岗位：postCode 唯一（前置拦截可读报错）；deptId 传了必须存在 */
+  /** 创建岗位：postCode 在「本租户 ∪ 平台共享」内唯一（前置拦截可读报错）；deptId 传了必须存在 */
   async createPost(dto: CreatePostDto, operator?: string): Promise<PostEntity> {
     await this.assertCodeAvailable(dto.postCode)
     if (dto.deptId) {
@@ -92,15 +93,20 @@ export class PostService extends BaseService<PostEntity> {
     return this.update(id, { ...dto, updateBy: operator, updateTime: new Date() })
   }
 
+  /** 编码唯一校验（租户语义：本租户 ∪ 平台共享行内唯一；软删行仍占联合唯一键） */
   private async assertCodeAvailable(postCode: string): Promise<void> {
-    const exists = await this.postRepository.findOne({ where: { postCode } })
-    if (exists) {
+    const qb = this.postRepository.createQueryBuilder('post').where('post.postCode = :postCode', { postCode })
+    applyTenantScope(qb, 'post')
+    if (await qb.getExists()) {
       throw new BadRequestException(`岗位编码「${postCode}」已存在`)
     }
   }
 
+  /** 所属部门必须存在且当前租户可见（跨租户的部门视为不存在） */
   private async assertDeptExists(deptId: string): Promise<void> {
-    const dept = await this.postRepository.manager.findOne(DeptEntity, { where: { id: deptId, delFlag: '0' } })
+    const qb = this.postRepository.manager.createQueryBuilder(DeptEntity, 'dept').where('dept.id = :deptId', { deptId }).andWhere('dept.del_flag = 0')
+    applyTenantScope(qb, 'dept')
+    const dept = await qb.getOne()
     if (!dept) {
       throw new BadRequestException('所属部门不存在或已删除')
     }
@@ -127,9 +133,17 @@ export class PostService extends BaseService<PostEntity> {
     }
     assertImportRows(dataRows)
 
-    const [existing, depts] = await Promise.all([this.postRepository.find(), this.postRepository.manager.find(DeptEntity, { where: { delFlag: '0' } })])
+    // 编码/部门都只在当前租户可见范围内匹配（本租户 ∪ 平台共享），跨租户数据不参与导入判定
+    const existingQb = this.postRepository.createQueryBuilder('post')
+    applyTenantScope(existingQb, 'post')
+    const deptsQb = this.postRepository.manager.createQueryBuilder(DeptEntity, 'dept').where('dept.del_flag = 0')
+    applyTenantScope(deptsQb, 'dept')
+    const [existing, depts] = await Promise.all([existingQb.getMany(), deptsQb.getMany()])
     const byCode = new Map(existing.map(post => [post.postCode.trim().toLowerCase(), post]))
     const deptByName = new Map(depts.map(dept => [dept.departName.trim().toLowerCase(), dept]))
+    // 租户视角匹配到共享行（平台内置岗位）不能更新，按冲突处理；平台视角全可写
+    const ctxTenantId = TenantContext.filterTenantId()
+    const canWriteRow = (post: PostEntity): boolean => ctxTenantId === null || post.tenantId === ctxTenantId
     const seen = new Set<string>()
     const result = createImportResult(dataRows.length)
 
@@ -178,6 +192,10 @@ export class PostService extends BaseService<PostEntity> {
       const description = pickCell(columns, cells, 'description') || undefined
 
       if (current) {
+        if (!canWriteRow(current)) {
+          failImportRow(result, rowNumber, `岗位编码「${postCode}」与平台内置岗位冲突，请更换编码`, postCode)
+          continue
+        }
         await this.postRepository.update(current.id, {
           ...(postName ? { postName } : {}),
           postSort,

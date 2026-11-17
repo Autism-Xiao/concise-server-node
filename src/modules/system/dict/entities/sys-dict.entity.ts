@@ -4,7 +4,7 @@ import { Column, Entity, PrimaryColumn } from 'typeorm'
 /**
  * 数据字典表
  *
- * - 主键 32 位字符串，dict_code 唯一
+ * - 主键 32 位字符串，dict_code 在联合唯一键 `(tenant_id, dict_code)` 内唯一（租户之间可重码）
  * - 字典类型没有「启用/停用」列，只有 del_flag（0 正常 / 1 已删除），本项目保持一致
  * - type：0 string / 1 number，表示该字典下 item_value 的值类型
  */
@@ -18,8 +18,8 @@ export class SysDictEntity {
   @Column({ name: 'dict_name', length: 100, comment: '字典名称' })
   dictName: string
 
-  @ApiProperty({ description: '字典编码（唯一，前端按此取值）', example: 'sys_user_gender' })
-  @Column({ name: 'dict_code', length: 100, unique: true, comment: '字典编码' })
+  @ApiProperty({ description: '字典编码（同一租户内唯一，前端按此取值）', example: 'sys_user_gender' })
+  @Column({ name: 'dict_code', length: 100, comment: '字典编码（唯一性由联合键 (tenant_id, dict_code) 保证）' })
   dictCode: string
 
   @ApiPropertyOptional({ description: '描述', example: '用户性别字典', nullable: true })

@@ -17,7 +17,8 @@ import {
   type ImportResult
 } from '../../../helper/import/excel-import'
 import { randomId32 } from '../../../utils/password.util'
-import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
+import { applyTenantScope, tenantWriteCondition } from '../../../shared/tenant/tenant-scope.util'
 import { SysDictEntity } from './entities/sys-dict.entity'
 import { SysDictItemEntity } from './entities/sys-dict-item.entity'
 import type { CreateDictDto } from './dto/create-dict.dto'
@@ -103,7 +104,7 @@ export class DictService extends BaseService<SysDictEntity> {
     return this.findActive(id)
   }
 
-  /** 创建字典：编码全局唯一（软删的记录仍占唯一索引，所以不带 del_flag 条件） */
+  /** 创建字典：编码在「本租户 ∪ 平台共享」内唯一（软删的记录仍占联合唯一键，所以不带 del_flag 条件） */
   async createDict(dto: CreateDictDto, operator?: string): Promise<SysDictEntity> {
     await this.assertCodeAvailable(dto.dictCode)
     return this.create({
@@ -132,7 +133,14 @@ export class DictService extends BaseService<SysDictEntity> {
     patch.updateBy = operator ?? null
     patch.updateTime = new Date()
 
-    await this.dictRepository.createQueryBuilder().update(SysDictEntity).set(patch).where('id = :id', { id }).execute()
+    const updateQb = this.dictRepository.createQueryBuilder().update(SysDictEntity).set(patch).where('id = :id', { id })
+    // 写路径加严格租户条件：共享行只有平台视角能改（租户按 id 改共享字典会被拒绝成 404）
+    const writeCondition = tenantWriteCondition()
+    if (writeCondition) updateQb.andWhere(writeCondition.clause, writeCondition.params)
+    const updateResult = await updateQb.execute()
+    if (!updateResult.affected) {
+      throw new NotFoundException('字典不存在')
+    }
     return this.findActive(id)
   }
 
@@ -143,21 +151,33 @@ export class DictService extends BaseService<SysDictEntity> {
     if (itemCount > 0) {
       throw new BizException(BizErrorCode.DICT_HAS_ITEMS, `该字典下存在 ${itemCount} 个字典项，请先删除字典项`, HttpStatus.BAD_REQUEST)
     }
-    await this.dictRepository.createQueryBuilder().update(SysDictEntity).set({ delFlag: 1, updateTime: new Date() }).where('id = :id', { id }).execute()
+    const deleteQb = this.dictRepository.createQueryBuilder().update(SysDictEntity).set({ delFlag: 1, updateTime: new Date() }).where('id = :id', { id })
+    const writeCondition = tenantWriteCondition()
+    if (writeCondition) deleteQb.andWhere(writeCondition.clause, writeCondition.params)
+    const deleteResult = await deleteQb.execute()
+    if (!deleteResult.affected) {
+      throw new NotFoundException('字典不存在')
+    }
   }
 
-  /** 取未删除的字典，不存在抛 404 */
+  /** 取未删除且当前租户可见的字典，不存在抛 404 */
   private async findActive(id: string): Promise<SysDictEntity> {
-    const dict = await this.dictRepository.findOne({ where: { id, delFlag: 0 } })
+    const qb = this.dictRepository.createQueryBuilder('dict').where('dict.id = :id', { id }).andWhere('dict.del_flag = 0')
+    applyTenantScope(qb, 'dict')
+    const dict = await qb.getOne()
     if (!dict) {
       throw new NotFoundException('字典不存在')
     }
     return dict
   }
 
-  /** 字典编码唯一校验 */
+  /**
+   * 字典编码唯一校验（租户语义：本租户 ∪ 平台共享行内唯一，租户之间可重码；
+   * 软删的记录仍占联合唯一键，所以不带 del_flag 条件）
+   */
   private async assertCodeAvailable(dictCode: string, excludeId?: string): Promise<void> {
     const qb = this.dictRepository.createQueryBuilder('dict').where('dict.dict_code = :dictCode', { dictCode })
+    applyTenantScope(qb, 'dict')
     if (excludeId) {
       qb.andWhere('dict.id <> :excludeId', { excludeId })
     }
@@ -191,7 +211,10 @@ export class DictService extends BaseService<SysDictEntity> {
     }
 
     const result = createImportResult()
-    const allDicts = await this.dictRepository.find()
+    // 只在当前租户可见范围内判定编码（本租户 ∪ 平台共享）：跨租户的字典既不该被匹配更新，也不能拿来当「已存在」
+    const allDictsQb = this.dictRepository.createQueryBuilder('dict')
+    applyTenantScope(allDictsQb, 'dict')
+    const allDicts = await allDictsQb.getMany()
     const byCode = new Map(allDicts.map(dict => [dict.dictCode.trim().toLowerCase(), dict]))
     const dictType = new Map<string, SysDictEntity>()
     for (const dict of allDicts) {
@@ -199,6 +222,9 @@ export class DictService extends BaseService<SysDictEntity> {
         dictType.set(dict.id, dict)
       }
     }
+    // 当前上下文可写的租户（null=平台视角全可写）；租户视角匹配到共享行（平台内置字典）不能更新，按冲突处理
+    const ctxTenantId = TenantContext.filterTenantId()
+    const canWriteRow = (dict: SysDictEntity): boolean => ctxTenantId === null || dict.tenantId === ctxTenantId
 
     // ---- 第一张表：字典类型 ----
     if (typeRows.length) {
@@ -240,6 +266,10 @@ export class DictService extends BaseService<SysDictEntity> {
 
         const current = byCode.get(codeKey)
         if (current) {
+          if (!canWriteRow(current)) {
+            failImportRow(result, rowNumber, `[字典类型] 字典编码「${dictCode}」与平台内置字典冲突，请更换编码`, dictCode)
+            continue
+          }
           await this.dictRepository.update(current.id, {
             ...(dictName ? { dictName } : {}),
             ...(type !== undefined ? { type } : {}),
@@ -315,8 +345,8 @@ export class DictService extends BaseService<SysDictEntity> {
           continue
         }
         const dict = byCode.get(dictCode.toLowerCase())
-        if (!dict || dict.delFlag !== 0) {
-          failImportRow(result, rowNumber, `[字典项] 字典「${dictCode}」不存在，请先在上方「字典类型」表里定义`, itemValue)
+        if (!dict || dict.delFlag !== 0 || !canWriteRow(dict)) {
+          failImportRow(result, rowNumber, `[字典项] 字典「${dictCode}」不存在或与平台内置字典冲突，请先在上方「字典类型」表里定义`, itemValue)
           continue
         }
         const key = itemKey(dict.id, itemValue)
@@ -350,6 +380,8 @@ export class DictService extends BaseService<SysDictEntity> {
           sortOrder,
           status: status ? Number(status) : 1,
           description,
+          // manager.save 不走 BaseService，租户打标要显式做（平台视角留给列默认值 0）
+          ...(ctxTenantId !== null ? { tenantId: ctxTenantId } : {}),
           createBy: operator,
           createTime: new Date()
         })

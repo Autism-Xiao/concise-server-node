@@ -51,8 +51,8 @@ export class DeptService extends BaseService<DeptEntity> {
       await this.assertParentExists(parentId)
     }
     const orgCode = dto.orgCode || (await this.generateOrgCode(parentId))
-    // 手工指定编码时前置查重（org_code 唯一索引，撞了会 500，这里转 400 人话）
-    if (dto.orgCode && (await this.repository.count({ where: { orgCode } })) > 0) {
+    // 手工指定编码时前置查重（联合唯一键 (tenant_id, org_code)，撞了会 500，这里转 400 人话）
+    if (dto.orgCode && (await this.isOrgCodeTaken(orgCode))) {
       throw new BadRequestException(`部门编码「${orgCode}」已被占用`)
     }
     return super.create({
@@ -70,7 +70,7 @@ export class DeptService extends BaseService<DeptEntity> {
   async update(id: string, dto: DeepPartial<DeptEntity>): Promise<DeptEntity> {
     const before = await this.findOne(id)
     // 手工改编码时前置查重（排除自身），避免撞唯一索引变 500
-    if (dto.orgCode && dto.orgCode !== before.orgCode && (await this.repository.count({ where: { orgCode: dto.orgCode } })) > 0) {
+    if (dto.orgCode && dto.orgCode !== before.orgCode && (await this.isOrgCodeTaken(dto.orgCode))) {
       throw new BadRequestException(`部门编码「${dto.orgCode}」已被占用`)
     }
     if (dto.parentId !== undefined) {
@@ -197,11 +197,21 @@ export class DeptService extends BaseService<DeptEntity> {
     }
     let index = siblings.length + 1
     let code = `${prefix}A${String(index).padStart(2, '0')}`
-    while ((await this.repository.count({ where: { orgCode: code } })) > 0) {
+    while (await this.isOrgCodeTaken(code)) {
       index++
       code = `${prefix}A${String(index).padStart(2, '0')}`
     }
     return code
+  }
+
+  /**
+   * 机构编码是否已被占用（租户语义：本租户 ∪ 平台共享行内唯一，租户之间可重码；
+   * 平台视角全局查重。软删行仍占联合唯一键，所以不带 del_flag 条件）
+   */
+  private async isOrgCodeTaken(orgCode: string): Promise<boolean> {
+    const qb = this.repository.createQueryBuilder('d').where('d.orgCode = :orgCode', { orgCode })
+    applyTenantScope(qb, 'd')
+    return qb.getExists()
   }
 
   /** 收集某部门所有后代 id */

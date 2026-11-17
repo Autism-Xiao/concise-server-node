@@ -5,7 +5,7 @@ import { UserEntity } from '../../../user/entities/user.entity'
 /**
  * 组织机构表
  * - 主键 32 位字符串；parent_id 为 null/'' 视为顶级
- * - org_code 唯一且必填（既有的机构编码字段，也用于用户 sys_user.org_code）
+ * - org_code 必填，联合唯一键 (tenant_id, org_code) 保证同租户内唯一（也用于用户 sys_user.org_code 冗余）
  * - status / del_flag 为 varchar：'1'/'0'（沿用原样）
  * - 部门↔用户走 sys_user_depart（dep_id + user_id），一个部门可挂多个用户
  */
@@ -47,8 +47,8 @@ export class DeptEntity {
   @Column({ length: 10, nullable: true, comment: '树深度层级level' })
   orgType?: string
 
-  @ApiProperty({ description: '机构编码（唯一，空则自动生成，如 A01 / A01A01）', example: 'A01' })
-  @Column({ length: 64, unique: true, comment: '机构编码' })
+  @ApiProperty({ description: '机构编码（同一租户内唯一，空则自动生成，如 A01 / A01A01）', example: 'A01' })
+  @Column({ length: 64, comment: '机构编码（唯一性由联合键 (tenant_id, org_code) 保证）' })
   orgCode: string
 
   @ApiPropertyOptional({ description: '手机号', example: '13800138000', nullable: true })

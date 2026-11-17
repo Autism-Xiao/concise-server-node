@@ -5,7 +5,7 @@ import { UserEntity } from '../../../user/entities/user.entity'
 
 /**
  * 岗位表
- * - 主键 32 位字符串；post_code 唯一
+ * - 主键 32 位字符串；post_code 由联合唯一键 (tenant_id, post_code) 保证同租户内唯一
  * - 补充 dept_id（所属部门，原设计走职位↔部门关联，这里简化为直挂一列）与 status
  */
 @Entity('sys_position')
@@ -14,8 +14,8 @@ export class PostEntity {
   @PrimaryColumn({ type: 'varchar', length: 32, comment: '主键id' })
   id: string
 
-  @ApiProperty({ description: '岗位编码（唯一）', example: 'dev_engineer' })
-  @Column({ length: 100, unique: true, comment: '岗位编码' })
+  @ApiProperty({ description: '岗位编码（同一租户内唯一）', example: 'dev_engineer' })
+  @Column({ length: 100, comment: '岗位编码（唯一性由联合键 (tenant_id, post_code) 保证）' })
   postCode: string
 
   @ApiProperty({ description: '岗位名称', example: '研发工程师' })
