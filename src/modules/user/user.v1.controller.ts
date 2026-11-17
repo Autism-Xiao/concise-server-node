@@ -20,6 +20,7 @@ import { UpdateUserDto } from './dto/update-user.dto'
 import { UpdateUserStatusDto } from './dto/update-user-status.dto'
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto'
 import { UpdatePlatformAdminDto } from './dto/update-platform-admin.dto'
+import { UpdateUserVipDto } from './dto/update-user-vip.dto'
 import { UserEntity } from './entities/user.entity'
 import { USER_IMPORT_DEFAULT_PASSWORD, USER_IMPORT_MAX_SIZE, UserService } from './user.service'
 
@@ -319,6 +320,18 @@ export class UserV1Controller {
     @Request() req: { user: { id: string; username?: string; isPlatformAdmin?: number } }
   ) {
     const user = await this.userService.setPlatformAdmin(id, dto.isPlatformAdmin, req.user)
+    return this.userService.stripPassword(user)
+  }
+
+  @ApiOperation({
+    summary: '授予/取消 VIP（v1）',
+    description: 'VIP = 可自助开通租户的资格。权限点 system:user:vip 是 platform 级：只有平台管理员能调用。取消 VIP 不回收已开租户；到期日留空表示永久'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:vip')
+  @Put(':id/vip')
+  async setVip(@Param('id') id: string, @Body() dto: UpdateUserVipDto, @Request() req: { user: { id: string; username?: string } }) {
+    const user = await this.userService.setVip(id, dto, req.user)
     return this.userService.stripPassword(user)
   }
 

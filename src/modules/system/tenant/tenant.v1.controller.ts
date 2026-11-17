@@ -4,7 +4,9 @@ import type { Request } from 'express'
 
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
+import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
 import { Pagination } from '../../../helper/paginate'
+import { ApplyTenantDto } from './dto/apply-tenant.dto'
 import { AssignUsersDto, QueryTenantUserDto, SwitchTenantDto } from './dto/tenant-user.dto'
 import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto'
 import { CreateTenantDto } from './dto/create-tenant.dto'
@@ -51,6 +53,28 @@ export class TenantV1Controller {
   @Post('switch')
   switch(@Req() req: AuthedRequest, @Body() dto: SwitchTenantDto) {
     return this.tenantService.switch(req.user!.id, dto.tenantId)
+  }
+
+  @ApiOperation({
+    summary: '自助开通资格',
+    description: '登录即可调用：返回是否 VIP、VIP 到期时间、已开租户数、上限与不可开通原因（NEED_VIP / QUOTA_EXCEEDED）'
+  })
+  @Get('apply/quota')
+  applyQuota(@Req() req: AuthedRequest) {
+    return this.tenantService.applyQuota(req.user!.id)
+  }
+
+  @ApiOperation({
+    summary: '自助开通租户',
+    description: '登录即可调用；需有效 VIP（平台管理员免检）且未超 tenant.vip.maxTenants 上限。成功后当前用户成为该租户管理员，并自动切换为登录租户'
+  })
+  // 注意：限流守卫在 Jwt 之前执行，拿不到 req.user，by:'account' 实际退化成 IP 维度，
+  // 所以这里直接按 IP 计数（10 次/小时，够正常用户开团队、也压得住刷接口）。
+  @RateLimit({ limit: 10, window: 3600, message: '开通过于频繁，请稍后再试' })
+  @OperLog('租户管理')
+  @Post('apply')
+  apply(@Body() dto: ApplyTenantDto, @Req() req: AuthedRequest) {
+    return this.tenantService.applyCreate(req.user!.id, dto, req.user?.username)
   }
 
   @ApiOperation({ summary: '初始化全部租户的默认角色', description: '幂等：补建缺失的 admin/editor/viewer 角色，并补齐新增菜单的授权；需 system:tenant:edit' })

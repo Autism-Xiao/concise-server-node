@@ -105,6 +105,14 @@ export class UserEntity {
   @Column({ type: 'tinyint', default: 0, name: 'is_platform_admin', comment: '是否平台管理员(1是 0否)' })
   isPlatformAdmin: number
 
+  @ApiPropertyOptional({ description: '会员等级：0 普通 / 1 VIP（VIP 可自助开通租户）', example: 0, enum: [0, 1] })
+  @Column({ type: 'tinyint', default: 0, name: 'vip_level', comment: '会员等级(0普通 1VIP)' })
+  vipLevel?: number
+
+  @ApiPropertyOptional({ description: 'VIP 到期时间（空 = 永久；过期只影响新开通租户，不回收已开的）', nullable: true })
+  @Column({ type: 'datetime', nullable: true, name: 'vip_expire_at', comment: 'VIP到期时间(空=永久)' })
+  vipExpireAt?: Date | null
+
   @ApiPropertyOptional({ description: '工号（唯一）', example: '00001', nullable: true })
   @Column({ length: 100, nullable: true, unique: true, comment: '工号，唯一键' })
   workNo?: string

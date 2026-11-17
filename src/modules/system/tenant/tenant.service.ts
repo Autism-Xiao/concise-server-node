@@ -9,8 +9,10 @@ import { PermissionCacheService } from '../../../shared/permission-cache/permiss
 import { TenantAccessService } from '../../../shared/tenant/tenant-access.service'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { isDuplicateEntryError } from '../../../utils/db-error.util'
+import { SystemConfigService } from '../config/system-config.service'
 import { UserService } from '../../user/user.service'
 import { UserEntity } from '../../user/entities/user.entity'
+import { ApplyTenantDto } from './dto/apply-tenant.dto'
 import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto'
 import { CreateTenantDto } from './dto/create-tenant.dto'
 import { QueryTenantDto } from './dto/query-tenant.dto'
@@ -29,6 +31,21 @@ export interface TenantUserItem {
   joinTime: Date | null
 }
 
+/** 自助开通资格（前端「开通我的团队」入口据此决定显示表单还是升级提示） */
+export interface TenantApplyQuota {
+  /** 是否有有效 VIP 资格（平台管理员恒为 true） */
+  isVip: boolean
+  /** VIP 到期时间（ISO；null = 永久） */
+  vipExpireAt: string | null
+  /** 已（自己）开通且未删除的租户数 */
+  ownedCount: number
+  /** 可开通上限；-1 = 不限制（平台管理员） */
+  maxTenants: number
+  canApply: boolean
+  /** '' | 'NEED_VIP' | 'QUOTA_EXCEEDED'，前端按它切文案 */
+  reason: '' | 'NEED_VIP' | 'QUOTA_EXCEEDED'
+}
+
 @Injectable()
 export class TenantService {
   constructor(
@@ -41,6 +58,7 @@ export class TenantService {
     private readonly tenantAccess: TenantAccessService,
     private readonly provision: TenantProvisionService,
     private readonly permissionCache: PermissionCacheService,
+    private readonly config: SystemConfigService,
     private readonly userService: UserService
   ) {}
 
@@ -113,6 +131,94 @@ export class TenantService {
       }
       throw error
     }
+  }
+
+  /**
+   * 自助开通资格：VIP 状态 + 已开租户数 + 上限
+   *
+   * VIP 落在账号上（sys_user.vip_level / vip_expire_at）——开通租户时租户还不存在。
+   * 平台管理员不受限（本来就能在租户管理里直接建）。
+   */
+  async applyQuota(userId: string): Promise<TenantApplyQuota> {
+    const rows = await this.dataSource.query<Array<{ vipLevel: number; vipExpireAt: Date | null; isPlatformAdmin: number }>>(
+      'SELECT vip_level AS vipLevel, vip_expire_at AS vipExpireAt, is_platform_admin AS isPlatformAdmin FROM sys_user WHERE id = ? AND del_flag = 0',
+      [userId]
+    )
+    if (!rows.length) throw new NotFoundException('用户不存在')
+    const vipExpireAt = rows[0].vipExpireAt ? new Date(rows[0].vipExpireAt) : null
+    const isSuper = Number(rows[0].isPlatformAdmin) === 1
+    const vipActive = Number(rows[0].vipLevel) === 1 && (!vipExpireAt || vipExpireAt.getTime() > Date.now())
+    const isVip = isSuper || vipActive
+    const maxTenants = isSuper ? -1 : await this.config.getNumber('tenant.vip.maxTenants', 1)
+    // 只数「自己开通的团队」：被邀请加入别人的租户不占额度（平台代开的 owner 为 NULL，也不占）
+    const counted = await this.dataSource.query<Array<{ c: number }>>('SELECT COUNT(*) AS c FROM sys_tenant WHERE owner_user_id = ? AND del_flag = 0', [userId])
+    const ownedCount = Number(counted[0]?.c ?? 0)
+    const canApply = isVip && (maxTenants < 0 || ownedCount < maxTenants)
+    const reason: TenantApplyQuota['reason'] = canApply ? '' : isVip ? 'QUOTA_EXCEEDED' : 'NEED_VIP'
+    return {
+      isVip,
+      vipExpireAt: vipExpireAt ? vipExpireAt.toISOString() : null,
+      ownedCount,
+      maxTenants,
+      canApply,
+      reason
+    }
+  }
+
+  /**
+   * 自助开通租户（登录用户 → 成为该租户管理员）
+   *
+   * 事务里一次做完：建租户 → 初始化默认角色 → 当前用户入租户 + 绑 admin → 记住为登录租户。
+   * 任何一步失败整体回滚，不会留下「建了租户却进不去」的空壳。
+   */
+  async applyCreate(userId: string, dto: ApplyTenantDto, operator?: string): Promise<TenantEntity> {
+    const quota = await this.applyQuota(userId)
+    if (!quota.isVip) {
+      throw new BizException(BizErrorCode.TENANT_APPLY_NEED_VIP, '开通租户需要 VIP 资格，请联系平台开通', HttpStatus.FORBIDDEN)
+    }
+    if (!quota.canApply) {
+      throw new BizException(BizErrorCode.TENANT_APPLY_QUOTA, `最多可开通 ${quota.maxTenants} 个租户，已达上限，请联系平台提升额度`, HttpStatus.BAD_REQUEST)
+    }
+    await this.assertCodeAvailable(dto.code)
+    const entity = this.repository.create({
+      name: dto.name,
+      code: dto.code,
+      // 记录开通人：VIP 额度按「自己开的团队」统计，被邀请加入的租户不算
+      ownerUserId: userId,
+      contact: dto.contact ?? '',
+      phone: dto.phone ?? '',
+      plan: 'standard',
+      status: 0,
+      remark: dto.remark ?? '',
+      delFlag: 0,
+      createBy: operator ?? null,
+      createTime: new Date()
+    })
+    let tenant: TenantEntity
+    try {
+      tenant = await this.dataSource.transaction(async manager => {
+        const saved = await manager.getRepository(TenantEntity).save(entity)
+        await this.provision.provisionIn(manager, saved.id, operator)
+        const roles = await manager.query<Array<{ id: string }>>('SELECT id FROM sys_role WHERE tenant_id = ? AND role_code = ? LIMIT 1', [saved.id, 'admin'])
+        const adminRoleId = roles[0]?.id
+        if (!adminRoleId) {
+          throw new BizException(BizErrorCode.TENANT_NO_ADMIN_TEMPLATE, '租户默认角色初始化失败，请稍后重试', HttpStatus.INTERNAL_SERVER_ERROR)
+        }
+        await manager.query('INSERT INTO sys_user_tenant (user_id, tenant_id, status, create_time) VALUES (?, ?, 0, NOW())', [userId, saved.id])
+        await manager.query('INSERT IGNORE INTO sys_user_role (user_id, role_id) VALUES (?, ?)', [userId, adminRoleId])
+        await manager.query('UPDATE sys_user SET login_tenant_id = ?, update_time = NOW() WHERE id = ?', [saved.id, userId])
+        return saved
+      })
+    } catch (error) {
+      if (isDuplicateEntryError(error)) {
+        throw new BizException(BizErrorCode.TENANT_CODE_CONFLICT, `租户编码「${dto.code}」已存在`, HttpStatus.BAD_REQUEST)
+      }
+      throw error
+    }
+    // 新增了角色授权 + 用户归属：权限集合与租户归属缓存都要失效
+    this.permissionCache.invalidateAll()
+    this.tenantAccess.invalidate()
+    return tenant
   }
 
   async update(id: number, dto: UpdateTenantDto, operator?: string): Promise<TenantEntity> {

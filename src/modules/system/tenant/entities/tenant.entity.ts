@@ -38,6 +38,10 @@ export class TenantEntity {
   @Column({ length: 64, unique: true, comment: '租户编码' })
   code: string
 
+  @ApiPropertyOptional({ description: '开通人（自助开通时记录；空 = 平台代开，不占个人额度）', nullable: true })
+  @Column({ type: 'varchar', length: 32, nullable: true, name: 'owner_user_id', comment: '开通人(自助开通)' })
+  ownerUserId?: string | null
+
   @ApiPropertyOptional({ description: '联系人', nullable: true })
   @Column({ length: 50, default: '', comment: '联系人' })
   contact?: string

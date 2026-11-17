@@ -37,7 +37,9 @@ const DEFAULTS: Record<string, string> = {
   'mail.resetCode.ttlMinutes': '5',
   // 租户级参数（allow_tenant=1，租户覆盖为空串等同跟随平台）
   'tenant.ui.themeColor': '',
-  'tenant.login.welcomeText': ''
+  'tenant.login.welcomeText': '',
+  // 平台级：一个 VIP 账号最多能自助开通几个租户（0 或负数视为不限制，仅在代码侧兜底）
+  'tenant.vip.maxTenants': '1'
 }
 
 /** 进程内缓存有效期（毫秒）：多实例部署时，别处改的值最多这么久后本实例生效 */

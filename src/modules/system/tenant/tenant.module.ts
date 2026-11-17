@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm'
 import { TenantEntity } from './entities/tenant.entity'
 import { UserTenantEntity } from './entities/user-tenant.entity'
 import { UserModule } from '../../user/user.module'
+import { SystemConfigModule } from '../config/config.module'
 import { TenantService } from './tenant.service'
 import { TenantProvisionService } from './tenant-provision.service'
 import { TenantV1Controller } from './tenant.v1.controller'
@@ -18,7 +19,12 @@ import { TenantV1Controller } from './tenant.v1.controller'
  * 界面设置初始化，不自己重写一套。UserModule 不反向依赖 TenantModule，无循环。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([TenantEntity, UserTenantEntity]), UserModule],
+  imports: [
+    TypeOrmModule.forFeature([TenantEntity, UserTenantEntity]),
+    UserModule,
+    // 自助开通的额度来自 sys_config（tenant.vip.maxTenants），不引拿不到 SystemConfigService
+    SystemConfigModule
+  ],
   controllers: [TenantV1Controller],
   providers: [TenantService, TenantProvisionService],
   exports: [TenantService, TenantProvisionService]

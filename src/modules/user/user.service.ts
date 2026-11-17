@@ -30,6 +30,7 @@ import { UserEntity } from './entities/user.entity'
 import { RoleEntity } from '../role/entities/role.entity'
 import type { QueryUserDto } from './dto/query-user.dto'
 import type { UpdateMyProfileDto } from './dto/update-my-profile.dto'
+import type { UpdateUserVipDto } from './dto/update-user-vip.dto'
 import { userKeywordClause, userKeywordParam } from './user-search.util'
 
 /** 用户状态（对齐 sys_user）：1 正常 / 2 冻结 */
@@ -1066,6 +1067,28 @@ export class UserService extends BaseService<UserEntity> {
     }
     await this.repository.update(id, { isPlatformAdmin: enabled ? 1 : 0, updateBy: actor.username, updateTime: new Date() })
     // 降权必须立刻生效：清掉 JwtStrategy 的用户态缓存，否则 30s 内旧值仍被当作平台管理员
+    this.authUserCache.invalidate(id)
+    return this.findOneDetail(id)
+  }
+
+  /**
+   * 授予 / 取消 VIP（自助开通租户的资格）
+   *
+   * 与平台管理员同理：单独端点 + platform scope 权限点（system:user:vip），
+   * 不让持有 system:user:update 的租户管理员给本租户的人发 VIP。
+   * 取消 VIP 不清空已开的租户——VIP 只是「能否新开」，租户生命周期看自己的 expire_at。
+   */
+  async setVip(id: string, dto: UpdateUserVipDto, actor: { username?: string }): Promise<UserEntity> {
+    // 先确认用户存在（软删的也拦住），否则会往不存在的账号写 VIP
+    await this.findOne(id)
+    const enabled = dto.vipLevel === 1
+    await this.repository.update(id, {
+      vipLevel: enabled ? 1 : 0,
+      // 取消 VIP 连到期时间一起清掉；授予时空字符串/不传 = 永久
+      vipExpireAt: enabled && dto.vipExpireAt ? new Date(`${dto.vipExpireAt}T23:59:59`) : null,
+      updateBy: actor.username,
+      updateTime: new Date()
+    })
     this.authUserCache.invalidate(id)
     return this.findOneDetail(id)
   }

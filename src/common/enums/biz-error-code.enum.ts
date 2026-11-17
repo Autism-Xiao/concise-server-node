@@ -122,6 +122,10 @@ export enum BizErrorCode {
   TENANT_ROLE_BOUNDARY = 8102,
   /** 租户没有内置 admin 角色模板（需先 provision） —— 消费方：开通管理员弹窗提示「初始化角色」 */
   TENANT_NO_ADMIN_TEMPLATE = 8103,
+  /** 开通租户需要 VIP 资格 —— 消费方：前端「开通我的团队」弹框切到升级提示 */
+  TENANT_APPLY_NEED_VIP = 8104,
+  /** 自助开通超出 VIP 可开租户数上限 —— 消费方：前端提示已达上限并引导联系平台 */
+  TENANT_APPLY_QUOTA = 8105,
 
   // ============ 9xxx 运维：定时任务 / 在线会话（消费方：运维页差异化提示） ============
 
