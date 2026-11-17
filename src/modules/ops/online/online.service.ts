@@ -6,6 +6,7 @@ import { BizException } from '../../../common/exceptions/biz.exception'
 import { Pagination } from '../../../helper/paginate'
 import { RealtimeService, WS_EVENTS } from '../../../shared/realtime/realtime.service'
 import { RedisService } from '../../../shared/redis/redis.service'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { parseRequestInfo } from '../../../utils/request-info.util'
 import type { QueryOnlineDto } from './dto/query-online.dto'
 
@@ -30,6 +31,15 @@ export interface OnlineSession {
   loginTime: string
   lastActive: string
   expiresAt: string
+  /**
+   * 会话登记时用户所在的租户上下文（touch 时刻的 TenantContext）。
+   * - `>0`：租户视角的会话
+   * - `0`：平台视角（超管未切租户）的会话
+   * - 缺失：本字段上线前的旧会话，视同 0（两小时内自然过期，不用迁移）
+   * 在线会话不是「共享数据」：租户管理员只能看到/踢除租户上下文的会话，
+   * 平台视角（filterTenantId = null）看全部。
+   */
+  tenantId?: number
 }
 
 /** JWT 策略里能拿到的请求最小形态（避免依赖 express 类型） */
@@ -102,7 +112,9 @@ export class OnlineService {
         os: info.os,
         loginTime,
         lastActive: new Date().toISOString(),
-        expiresAt: new Date(exp * 1000).toISOString()
+        expiresAt: new Date(exp * 1000).toISOString(),
+        // 登记时的租户上下文：列表/踢人按这个归属做租户隔离（JwtStrategy 在中间件上下文内执行）
+        tenantId: TenantContext.filterTenantId() ?? 0
       }
       // Redis 3.x 兼容：用 SETEX 写整串 JSON（不用 HSET 多字段）
       await client.setex(key, ttl, JSON.stringify(session))
@@ -258,6 +270,13 @@ export class OnlineService {
         [item.username, item.ip, item.location, item.browser, item.os, item.dept].some(field => (field ?? '').toLowerCase().includes(keyword))
       )
     }
+    // 租户隔离：租户视角只看「本租户上下文登记」的会话（精确等于，不含 0——
+    // 0 是平台视角的会话，属于平台数据，不是共享数据）；平台视角（null）看全部。
+    // 会话里的 tenantId 缺失（旧记录）视同 0。
+    const scopeTenantId = TenantContext.filterTenantId()
+    if (scopeTenantId !== null) {
+      sessions = sessions.filter(item => (item.tenantId ?? 0) === scopeTenantId)
+    }
     sessions.sort((a, b) => b.loginTime.localeCompare(a.loginTime))
 
     const start = (page - 1) * pageSize
@@ -274,6 +293,11 @@ export class OnlineService {
     const raw = await client.get(key)
     const session = raw ? this.parse<OnlineSession>(raw) : null
     if (!session) {
+      throw new BizException(BizErrorCode.SESSION_EXPIRED, '在线会话不存在或已过期', HttpStatus.NOT_FOUND)
+    }
+    // 租户边界：租户视角只能踢「本租户上下文登记」的会话；跨租户的按不存在处理（不泄漏会话是否存在）
+    const scopeTenantId = TenantContext.filterTenantId()
+    if (scopeTenantId !== null && (session.tenantId ?? 0) !== scopeTenantId) {
       throw new BizException(BizErrorCode.SESSION_EXPIRED, '在线会话不存在或已过期', HttpStatus.NOT_FOUND)
     }
     const ttl = Math.max(Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000), 60)

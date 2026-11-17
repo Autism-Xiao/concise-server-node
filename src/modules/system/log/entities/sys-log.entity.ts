@@ -21,7 +21,7 @@ export class SysLogEntity {
    * 平台管理员的运维记录不该出现在租户的审计列表里。租户查询用严格相等，不带 OR 0。
    */
   @ApiProperty({ description: '租户 ID（0=平台级操作，仅平台管理员可见）', example: 1 })
-  @Column({ type: 'int', default: 1, name: 'tenant_id', comment: '租户ID(0=平台级操作)' })
+  @Column({ type: 'int', default: 0, name: 'tenant_id', comment: '租户ID(0=平台级操作)' })
   tenantId: number
 
   @ApiPropertyOptional({ description: '定时任务 ID', nullable: true })

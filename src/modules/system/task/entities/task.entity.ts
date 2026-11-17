@@ -8,7 +8,7 @@ export class TaskEntity {
   id: number
 
   @ApiPropertyOptional({ description: '租户 ID（0=平台共享）', example: 1 })
-  @Column({ type: 'int', default: 1, comment: '租户ID(0=平台共享)' })
+  @Column({ type: 'int', default: 0, comment: '租户ID(0=平台共享)' })
   tenantId?: number
 
   @ApiProperty({ description: '任务标题', example: '整理需求文档' })

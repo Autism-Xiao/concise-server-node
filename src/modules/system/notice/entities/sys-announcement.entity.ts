@@ -15,8 +15,8 @@ export class SysAnnouncementEntity {
   @PrimaryColumn({ type: 'varchar', length: 32, comment: '主键id' })
   id: string
 
-  @ApiPropertyOptional({ description: '租户 ID（0=平台共享，所有租户可见）', example: 1 })
-  @Column({ type: 'int', default: 1, comment: '租户ID(0=平台共享)' })
+  @ApiPropertyOptional({ description: '租户 ID（0=平台共享，所有租户可见）', example: 0 })
+  @Column({ type: 'int', default: 0, comment: '租户ID(0=平台共享)' })
   tenantId?: number
 
   /** 列名是历史遗留的拼写错误 titile，不要"修正"，否则与库不一致 */

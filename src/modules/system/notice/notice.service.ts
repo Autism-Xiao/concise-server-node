@@ -1,13 +1,14 @@
 import { BadRequestException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository, type SelectQueryBuilder } from 'typeorm'
+import { Repository, type SelectQueryBuilder } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { paginate, type Pagination } from '../../../helper/paginate'
-import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
+import { applyTenantScope, tenantWriteCondition } from '../../../shared/tenant/tenant-scope.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { UserEntity } from '../../user/entities/user.entity'
 import { SysAnnouncementEntity } from './entities/sys-announcement.entity'
 import type { CreateNoticeDto } from './dto/create-notice.dto'
@@ -157,9 +158,17 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
     return paginate(qb, { page: query.page, pageSize: query.pageSize })
   }
 
-  /** 详情：默认只看未删除记录 */
+  /**
+   * 详情：默认只看未删除记录，并按租户收窄。
+   *
+   * 为什么必须走 QB 而不是 findOne：update/publish/revoke/delete 都拿它当前置校验，
+   * 不带租户条件的话，租户管理员拿到平台公告的 id 就能改/发/撤/删（IDOR）。
+   * 跨租户/平台共享行的写入口在这里被统一挡住，后续 patchById 不必重复校验。
+   */
   async findOneActive(id: string): Promise<SysAnnouncementEntity> {
-    const notice = await this.announcementRepository.findOne({ where: { id, delFlag: '0' } })
+    const qb = this.announcementRepository.createQueryBuilder('n').where('n.id = :id', { id }).andWhere('n.del_flag = :delFlag', { delFlag: '0' })
+    applyTenantScope(qb, 'n')
+    const notice = await qb.getOne()
     if (!notice) {
       throw new NotFoundException('公告不存在')
     }
@@ -257,7 +266,13 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
 
   /** 批量删除公告：逐条走 delete，保留「已发布不可直接删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
-    const targets = await this.announcementRepository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: '0' } })
+    // 按租户收窄目标集合：不在本租户可见范围的 id 按「不存在」计入失败，不跨租户删
+    const scopedQb = this.announcementRepository
+      .createQueryBuilder('n')
+      .where('n.id IN (:...ids)', { ids: normalizeBatchIds(ids) })
+      .andWhere('n.del_flag = :delFlag', { delFlag: '0' })
+    applyTenantScope(scopedQb, 'n')
+    const targets = await scopedQb.getMany()
     return runBatchDelete(
       targets,
       {
@@ -292,10 +307,14 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
       throw new BadRequestException(`单次最多导入 ${NOTICE_IMPORT_MAX_ROWS} 行，当前 ${dataRows.length} 行，请拆分后重试`)
     }
 
-    const [existing, users] = await Promise.all([
-      this.announcementRepository.find({ where: { delFlag: '0' } }),
-      this.userRepository.find({ where: { delFlag: 0 }, select: { id: true, username: true, realname: true } })
-    ])
+    // 匹配集合都按租户收窄（与字典/岗位导入同口径）：
+    // - 公告按 id/标题匹配更新时只能命中本租户可见的公告，租户导入改不到平台数据
+    // - 「指定用户」只能解析成本租户有归属的账号，防止借导入把公告挂到其他租户用户头上
+    const existingQb = this.announcementRepository.createQueryBuilder('n').where('n.del_flag = :delFlag', { delFlag: '0' })
+    applyTenantScope(existingQb, 'n')
+    const userQb = this.userRepository.createQueryBuilder('user').where('user.del_flag = 0').select(['user.id', 'user.username', 'user.realname'])
+    this.applyUserTenantScope(userQb)
+    const [existing, users] = await Promise.all([existingQb.getMany(), userQb.getMany()])
     const byId = new Map(existing.map(item => [item.id.toLowerCase(), item]))
     const byTitle = new Map(existing.map(item => [item.title.trim().toLowerCase(), item]))
     const userByName = new Map<string, UserEntity>()
@@ -516,14 +535,41 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
   /**
    * 按 id 更新指定列
    * 用 QueryBuilder 而非 repository.update：后者会跳过 undefined、也不接受 null，
-   * 而"清空发布时间/撤销时间"必须真的写 NULL
+   * 而"清空发布时间/撤销时间"必须真的写 NULL。
+   *
+   * 写路径挂 tenantWriteCondition（严格只命中本租户的行，不含 tenant_id=0 共享行）：
+   * 详情查询的租户范围含共享行（平台公告租户要能看），但改/发/撤/删共享公告是写越权，
+   * 在 UPDATE 的 WHERE 上挡掉；命中不了按不存在报错（不区分「看不见」与「不可写」）。
    */
   private async patchById(id: string, patch: Record<string, unknown>): Promise<void> {
-    await this.announcementRepository
+    const updateQb = this.announcementRepository
       .createQueryBuilder()
       .update(SysAnnouncementEntity)
       .set(patch as never)
       .where('id = :id', { id })
-      .execute()
+    const writeCondition = tenantWriteCondition('tenant_id')
+    if (writeCondition) {
+      updateQb.andWhere(writeCondition.clause, writeCondition.params)
+    }
+    const affected = await updateQb.execute().then(result => result.affected ?? 0)
+    if (affected === 0) {
+      throw new NotFoundException('公告不存在')
+    }
+  }
+
+  /**
+   * 用户行的租户收窄（sys_user 无 tenant_id 列，归属在 sys_user_tenant，EXISTS 过滤）
+   * 与 user.service 的 applyTenantToUsers 同口径：平台视角不过滤；无归属（0）一条看不到。
+   */
+  private applyUserTenantScope(qb: SelectQueryBuilder<UserEntity>): void {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return
+    if (tenantId === 0) {
+      qb.andWhere('1 = 0')
+      return
+    }
+    qb.andWhere('EXISTS (SELECT 1 FROM `sys_user_tenant` ut WHERE ut.`user_id` = user.id AND ut.`tenant_id` = :scopeTenantId AND ut.`status` = 0)', {
+      scopeTenantId: tenantId
+    })
   }
 }

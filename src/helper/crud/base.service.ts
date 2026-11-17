@@ -4,7 +4,7 @@ import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository, SelectQu
 import { randomId32 } from '../../utils/password.util'
 import { emitChanges, shouldSkipField, toComparable, type ChangeItem } from '../../shared/audit/change-recorder'
 import { TenantContext } from '../../shared/tenant/tenant.context'
-import { tenantRawCondition, tenantWriteCondition } from '../../shared/tenant/tenant-scope.util'
+import { SHARED_TENANT_ID, tenantRawCondition, tenantWriteCondition } from '../../shared/tenant/tenant-scope.util'
 import { paginate, type PaginateOptions, type Pagination } from '../paginate'
 
 /**
@@ -90,12 +90,19 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
     return [{ ...where, tenantId } as FindOptionsWhere<T>, { ...where, tenantId: 0 } as FindOptionsWhere<T>]
   }
 
-  /** 写入时打上当前租户（实体有 tenant_id 列且调用方没显式指定） */
+  /**
+   * 写入时打上当前租户（实体有 tenant_id 列且调用方没显式指定）
+   *
+   * 平台视角（tenantId=null）也要显式打 0（平台共享），不能留空让 DB 列默认值兜底——
+   * 历史上多张业务表列默认值是 1（单租户时代遗留），超管在平台视角创建的公告/任务
+   * 会被错归到租户 1，其他租户看不见。即使列默认值已统一改成 0，这里仍显式打标，
+   * 不再依赖列默认值（防御纵深）。
+   */
   private stampTenant(entity: T): void {
     if (!this.hasTenantColumn()) return
     if ((entity as Record<string, unknown>).tenantId !== undefined) return
     const tenantId = TenantContext.filterTenantId()
-    if (tenantId !== null) Object.assign(entity, { tenantId })
+    Object.assign(entity, { tenantId: tenantId ?? SHARED_TENANT_ID })
   }
 
   /** createTime 列存在且实体上未赋值时补 new Date()；显式传入（含 @CreateDateColumn 实体）不覆盖 */
