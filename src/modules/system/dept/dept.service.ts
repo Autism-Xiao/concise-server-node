@@ -125,7 +125,13 @@ export class DeptService extends BaseService<DeptEntity> {
 
   /** 批量删除部门：逐条走 delete，保留「有子部门 / 有用户不可删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
-    const targets = await this.repository.find({ where: { id: In(normalizeBatchIds(ids)), delFlag: '0' } })
+    const normalized = normalizeBatchIds(ids)
+    const targets = await this.repository.find({ where: { id: In(normalized), delFlag: '0' } })
+    // 部门有层级，删除结果依赖处理顺序：子部门先删掉，父部门的「还有子部门」保护就不再成立。
+    // repository.find 的返回顺序由数据库决定（会变），所以这里显式按入参顺序处理 ——
+    // 结果才是确定的：前端按勾选顺序提交，父部门先到就先被规则挡住，不会时好时坏。
+    const order = new Map(normalized.map((id, index) => [id, index]))
+    targets.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
     return runBatchDelete(
       targets,
       {

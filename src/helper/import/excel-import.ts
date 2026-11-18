@@ -70,6 +70,25 @@ export interface ImportLayout<T extends string> {
  * - aliases 里同一个字段可以配多个表头写法（如「字典编码 / 编码 / dictCode」）
  * - rows[0] 视为表头，dataRows 保留真实行号
  */
+/**
+ * 导出文件的表尾说明行
+ *
+ * buildWorkbook 会把 `notes`（「说明：…」「示例：…」）写在数据区下方、只占首列，
+ * 而 readXlsxTable 是按「非空行」收集的，说明行会混进数据行 ——
+ * 「导出 → 改 → 再导入」就会凭空多出几条失败行（值类型/排序校验不过）。
+ *
+ * 判定从严：
+ * 1. 首列以「说明：/示例：/注：」开头（模板说明也有「1. 带 * 的列为必填」这种编号行）
+ * 2. 该行所有非空单元格内容完全一致 —— 说明行是 A:最后一列 合并单元格，ExcelJS 会把
+ *    master 的值复制到整个区域，所以它看起来「每列都有值」，这是区别于真实数据行的特征
+ */
+function isFootnoteRow(cells: string[]): boolean {
+  const first = (cells[0] ?? '').trim()
+  if (!/^(说明|示例|注)[:：]|^\d+[.、]/.test(first)) return false
+  const nonEmpty = cells.map(cell => cell.trim()).filter(cell => cell !== '')
+  return nonEmpty.length > 0 && nonEmpty.every(cell => cell === first)
+}
+
 export function resolveImportLayout<T extends string>(rows: string[][], headerRowNumber: number, aliases: Record<T, string[]>): ImportLayout<T> {
   const header = (rows[0] ?? []).map(normalizeHeader)
   const columns: Partial<Record<T, number>> = {}
@@ -79,7 +98,11 @@ export function resolveImportLayout<T extends string>(rows: string[][], headerRo
       columns[field] = index
     }
   }
-  const dataRows = rows.slice(1).map((cells, index) => ({ rowNumber: headerRowNumber + index + 1, cells }))
+  // 先按原下标编号再过滤，行号才和 Excel 里看到的一致
+  const dataRows = rows
+    .slice(1)
+    .map((cells, index) => ({ rowNumber: headerRowNumber + index + 1, cells }))
+    .filter(row => !isFootnoteRow(row.cells))
   return { columns, dataRows }
 }
 

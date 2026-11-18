@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { IsIn, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator'
 
+import { DICT_COLORS, DICT_COLOR_MESSAGE } from '../dict.constants'
+
 /** 创建字典项 */
 export class CreateDictItemDto {
   @ApiProperty({ description: '所属字典 ID（sys_dict.id）', example: 'dict_1' })
@@ -36,4 +38,14 @@ export class CreateDictItemDto {
   @IsString()
   @Length(0, 255, { message: '描述最长 255 个字符' })
   description?: string
+
+  @ApiPropertyOptional({
+    description: '语义色：primary / success / warning / danger / info；传空串表示清除配色（按纯文本渲染）',
+    example: 'success',
+    enum: [...DICT_COLORS, ''],
+    nullable: true
+  })
+  @IsOptional()
+  @IsIn([...DICT_COLORS, ''], { message: DICT_COLOR_MESSAGE })
+  color?: string | null
 }

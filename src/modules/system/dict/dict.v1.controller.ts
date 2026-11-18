@@ -47,6 +47,7 @@ const ITEM_COLUMNS = [
   { header: '字典项值', width: 16 },
   { header: '排序', width: 8, align: 'center' as const },
   { header: '状态', width: 10, align: 'center' as const },
+  { header: '颜色', width: 10, align: 'center' as const },
   { header: '描述', width: 36 }
 ]
 
@@ -102,9 +103,13 @@ export class DictV1Controller {
           item.itemValue,
           item.sortOrder ?? 0,
           item.status === 0 ? '停用' : '启用',
+          item.color ?? '',
           item.description ?? ''
         ]),
-        notes: ['说明：同一字典下「字典项值」唯一；排序越小越靠前；停用的字典项不会出现在前端下拉框里。']
+        notes: [
+          '说明：同一字典下「字典项值」唯一；排序越小越靠前；停用的字典项不会出现在前端下拉框里。',
+          '说明：颜色填 success（绿）/ warning（橙）/ danger（红）/ info（蓝）/ primary（紫）/ neutral（灰），留空表示不套色；也认「绿」「橙色」这类中文写法。'
+        ]
       }
     ])
     setDownloadHeaders(res, `dicts-${Date.now()}.xlsx`, `数据字典-${formatDateTime(new Date()).slice(0, 10)}.xlsx`)
@@ -150,16 +155,18 @@ export class DictV1Controller {
           { header: '字典项值 *', width: 16 },
           { header: '排序', width: 8 },
           { header: '状态', width: 10 },
+          { header: '颜色', width: 10 },
           { header: '描述', width: 36 }
         ],
         rows: [
-          ['', '', '', '', '', ''],
-          ['', '', '', '', '', ''],
-          ['', '', '', '', '', '']
+          ['', '', '', '', '', '', ''],
+          ['', '', '', '', '', '', ''],
+          ['', '', '', '', '', '', '']
         ],
         notes: [
           '示例：字典编码 sys_user_gender｜字典项文本 男｜字典项值 1｜排序 1｜状态 启用',
-          '状态填「启用」/「停用」，留空按启用处理；排序填 0 或正整数，越小越靠前。'
+          '说明：状态填「启用」/「停用」，留空按启用处理；排序填 0 或正整数，越小越靠前。',
+          '说明：颜色可填 success / warning / danger / info / primary / neutral（或 绿 橙 红 蓝 紫 灰），留空表示不套色。'
         ]
       }
     ])

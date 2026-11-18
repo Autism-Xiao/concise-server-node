@@ -19,6 +19,7 @@ import {
 import { randomId32 } from '../../../utils/password.util'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { applyTenantScope, tenantWriteCondition } from '../../../shared/tenant/tenant-scope.util'
+import { normalizeDictColor } from './dict.constants'
 import { SysDictEntity } from './entities/sys-dict.entity'
 import { SysDictItemEntity } from './entities/sys-dict-item.entity'
 import type { CreateDictDto } from './dto/create-dict.dto'
@@ -39,7 +40,7 @@ export const DICT_TYPE_IMPORT_ALIASES: Record<DictTypeImportField, string[]> = {
 }
 
 /** 导入列别名 —— 字典项 */
-type DictItemImportField = 'dictCode' | 'itemText' | 'itemValue' | 'sortOrder' | 'status' | 'description'
+type DictItemImportField = 'dictCode' | 'itemText' | 'itemValue' | 'sortOrder' | 'status' | 'color' | 'description'
 
 export const DICT_ITEM_IMPORT_ALIASES: Record<DictItemImportField, string[]> = {
   dictCode: ['字典编码', '所属字典', '编码', 'dictcode'],
@@ -47,6 +48,7 @@ export const DICT_ITEM_IMPORT_ALIASES: Record<DictItemImportField, string[]> = {
   itemValue: ['字典项值', '项值', '值', 'itemvalue'],
   sortOrder: ['排序', 'sortorder'],
   status: ['状态', 'status'],
+  color: ['颜色', '色彩', '色', 'color'],
   description: ['描述', '说明', '备注', 'description']
 }
 
@@ -330,6 +332,9 @@ export class DictService extends BaseService<SysDictEntity> {
         const sortOrder = parsePositiveInt(pickCell(columns, cells, 'sortOrder'), 0)
         const statusText = pickCell(columns, cells, 'status')
         const status = parseSwitchText(statusText)
+        // 颜色列可选：undefined = 没填（保持原值），'' = 明确清除，其余为语义色
+        const colorRaw = columns.color === undefined ? '' : pickCell(columns, cells, 'color')
+        const color = normalizeDictColor(colorRaw)
         const description = pickCell(columns, cells, 'description') || undefined
 
         if (!dictCode || !itemText || !itemValue) {
@@ -342,6 +347,11 @@ export class DictService extends BaseService<SysDictEntity> {
         }
         if (statusText && status === undefined) {
           failImportRow(result, rowNumber, '[字典项] 状态请填「启用」或「停用」', itemValue)
+          continue
+        }
+        // 颜色填错不静默丢弃：运营会以为配上了色，实际没生效
+        if (colorRaw && color === undefined) {
+          failImportRow(result, rowNumber, '[字典项] 颜色请填 success/warning/danger/info/primary/neutral 或 绿/橙/红/蓝/紫/灰，留空表示不套色', itemValue)
           continue
         }
         const dict = byCode.get(dictCode.toLowerCase())
@@ -363,6 +373,7 @@ export class DictService extends BaseService<SysDictEntity> {
             itemText,
             sortOrder,
             ...(status ? { status: Number(status) } : {}),
+            ...(color !== undefined ? { color: color || null } : {}),
             ...(description !== undefined ? { description } : {}),
             updateBy: operator,
             updateTime: new Date()
@@ -379,6 +390,7 @@ export class DictService extends BaseService<SysDictEntity> {
           itemValue,
           sortOrder,
           status: status ? Number(status) : 1,
+          color: color || null,
           description,
           // manager.save 不走 BaseService，租户打标要显式做（平台视角留给列默认值 0）
           ...(ctxTenantId !== null ? { tenantId: ctxTenantId } : {}),

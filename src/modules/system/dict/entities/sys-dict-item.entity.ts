@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm'
 
+import { DICT_COLORS } from '../dict.constants'
 import { SysDictEntity } from './sys-dict.entity'
 
 /**
@@ -8,6 +9,7 @@ import { SysDictEntity } from './sys-dict.entity'
  *
  * - dict_id 关联 sys_dict.id；同一字典下 item_value 唯一（Service 层校验）
  * - status：1 启用 / 0 不启用
+ * - color：语义色（primary/success/warning/danger/info），为空表示该字典项不套色，按纯文本渲染
  */
 @Entity('sys_dict_item')
 export class SysDictItemEntity {
@@ -30,6 +32,15 @@ export class SysDictItemEntity {
   @ApiPropertyOptional({ description: '描述', nullable: true })
   @Column({ length: 255, nullable: true, comment: '描述' })
   description?: string
+
+  @ApiPropertyOptional({
+    description: '语义色：primary / success / warning / danger / info，空表示不套色（纯文本渲染）',
+    example: 'success',
+    enum: [...DICT_COLORS],
+    nullable: true
+  })
+  @Column({ type: 'varchar', length: 16, nullable: true, comment: '语义色（为空则纯文本渲染）' })
+  color?: string | null
 
   @ApiPropertyOptional({ description: '排序，越小越靠前', example: 1 })
   @Column({ name: 'sort_order', type: 'int', default: 0, comment: '排序' })

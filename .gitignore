@@ -63,6 +63,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # 上传的文件
 # /public
+# 运行时上传目录（冒烟脚本/联调产物，可再生，不入库）
+/public/upload
 .env.docker
 sql/concise_server_full_backup-pre-restore.sql
 

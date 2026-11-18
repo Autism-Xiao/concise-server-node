@@ -21,6 +21,8 @@ export interface DictItemOption {
   itemValue: string
   sortOrder?: number
   description?: string
+  /** 语义色，前端 DictBadge 用它上色；为空表示不套色 */
+  color?: string | null
 }
 
 @Injectable()
@@ -77,7 +79,13 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
       dictCode: dict.dictCode,
       dictName: dict.dictName,
       type: dict.type,
-      items: items.map(item => ({ itemText: item.itemText, itemValue: item.itemValue, sortOrder: item.sortOrder, description: item.description }))
+      items: items.map(item => ({
+        itemText: item.itemText,
+        itemValue: item.itemValue,
+        sortOrder: item.sortOrder,
+        description: item.description,
+        color: item.color ?? null
+      }))
     }
   }
 
@@ -104,6 +112,7 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
       sortOrder: dto.sortOrder ?? 0,
       status: dto.status ?? 1,
       description: dto.description,
+      color: dto.color || null,
       createBy: operator,
       createTime: new Date()
     })
@@ -129,6 +138,7 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
     if (dto.sortOrder !== undefined) patch.sortOrder = dto.sortOrder
     if (dto.status !== undefined) patch.status = dto.status
     if (dto.description !== undefined) patch.description = dto.description || null
+    if (dto.color !== undefined) patch.color = dto.color || null
     patch.updateBy = operator ?? null
     patch.updateTime = new Date()
 
