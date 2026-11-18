@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiOperation, ApiTa
 
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
-import { UPLOAD_FILE_SIZE, UPLOAD_MIMETYPES, imageFileFilter } from './upload.controller'
+import { UPLOAD_FILE_SIZE, UPLOAD_MIMETYPES, imageFileFilter } from './upload.constants'
 import { FileUploadDto } from './upload.dto'
 import { UploadService } from './upload.service'
 

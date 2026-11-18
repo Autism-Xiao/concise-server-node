@@ -17,7 +17,7 @@ import { DeptService } from './dept.service'
 /**
  * 部门管理接口 V1：/api/v1/depts/**
  *
- * 版本策略：URL 前缀做版本；旧路由（/api/depts/**）默认不注册（见 config/legacy-routes.config.ts）。
+ * 版本策略：URL 前缀做版本；旧路由（/api/depts/**）已下线删除。
  * 前端用户表单的部门数据源走 v1/depts/tree。
  */
 @ApiTags('部门管理 V1')

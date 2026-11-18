@@ -21,7 +21,7 @@ import { ROLE_IMPORT_MAX_SIZE, RoleService, type RoleImportResult } from './role
 /**
  * 角色管理接口 V1：/api/v1/roles/**
  *
- * 版本策略：URL 前缀做版本；旧路由（/api/roles/**）默认不注册（见 config/legacy-routes.config.ts）。
+ * 版本策略：URL 前缀做版本；旧路由（/api/roles/**）已下线删除。
  * 角色管理页与授权弹窗的数据源都在这里。
  */
 @ApiTags('角色管理 V1')

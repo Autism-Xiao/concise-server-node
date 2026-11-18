@@ -19,7 +19,7 @@ import type { UserEntity } from '../../user/entities/user.entity'
 /**
  * 认证接口 V1：/api/v1/auth/**
  *
- * 版本策略：URL 前缀做版本。旧版（/api/auth/**）已默认不注册（见 config/legacy-routes.config.ts），
+ * 版本策略：URL 前缀做版本。旧版（/api/auth/**）已下线删除，
  * 因此 **v1 必须自成完整能力**：验证码 / 登录 / 刷新 / 退出 / 权限汇总 / 当前用户信息。
  * 新增或修改的接口一律挂 v1。
  */

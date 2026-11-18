@@ -17,7 +17,7 @@ import { MenuService } from './menu.service'
 /**
  * 菜单管理接口 V1：/api/v1/menus/**
  *
- * 版本策略：URL 前缀做版本；旧路由（/api/menus/**）默认不注册（见 config/legacy-routes.config.ts）。
+ * 版本策略：URL 前缀做版本；旧路由（/api/menus/**）已下线删除。
  * 菜单管理页与角色授权弹窗的数据源都在这里。
  */
 @ApiTags('菜单管理 V1')

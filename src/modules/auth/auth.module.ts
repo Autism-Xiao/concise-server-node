@@ -3,7 +3,6 @@ import { JwtModule } from '@nestjs/jwt'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
 import { jwtConfig, type JwtConfig } from '../../config'
-import { LEGACY_ROUTES_ENABLED } from '../../config/legacy-routes.config'
 import { UserEntity } from '../user/entities/user.entity'
 import { OpenApiModule } from '../openapi/open.module'
 import { UserModule } from '../user/user.module'
@@ -13,7 +12,6 @@ import { SystemConfigModule } from '../system/config/config.module'
 import { RedisModule } from '../../shared/redis/redis.module'
 import { MailerModule } from '../../shared/mailer/mailer.module'
 import { OnlineModule } from '../ops/online/online.module'
-import { AuthController } from './controllers/auth.controller'
 import { AuthV1Controller } from './controllers/auth.v1.controller'
 import { SsoV1Controller } from './controllers/sso.v1.controller'
 import { JwtAuthGuard } from './guards/jwt-auth.guard'
@@ -50,8 +48,7 @@ import { JwtStrategy } from './strategies/jwt.strategy'
       })
     })
   ],
-  // 旧版（无 /v1）控制器默认不注册，见 config/legacy-routes.config.ts
-  controllers: [AuthV1Controller, SsoV1Controller, ...(LEGACY_ROUTES_ENABLED ? [AuthController] : [])],
+  controllers: [AuthV1Controller, SsoV1Controller],
   providers: [AuthService, CaptchaService, SsoService, TotpService, PasswordResetService, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard]
 })

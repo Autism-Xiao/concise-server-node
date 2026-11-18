@@ -103,8 +103,6 @@ class EnvironmentVariables {
 
   /** 是否注册旧版（无 /v1 前缀）路由：默认关闭，仅兼容老客户端时临时打开 */
   @IsOptional()
-  @IsIn(BOOLEAN_STRINGS, { message: 'LEGACY_ROUTES_ENABLED 只能是 true/false/1/0/on/off/yes/no' })
-  LEGACY_ROUTES_ENABLED?: string
 
   /** 是否开启全局限流 */
   @IsOptional()

@@ -3,7 +3,6 @@ import { TypeOrmModule } from '@nestjs/typeorm'
 
 import { RoleModule } from '../role/role.module'
 import { OnlineModule } from '../ops/online/online.module'
-import { LEGACY_ROUTES_ENABLED } from '../../config/legacy-routes.config'
 import { DeptEntity } from '../system/dept/entities/dept.entity'
 import { PostEntity } from '../system/post/entities/post.entity'
 import { LevelEntity } from '../system/level/entities/level.entity'
@@ -14,7 +13,6 @@ import { SystemConfigModule } from '../system/config/config.module'
 import { OpenApiModule } from '../openapi/open.module'
 import { UserEntity } from './entities/user.entity'
 import { UserV1Controller } from './user.v1.controller'
-import { UserController } from './user.controller'
 import { UserService } from './user.service'
 
 @Module({
@@ -32,7 +30,7 @@ import { UserService } from './user.service'
     // 用户创建/删除要派发 webhook 事件（开放平台的订阅方收通知）
     OpenApiModule
   ],
-  controllers: [UserV1Controller, ...(LEGACY_ROUTES_ENABLED ? [UserController] : [])],
+  controllers: [UserV1Controller],
   providers: [UserService],
   exports: [UserService]
 })
