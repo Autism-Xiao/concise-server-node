@@ -4,7 +4,7 @@ import { DataSource, Repository } from 'typeorm'
 
 import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
-import { paginate, Pagination, type Pagination as PaginationType } from '../../helper/paginate'
+import { applySort, paginate, Pagination, type Pagination as PaginationType } from '../../helper/paginate'
 import { RealtimeService, WS_EVENTS, type MessageNewPayload } from '../../shared/realtime/realtime.service'
 import { applyTenantScope, SHARED_TENANT_ID, tenantWriteCondition } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
@@ -22,6 +22,14 @@ export interface MyMessageRow {
   isRead: number
   readAt: Date | null
   createdAt: Date
+}
+
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const MESSAGE_SORTABLE: Record<string, string> = {
+  title: 'title',
+  msgType: 'msgType',
+  receiverCount: 'receiverCount',
+  createdAt: 'createdAt'
 }
 
 /**
@@ -132,9 +140,10 @@ export class MessageService {
   }
 
   /** 发送记录分页（管理端） */
-  async list(query: QueryMessageDto & { page?: number; pageSize?: number }): Promise<PaginationType<SysMessageEntity>> {
-    const qb = this.messageRepo.createQueryBuilder('m').orderBy('m.createdAt', 'DESC')
+  async list(query: QueryMessageDto): Promise<PaginationType<SysMessageEntity>> {
+    const qb = this.messageRepo.createQueryBuilder('m').orderBy('m.createdAt', 'DESC').addOrderBy('m.id', 'DESC')
     applyTenantScope(qb, 'm')
+    applySort(qb, 'm', query, MESSAGE_SORTABLE)
     if (query.keyword) {
       qb.andWhere('m.title LIKE :keyword', { keyword: `%${query.keyword}%` })
     }
@@ -168,7 +177,7 @@ export class MessageService {
   }
 
   /** 我的消息分页（登录用户；raw 投影 + 手动 count） */
-  async mine(userId: string, query: QueryMyMessageDto & { page?: number; pageSize?: number }): Promise<PaginationType<MyMessageRow>> {
+  async mine(userId: string, query: QueryMyMessageDto): Promise<PaginationType<MyMessageRow>> {
     const unread = query.unread === undefined ? undefined : Number(query.unread)
     const page = Math.max(query.page ?? 1, 1)
     const pageSize = Math.max(query.pageSize ?? 10, 1)

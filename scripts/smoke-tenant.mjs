@@ -161,16 +161,16 @@ try {
 
   // ---------- 5. 数据隔离 ----------
   // 平台共享字典（tenant_id=0）对所有租户可见是设计行为；隔离检查只看「他租户的私有字典是否泄漏」
-  const [sharedRows] = await conn.query('SELECT COUNT(*) AS c FROM sys_dict WHERE tenant_id = 0')
+  const [sharedRows] = await conn.query('SELECT COUNT(*) AS c FROM sys_dict WHERE tenant_id = 0 AND del_flag = 0')
   const sharedLen = Number(sharedRows[0]?.c ?? 0)
-  const [privateRows] = await conn.query('SELECT dict_code FROM sys_dict WHERE tenant_id <> 0 AND tenant_id <> ?', [tenantA])
+  const [privateRows] = await conn.query('SELECT dict_code FROM sys_dict WHERE tenant_id <> 0 AND tenant_id <> ? AND del_flag = 0', [tenantA])
   const privateCodes = privateRows.map(row => row.dict_code)
   const codesOf = res => {
     const records = Array.isArray(res.data) ? res.data : (res.data?.records ?? [])
     return records.map(item => item.dictCode)
   }
 
-  const dictsAEmpty = await api('/dicts', { token: adminToken, tenantId: tenantA })
+  const dictsAEmpty = await api('/dicts?pageSize=100', { token: adminToken, tenantId: tenantA })
   const emptyLen = lenOf(dictsAEmpty)
   const leakedEmpty = codesOf(dictsAEmpty).filter(code => privateCodes.includes(code))
   check(
@@ -190,21 +190,21 @@ try {
   const [dictRows] = await conn.query('SELECT tenant_id FROM sys_dict WHERE dict_code = ?', [`smk_tnt_${stamp}`])
   check('新字典被打上租户 A 标记', Number(dictRows[0]?.tenant_id) === tenantA, JSON.stringify(dictRows))
 
-  const dictsA = await api('/dicts', { token: adminToken, tenantId: tenantA })
+  const dictsA = await api('/dicts?pageSize=100', { token: adminToken, tenantId: tenantA })
   check(
     '租户 A 只看得到共享字典 + 自己的 1 条',
     lenOf(dictsA) === sharedLen + 1 && codesOf(dictsA).includes(`smk_tnt_${stamp}`),
     `len=${lenOf(dictsA)} 共享=${sharedLen}`
   )
 
-  const dictsB = await api('/dicts', { token: adminToken, tenantId: tenantB })
+  const dictsB = await api('/dicts?pageSize=100', { token: adminToken, tenantId: tenantB })
   check(
     '租户 B 看不到租户 A 的字典（仅共享）',
     lenOf(dictsB) === sharedLen && !codesOf(dictsB).includes(`smk_tnt_${stamp}`),
     `len=${lenOf(dictsB)} 共享=${sharedLen}`
   )
 
-  const dictsAdmin = await api('/dicts', { token: adminToken })
+  const dictsAdmin = await api('/dicts?pageSize=100', { token: adminToken })
   const adminRecords = Array.isArray(dictsAdmin.data) ? dictsAdmin.data : (dictsAdmin.data?.records ?? [])
   check(
     '超管（不带租户头）能看到所有租户的字典',

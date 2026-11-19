@@ -4,11 +4,20 @@ import { Repository } from 'typeorm'
 
 import { isDuplicateEntryError } from '../../utils/db-error.util'
 import { BaseService } from '../../helper/crud/base.service'
-import { paginate, type Pagination } from '../../helper/paginate'
+import { applySort, paginate, type Pagination } from '../../helper/paginate'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { CreateBizOrderDto, ListBizOrderDto, UpdateBizOrderDto } from './dto/biz_order.dto'
 import { BizOrderEntity } from './entities/biz_order.entity'
+
+/** 可排序字段白名单：前端列 id → 实体属性名（未命中的列点表头也只走默认排序） */
+const BIZ_ORDER_SORTABLE: Record<string, string> = {
+  title: 'title',
+  status: 'status',
+  amount: 'amount',
+  signedAt: 'signedAt',
+  createdAt: 'createdAt'
+}
 
 @Injectable()
 export class BizOrderService extends BaseService<BizOrderEntity> {
@@ -50,6 +59,7 @@ export class BizOrderService extends BaseService<BizOrderEntity> {
     const qb = this.repository.createQueryBuilder('bizOrder').orderBy('bizOrder.id', 'DESC')
     applyTenantScope(qb, 'bizOrder')
     qb.andWhere('bizOrder.delFlag = 0')
+    applySort(qb, 'bizOrder', query, BIZ_ORDER_SORTABLE)
     if (query.keyword) {
       qb.andWhere('bizOrder.title LIKE :keyword', { keyword: `%${query.keyword}%` })
     }
@@ -88,7 +98,7 @@ export class BizOrderService extends BaseService<BizOrderEntity> {
 
   /** 软删除：del_flag 置 1；软删行仍占用唯一键，与查重「含软删占用」配套 */
   async delete(id: number): Promise<void> {
-    const entity = await this.findOne(id)
-    await this.repository.update(entity.id, { delFlag: 1 })
+    // 必须走基类的严格写条件：findOne 能读到 tenant_id=0 的共享订单，按 id 直写会删掉平台数据
+    await this.softDelete(id, { delFlag: 1 })
   }
 }

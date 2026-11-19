@@ -129,16 +129,12 @@ try {
   /* ---------------- viewer：大量降级 ---------------- */
   const viewerToken = await login(VIEWER_USER, VIEWER_PASSWORD)
   const viewer = (await overview(viewerToken)).json?.result
-  // 租户角色模板给 viewer 授了 system:user:list，所以用户总数可见（按 data_scope 裁剪），不再是 null。
-  // 注意 userTotal 是对象 { scope, total, active, frozen }，不是数字
-  check(
-    'viewer 用户总数可见（有 system:user:list，按 data_scope 裁剪）',
-    typeof viewer?.userTotal === 'object' && typeof viewer?.userTotal?.total === 'number',
-    `userTotal=${JSON.stringify(viewer?.userTotal)}`
-  )
+  // 租户角色模板把「用户/角色」列入 TENANT_RESTRICTED_MODULES（访客能翻手机号/邮箱，是隐私面），
+  // viewer 没有 system:user:list / system:role:list → 仪表盘对应块按设计返回 null（不是 0）
+  check('viewer 用户总数为 null（模板排除用户模块）', viewer?.userTotal === null, `userTotal=${JSON.stringify(viewer?.userTotal)}`)
   check('viewer 在线人数为 null', viewer?.onlineCount === null)
   check('viewer 服务器状态为 null', viewer?.serverState === null)
-  check('viewer 角色总数可见（有 system:role:list）', typeof viewer?.roleTotal === 'number', `roles=${viewer?.roleTotal}`)
+  check('viewer 角色总数为 null（模板排除角色模块）', viewer?.roleTotal === null, `roles=${JSON.stringify(viewer?.roleTotal)}`)
   check('viewer 今日登录口径降级为 self', viewer?.todayLogin?.scope === 'self', JSON.stringify(viewer?.todayLogin))
   check('viewer 登录趋势口径降级为 self', viewer?.loginTrend?.scope === 'self')
   check('viewer 最近操作口径降级为 self', viewer?.recentOpers?.scope === 'self')

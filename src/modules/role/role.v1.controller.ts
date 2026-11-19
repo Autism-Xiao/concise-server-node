@@ -9,7 +9,7 @@ import { BizException } from '../../common/exceptions/biz.exception'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { formatDateTime, parseCsv } from '../../utils/csv.util'
-import { Pagination, toPagination } from '../../helper/paginate'
+import { Pagination } from '../../helper/paginate'
 import { setDownloadHeaders } from '../../utils/download.util'
 import { buildImportTemplateXlsx, buildXlsx, readXlsxTable } from '../../utils/xlsx.util'
 import { CreateRoleDto } from './dto/create-role.dto'
@@ -30,12 +30,15 @@ import { ROLE_IMPORT_MAX_SIZE, RoleService, type RoleImportResult } from './role
 export class RoleV1Controller {
   constructor(private readonly roleService: RoleService) {}
 
-  @ApiOperation({ summary: '角色列表（v1）', description: '全量返回（角色数量少不分页），含已授权菜单；keyword 模糊匹配名称/编码；需 system:role:list' })
-  @ApiOkResponse({ description: '角色列表（统一分页结构；字典类数据 size = total，一次全量返回）', type: Pagination })
+  @ApiOperation({
+    summary: '角色列表（v1）',
+    description: '服务端分页，含已授权菜单；keyword 模糊匹配名称/编码；sortBy/sortOrder 走白名单；需 system:role:list'
+  })
+  @ApiOkResponse({ description: '角色分页列表', type: Pagination })
   @Perms('system:role:list')
   @Get()
-  async list(@Query() query: QueryRoleDto): Promise<Pagination<RoleEntity & { tenantName?: string }>> {
-    return toPagination(await this.roleService.listByQuery(query))
+  list(@Query() query: QueryRoleDto): Promise<Pagination<RoleEntity & { tenantName?: string }>> {
+    return this.roleService.listByQuery(query)
   }
 
   @ApiOperation({

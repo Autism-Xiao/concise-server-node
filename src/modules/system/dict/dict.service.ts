@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
+import { applySort, paginate, Pagination } from '../../../helper/paginate'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
@@ -28,6 +29,13 @@ import type { UpdateDictDto } from './dto/update-dict.dto'
 
 /** 导出上限：字典是配置数据，正常几十条 */
 export const DICT_EXPORT_MAX_ROWS = 5000
+
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const DICT_SORTABLE: Record<string, string> = {
+  dictName: 'dictName',
+  dictCode: 'dictCode',
+  createTime: 'createTime'
+}
 
 /** 导入列别名 —— 字典类型 */
 type DictTypeImportField = 'dictCode' | 'dictName' | 'valueType' | 'description'
@@ -76,18 +84,13 @@ export class DictService extends BaseService<SysDictEntity> {
     super(dictRepository, '字典')
   }
 
-  /** 字典列表：字典类型数量少，一次全量返回（不分页），并带上每个字典的字典项数量 */
-  async listByQuery(query: QueryDictDto): Promise<SysDictEntity[]> {
-    const qb = this.dictRepository.createQueryBuilder('dict').where('dict.del_flag = 0').orderBy('dict.create_time', 'DESC').addOrderBy('dict.id', 'DESC')
-    applyTenantScope(qb, 'dict')
-
-    const keyword = query.keyword?.trim()
-    if (keyword) {
-      qb.andWhere('(dict.dict_name LIKE :keyword OR dict.dict_code LIKE :keyword)', { keyword: `%${keyword}%` })
-    }
-
-    const list = await qb.getMany()
-    if (!list.length) return list
+  /** 字典列表：服务端分页 + 关键字 + 排序，并带上每个字典的字典项数量 */
+  async listByQuery(query: QueryDictDto): Promise<Pagination<SysDictEntity>> {
+    const qb = this.buildDictQuery(query)
+    applySort(qb, 'dict', query, DICT_SORTABLE)
+    const page = await paginate(qb, { page: query.page, pageSize: query.pageSize })
+    const list = page.records
+    if (!list.length) return page
 
     const counts = await this.dictRepository.manager
       .createQueryBuilder(SysDictItemEntity, 'item')
@@ -98,7 +101,19 @@ export class DictService extends BaseService<SysDictEntity> {
       .getRawMany<{ dictId: string; count: string }>()
 
     const countMap = new Map(counts.map(row => [row.dictId, Number(row.count)]))
-    return list.map(dict => Object.assign(dict, { itemCount: countMap.get(dict.id) ?? 0 }))
+    const records = list.map(dict => Object.assign(dict, { itemCount: countMap.get(dict.id) ?? 0 }))
+    return new Pagination(records, page.total, page.current, page.size, page.hasNext)
+  }
+
+  /** 列表查询的公共条件（租户范围 + 关键字 + 默认排序），导出复用 */
+  private buildDictQuery(query: QueryDictDto) {
+    const qb = this.dictRepository.createQueryBuilder('dict').where('dict.del_flag = 0').orderBy('dict.create_time', 'DESC').addOrderBy('dict.id', 'DESC')
+    applyTenantScope(qb, 'dict')
+    const keyword = query.keyword?.trim()
+    if (keyword) {
+      qb.andWhere('(dict.dict_name LIKE :keyword OR dict.dict_code LIKE :keyword)', { keyword: `%${keyword}%` })
+    }
+    return qb
   }
 
   /** 字典详情（排除已删除） */
@@ -190,7 +205,8 @@ export class DictService extends BaseService<SysDictEntity> {
 
   /** 导出：字典类型 + 字典项一起带走（字典项靠 dictCode 关联，不用人工对齐两份文件） */
   async exportDicts(query: QueryDictDto): Promise<{ dicts: SysDictEntity[]; items: SysDictItemEntity[] }> {
-    const dicts = (await this.listByQuery(query)).slice(0, DICT_EXPORT_MAX_ROWS)
+    // 导出是全量（不分页）：只带筛选条件，不受列表当前页影响
+    const dicts = (await this.buildDictQuery(query).getMany()).slice(0, DICT_EXPORT_MAX_ROWS)
     if (!dicts.length) {
       return { dicts, items: [] }
     }

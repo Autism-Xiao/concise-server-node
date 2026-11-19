@@ -1,7 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger'
 import { IsOptional, IsString } from 'class-validator'
+import { PagerDto } from '../../../../common/dto/pager.dto'
 
-export class QueryPostDto {
+export class QueryPostDto extends PagerDto {
   @ApiPropertyOptional({ description: '关键字，模糊匹配岗位名称/编码/描述', example: '研发' })
   @IsOptional()
   @IsString()

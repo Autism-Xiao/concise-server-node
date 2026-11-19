@@ -5,6 +5,7 @@ import { Brackets, In, Repository } from 'typeorm'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { BaseService } from '../../../helper/crud/base.service'
+import { applySort, paginate, Pagination } from '../../../helper/paginate'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
@@ -27,6 +28,14 @@ import type { UpdatePostDto } from './dto/update-post.dto'
 /** 导出上限：岗位随组织规模增长，兜住异常膨胀 */
 export const POST_EXPORT_MAX_ROWS = 5000
 
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const POST_SORTABLE: Record<string, string> = {
+  postName: 'postName',
+  postCode: 'postCode',
+  postSort: 'postSort',
+  status: 'status'
+}
+
 /** 导入列别名 */
 type PostImportField = 'postCode' | 'postName' | 'postSort' | 'deptName' | 'status' | 'description'
 
@@ -48,8 +57,16 @@ export class PostService extends BaseService<PostEntity> {
     super(postRepository, '岗位')
   }
 
-  /** 岗位列表（post_sort 升序，带所属部门），keyword 模糊匹配名称/编码/描述，可按 deptId 过滤 */
-  async listByQuery(query: QueryPostDto): Promise<PostEntity[]> {
+  /** 岗位列表（post_sort 升序，带所属部门），服务端分页；keyword 模糊匹配名称/编码/描述，可按 deptId 过滤 */
+  async listByQuery(query: QueryPostDto): Promise<Pagination<PostEntity>> {
+    const qb = this.buildPostQuery(query)
+    applySort(qb, 'post', query, POST_SORTABLE)
+    const page = await paginate(qb, { page: query.page, pageSize: query.pageSize })
+    return page
+  }
+
+  /** 列表查询的公共条件（租户范围 + 关键字 + 部门过滤 + 默认排序），导出复用 */
+  private buildPostQuery(query: QueryPostDto) {
     const qb = this.postRepository.createQueryBuilder('post').leftJoinAndSelect('post.dept', 'dept').orderBy('post.post_sort', 'ASC')
     applyTenantScope(qb, 'post')
     const keyword = query.keyword?.trim()
@@ -65,7 +82,7 @@ export class PostService extends BaseService<PostEntity> {
     if (query.deptId) {
       qb.andWhere('post.dept_id = :deptId', { deptId: query.deptId })
     }
-    return qb.getMany()
+    return qb
   }
 
   /** 创建岗位：postCode 在「本租户 ∪ 平台共享」内唯一（前置拦截可读报错）；deptId 传了必须存在 */
@@ -112,9 +129,9 @@ export class PostService extends BaseService<PostEntity> {
     }
   }
 
-  /** 导出：与列表同筛选条件（keyword / deptId），超出上限截断 */
+  /** 导出：与列表同筛选条件（keyword / deptId），不分页，超出上限截断 */
   async exportPosts(query: QueryPostDto): Promise<PostEntity[]> {
-    const list = await this.listByQuery(query)
+    const list = await this.buildPostQuery(query).getMany()
     return list.slice(0, POST_EXPORT_MAX_ROWS)
   }
 

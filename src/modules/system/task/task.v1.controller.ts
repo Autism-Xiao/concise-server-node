@@ -59,11 +59,11 @@ class ChangeTaskStatusDto {
 export class TaskV1Controller {
   constructor(private readonly taskService: TaskService) {}
 
-  @ApiOperation({ summary: '我负责的任务（v1）', description: '登录即可访问；按 status 过滤，返回带负责人姓名的分页列表' })
+  @ApiOperation({ summary: '我负责的任务（v1）', description: '登录即可访问；keyword/priority/status 过滤 + 白名单排序，返回带负责人姓名的分页列表' })
   @ApiOkResponse({ description: '任务分页结果', type: Pagination })
   @Get('mine')
   mine(@Req() req: { user: UserEntity }, @Query() query: QueryTaskDto) {
-    return this.taskService.mine(String(req.user.id), { page: query.page, pageSize: query.pageSize, status: query.status })
+    return this.taskService.mine(String(req.user.id), query)
   }
 
   @ApiOperation({ summary: '任务分页列表（v1）', description: 'keyword/priority/status/assigneeId 过滤；需 system:task:list' })

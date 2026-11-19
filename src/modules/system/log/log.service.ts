@@ -5,11 +5,19 @@ import { Repository, type DeleteQueryBuilder, type SelectQueryBuilder } from 'ty
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { assertImportRows, createImportResult, failImportRow, type ImportResult, pickCell, resolveImportLayout } from '../../../helper/import/excel-import'
-import { paginate, type Pagination } from '../../../helper/paginate'
+import { applySort, paginate, type Pagination } from '../../../helper/paginate'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { randomId32 } from '../../../utils/password.util'
 import { parseRequestInfo } from '../../../utils/request-info.util'
 import { SysLogEntity } from './entities/sys-log.entity'
+
+/** 可排序字段白名单：前端列 id → 实体属性名（日志量大，服务端排序比拉全量后排更稳） */
+const LOG_SORTABLE: Record<string, string> = {
+  createTime: 'createTime',
+  status: 'status',
+  cost: 'cost',
+  operateUserName: 'operateUserName'
+}
 
 /** 登录日志入参（status 取值：0 成功 / 1 失败） */
 export interface LoginLogInput {
@@ -164,13 +172,22 @@ export class LogService {
   }
 
   /** 登录日志查询条件构造（列表与导出共用，log_type=0） */
-  private buildLoginLogQb(query: { userId?: string; username?: string; status?: number; startTime?: string; endTime?: string }) {
+  private buildLoginLogQb(query: {
+    userId?: string
+    username?: string
+    status?: number
+    startTime?: string
+    endTime?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  }) {
     const qb = this.logRepository
       .createQueryBuilder('log')
       .where('log.log_type = :logType', { logType: 0 })
       .orderBy('log.create_time', 'DESC')
       .addOrderBy('log.id', 'DESC')
     this.applyLogTenantScope(qb)
+    applySort(qb, 'log', query, LOG_SORTABLE)
     // 精确按用户过滤（用户管理页「登录日志」弹窗用）：优先 userId，改名不影响历史归属
     if (query.userId) {
       qb.andWhere('log.operate_user_id = :userId', { userId: query.userId })
@@ -191,13 +208,14 @@ export class LogService {
   }
 
   /** 操作日志查询条件构造（列表与导出共用，log_type=1） */
-  private buildOperLogQb(query: { username?: string; module?: string; startTime?: string; endTime?: string }) {
+  private buildOperLogQb(query: { username?: string; module?: string; startTime?: string; endTime?: string; sortBy?: string; sortOrder?: 'asc' | 'desc' }) {
     const qb = this.logRepository
       .createQueryBuilder('log')
       .where('log.log_type = :logType', { logType: 1 })
       .orderBy('log.create_time', 'DESC')
       .addOrderBy('log.id', 'DESC')
     this.applyLogTenantScope(qb)
+    applySort(qb, 'log', query, LOG_SORTABLE)
     if (query.username) {
       qb.andWhere('log.operate_user_name LIKE :username', { username: `%${query.username}%` })
     }

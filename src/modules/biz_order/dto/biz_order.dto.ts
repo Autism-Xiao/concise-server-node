@@ -81,6 +81,17 @@ export class ListBizOrderDto {
   @MaxLength(64, { message: '关键字最长 64 位' })
   keyword?: string
 
+  @ApiPropertyOptional({ description: '排序字段（列 id，需在白名单内）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  sortBy?: string
+
+  @ApiPropertyOptional({ description: '排序方向：asc / desc', enum: ['asc', 'desc'] })
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc'
+
   @ApiPropertyOptional({ description: '按状态精确过滤' })
   @IsOptional()
   @IsInt()

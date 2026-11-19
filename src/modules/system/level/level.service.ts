@@ -5,6 +5,7 @@ import { Brackets, In, Repository } from 'typeorm'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { BaseService } from '../../../helper/crud/base.service'
+import { applySort, paginate, Pagination } from '../../../helper/paginate'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
@@ -26,6 +27,13 @@ import type { UpdateLevelDto } from './dto/update-level.dto'
 /** 导出上限：职级是基础数据，正常几十条，这里兜住异常膨胀 */
 export const LEVEL_EXPORT_MAX_ROWS = 5000
 
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const LEVEL_SORTABLE: Record<string, string> = {
+  levelName: 'levelName',
+  levelRank: 'levelRank',
+  status: 'status'
+}
+
 /** 导入列别名：兼容用户手改表头 */
 type LevelImportField = 'levelName' | 'levelRank' | 'status' | 'remark'
 
@@ -45,8 +53,15 @@ export class LevelService extends BaseService<LevelEntity> {
     super(levelRepository, '职级')
   }
 
-  /** 职级列表（level_rank 降序=级别从高到低），keyword 模糊匹配名称/备注 */
-  async listByQuery(query: QueryLevelDto): Promise<LevelEntity[]> {
+  /** 职级列表（level_rank 降序=级别从高到低），服务端分页；keyword 模糊匹配名称/备注 */
+  async listByQuery(query: QueryLevelDto): Promise<Pagination<LevelEntity>> {
+    const qb = this.buildLevelQuery(query)
+    applySort(qb, 'level', query, LEVEL_SORTABLE)
+    return paginate(qb, { page: query.page, pageSize: query.pageSize })
+  }
+
+  /** 列表查询的公共条件（租户范围 + 关键字 + 默认排序），导出复用 */
+  private buildLevelQuery(query: QueryLevelDto) {
     const qb = this.levelRepository.createQueryBuilder('level').orderBy('level.level_rank', 'DESC')
     applyTenantScope(qb, 'level')
     const keyword = query.keyword?.trim()
@@ -54,7 +69,7 @@ export class LevelService extends BaseService<LevelEntity> {
       // andWhere 而不是 where：避免把上面的租户条件覆盖掉
       qb.andWhere(new Brackets(sub => sub.where('level.level_name LIKE :kw', { kw: `%${keyword}%` }).orWhere('level.remark LIKE :kw', { kw: `%${keyword}%` })))
     }
-    return qb.getMany()
+    return qb
   }
 
   /** 创建职级：level_name 在「本租户 ∪ 平台共享」内唯一（数据库联合唯一键兜底，前置拦截给可读报错） */
@@ -87,7 +102,8 @@ export class LevelService extends BaseService<LevelEntity> {
 
   /** 导出：与列表同筛选条件，超出上限截断（前端副标题会显示实际条数） */
   async exportLevels(query: QueryLevelDto): Promise<LevelEntity[]> {
-    const list = await this.listByQuery(query)
+    // 导出全量（不分页），只保留筛选条件
+    const list = await this.buildLevelQuery(query).getMany()
     return list.slice(0, LEVEL_EXPORT_MAX_ROWS)
   }
 

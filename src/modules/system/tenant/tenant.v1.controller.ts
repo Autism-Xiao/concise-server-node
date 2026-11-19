@@ -64,7 +64,8 @@ export class TenantV1Controller {
   })
   @Get(':id/menus')
   @Perms('system:tenant:list')
-  getPackage(@Param('id', ParseIntPipe) id: number) {
+  async getPackage(@Param('id', ParseIntPipe) id: number) {
+    await this.tenantService.findOne(id)
     return this.packageService.getPackageDetail(id)
   }
 
@@ -75,7 +76,9 @@ export class TenantV1Controller {
   @Put(':id/menus')
   @Perms('system:tenant:edit')
   @OperLog('租户管理')
-  setPackage(@Param('id', ParseIntPipe) id: number, @Body() dto: SetTenantPackageDto) {
+  async setPackage(@Param('id', ParseIntPipe) id: number, @Body() dto: SetTenantPackageDto) {
+    // 套餐服务只负责写，存在性由调用方先确认；否则会留下孤儿 sys_tenant_menu 行
+    await this.tenantService.findOne(id)
     return this.packageService.setPackage(id, dto.menuIds)
   }
 

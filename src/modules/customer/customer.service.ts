@@ -4,11 +4,21 @@ import { Repository } from 'typeorm'
 
 import { isDuplicateEntryError } from '../../utils/db-error.util'
 import { BaseService } from '../../helper/crud/base.service'
-import { paginate, type Pagination } from '../../helper/paginate'
+import { applySort, paginate, type Pagination } from '../../helper/paginate'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { CreateCustomerDto, ListCustomerDto, UpdateCustomerDto } from './dto/customer.dto'
 import { CustomerEntity } from './entities/customer.entity'
+
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const CUSTOMER_SORTABLE: Record<string, string> = {
+  name: 'name',
+  contact: 'contact',
+  phone: 'phone',
+  level: 'level',
+  vip: 'vip',
+  createdAt: 'createdAt'
+}
 
 @Injectable()
 export class CustomerService extends BaseService<CustomerEntity> {
@@ -50,6 +60,7 @@ export class CustomerService extends BaseService<CustomerEntity> {
     const qb = this.repository.createQueryBuilder('customer').orderBy('customer.id', 'DESC')
     applyTenantScope(qb, 'customer')
     qb.andWhere('customer.delFlag = 0')
+    applySort(qb, 'customer', query, CUSTOMER_SORTABLE)
     if (query.keyword) {
       qb.andWhere('customer.name LIKE :keyword', { keyword: `%${query.keyword}%` })
     }
@@ -86,7 +97,7 @@ export class CustomerService extends BaseService<CustomerEntity> {
 
   /** 软删除：del_flag 置 1；软删行仍占用唯一键，与查重「含软删占用」配套 */
   async delete(id: number): Promise<void> {
-    const entity = await this.findOne(id)
-    await this.repository.update(entity.id, { delFlag: 1 })
+    // 必须走基类的严格写条件：findOne 能读到 tenant_id=0 的共享客户，按 id 直写会删掉平台数据
+    await this.softDelete(id, { delFlag: 1 })
   }
 }

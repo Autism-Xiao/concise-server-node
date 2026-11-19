@@ -4,12 +4,20 @@ import { Repository } from 'typeorm'
 
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
-import { paginate, Pagination } from '../../../helper/paginate'
+import { applySort, paginate, Pagination } from '../../../helper/paginate'
 import { randomId32 } from '../../../utils/password.util'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
 import { JobHandlerRegistry } from './job.handlers'
+
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const JOB_SORTABLE: Record<string, string> = {
+  jobClassName: 'jobClassName',
+  status: 'status',
+  cronExpression: 'cronExpression',
+  createTime: 'createTime'
+}
 import { JobScheduler, type JobExecutionResult, type JobRunRecord } from './job.scheduler'
 import type { CreateJobDto } from './dto/create-job.dto'
 import type { QueryJobDto } from './dto/query-job.dto'
@@ -27,10 +35,11 @@ export class JobService {
     private readonly registry: JobHandlerRegistry
   ) {}
 
-  /** 分页列表（keyword 模糊匹配任务类名/描述，可按状态过滤） */
+  /** 分页列表（keyword 模糊匹配任务类名/描述，可按状态过滤），排序走白名单 */
   async listByQuery(query: QueryJobDto): Promise<Pagination<JobView>> {
     const qb = this.jobRepository.createQueryBuilder('job').where('job.del_flag = 0').orderBy('job.create_time', 'DESC').addOrderBy('job.id', 'DESC')
     applyTenantScope(qb, 'job')
+    applySort(qb, 'job', query, JOB_SORTABLE)
 
     const keyword = query.keyword?.trim()
     if (keyword) {

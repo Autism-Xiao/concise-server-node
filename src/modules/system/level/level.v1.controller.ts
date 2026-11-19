@@ -22,7 +22,7 @@ import { BatchDeleteDto } from '../../../common/dto/batch-delete.dto'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { IMPORT_MAX_SIZE } from '../../../helper/import/excel-import'
-import { Pagination, toPagination } from '../../../helper/paginate'
+import { Pagination } from '../../../helper/paginate'
 import { formatDateTime } from '../../../utils/csv.util'
 import { setDownloadHeaders } from '../../../utils/download.util'
 import { buildImportTemplateXlsx, buildXlsx, readXlsxTable } from '../../../utils/xlsx.util'
@@ -51,7 +51,7 @@ export class LevelV1Controller {
   @Perms('system:level:list')
   @Get()
   async list(@Query() query: QueryLevelDto): Promise<Pagination<LevelEntity>> {
-    return toPagination(await this.levelService.listByQuery(query))
+    return this.levelService.listByQuery(query)
   }
 
   @ApiOperation({
