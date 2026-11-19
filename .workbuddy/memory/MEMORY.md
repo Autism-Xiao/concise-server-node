@@ -42,7 +42,7 @@
 - **锁屏（2026-11-19）**：状态源在服务端 Redis `lock:screen:<userId>`（TTL 24h 自愈），`POST /v1/auth/lock` 写、verify-password 成功或 logout 清、`GET /v1/auth/lock-state` 启动对齐；sessionStorage 只是瞬时镜像。按账号维度（A 端锁 B 端也锁）；**Redis 故障一律 fail-open**。别再把会话性 UI 状态只放 sessionStorage——凭证持久时「关标签页即失效」的假设不成立。
 - **前端弹框规约**（concise-admin）：DialogContent 默认固定头尾（自动分拣 Header/Footer），Footer 必须是 DialogContent 直接子元素——写进 `<form>` 会被划进滚动区；表单写法 `form id="x-form"` + 提交按钮 `form="x-form"`；自绘满幅布局传 `layout="free"`。互斥少选项切换用 `ui/segmented.tsx`。
 
-- **代码生成器**（2026-11-15）：页面 /system/codegen（scope=platform，生产默认禁用 `CODEGEN_ENABLED`）→ `src/modules/codegen` spawn `scripts/gen-module.cjs`（唯一模板源，支持 `--spec` JSON / `--out` 暂存预览 / `--json` 清单 / `--no-migration`）。改模板后必须用极端字段组合（无唯一/无搜索/全可选）各编译一遍——已修过 `[never[]]` 与 MaxLength import 两个分支漏。错误码 9201/9202/9203。**force 语义 = 只补齐缺失文件**（写盘一律 `writeIfAbsent` 不覆盖；表已存在时传 `--no-migration` 不产重复迁移，结果带 warnings 说明没做的事）。前端 9201 的「弹二次确认」必须带 `!force` 守卫，否则 force 也过不去时无限弹框。`--out` 暂存模式不查真实仓库（否则对已有模块预览返回 0 文件）。
+- **代码生成器**（2026-11-15）：页面 /system/codegen（scope=platform，生产默认禁用 `CODEGEN_ENABLED`）→ `src/modules/codegen` spawn `scripts/gen-module.cjs`（唯一模板源，支持 `--spec` JSON / `--out` 暂存预览 / `--json` 清单 / `--no-migration`）。改模板后必须用极端字段组合（无唯一/无搜索/全可选）各编译一遍——已修过 `[never[]]` 与 MaxLength import 两个分支漏。错误码 9201/9202/9203。**force 语义 = 只补齐缺失文件**（写盘一律 `writeIfAbsent` 不覆盖；表已存在时传 `--no-migration` 不产重复迁移，结果带 warnings 说明没做的事）。前端 9201 的「弹二次确认」必须带 `!force` 守卫，否则 force 也过不去时无限弹框。`--out` 暂存模式不查真实仓库（否则对已有模块预览返回 0 文件）。**生成器只产出迁移文件，绝不直接对库建表（用户 2026-11-19 明确否决，判定太危险）**：建表统一走 `npm run migration:run` 人工执行，不要加 createTable 开关/自动执行 SQL。
 
 ## 测试数据与冒烟（本地 dev 库）
 

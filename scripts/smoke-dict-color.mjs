@@ -111,7 +111,28 @@ try {
   const cleared = await api(`/dict-items/${itemId}`, { method: 'PUT', token, body: { color: '' } })
   check('空串清除为 null', cleared.data?.color === null || cleared.data?.color === undefined, `实际 ${JSON.stringify(cleared.data?.color)}`)
 
-  // ---- 8. 非法色必须被白名单挡住 ----
+  // ---- 8. 自定义色：#RRGGBB 可写可读、按编码透传 ----
+  const hexColor = '#8B5CF6'
+  const hexItem = await api('/dict-items', {
+    method: 'POST',
+    token,
+    body: { dictId, itemText: '自定义紫', itemValue: 'custom', sortOrder: 2, status: 1, color: hexColor }
+  })
+  check('自定义 HEX 建项成功', hexItem.status === 200 || hexItem.status === 201, `status=${hexItem.status} ${JSON.stringify(hexItem.body?.message ?? '')}`)
+  const hexItemId = hexItem.data?.id ?? null
+  check('返回 color=#8B5CF6', hexItem.data?.color === hexColor, `实际 ${hexItem.data?.color}`)
+  const hexByCode = await api(`/dict-items/code/${dictCode}`, { token })
+  check('按编码透传自定义色', (hexByCode.data?.items ?? []).find(i => i.itemValue === 'custom')?.color === hexColor)
+  // 不带 # 的 6 位也接受（取色器只产带 # 的，但 Excel/API 兼容）
+  const noHash = await api(`/dict-items/${hexItemId}`, { method: 'PUT', token, body: { color: '10B981' } })
+  check('不带 # 的 HEX 可接受', noHash.status === 200 && typeof noHash.data?.color === 'string', `status=${noHash.status} 实际 ${JSON.stringify(noHash.data?.color)}`)
+  // 3 位简写 / rgb() 仍属非法（防止绕过白名单）
+  const shortHex = await api(`/dict-items/${hexItemId}`, { method: 'PUT', token, body: { color: '#fff' } })
+  check('3 位简写被拒', shortHex.status >= 400, `status=${shortHex.status}`)
+  const rgb = await api(`/dict-items/${hexItemId}`, { method: 'PUT', token, body: { color: 'rgb(1,2,3)' } })
+  check('rgb() 被拒', rgb.status >= 400, `status=${rgb.status}`)
+
+  // ---- 9. 非法色必须被白名单挡住 ----
   const bad = await api(`/dict-items/${itemId}`, { method: 'PUT', token, body: { color: 'bg-red-500' } })
   check('非法色被拒（非 2xx）', bad.status >= 400, `status=${bad.status}`)
   const badCreate = await api('/dict-items', {
