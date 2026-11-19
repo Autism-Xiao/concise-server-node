@@ -4,6 +4,7 @@
 
 | 日期 | 主题 | 类型 | 要点 |
 | --- | --- | --- | --- |
+| 2026-11-19 | [表格页刷新按钮纯图标化](./2026-11-19-表格页刷新按钮纯图标化.md) | 增强 | 新增统一 `RefreshButton`（outline 方形图标按钮 + title/aria-label），覆盖全部 18 个表格页：无刷新按钮的补上（接 reload/load/refresh），有「刷新」文字按钮的换成图标；非表格页按确认保持原样。字典页左右列表各一个刷新按钮，错误态「重试」保留文字 |
 | 2026-11-19 | [菜单操作列图标化](./2026-11-19-菜单操作列图标化.md) | 增强 | 菜单管理页操作列「新增/修改/删除」去掉汉字只留图标，改 `size="icon" className="size-7"`，补 `title` / `aria-label` 保留悬浮提示与无障碍语义；权限判断和点击行为不变 |
 | 2026-11-19 | [锁屏状态服务端化](./2026-11-19-锁屏状态服务端化.md) | 修复 | 锁屏标志原来存 sessionStorage，关机重开后标志消失而登录凭证（localStorage）还在 → 直接进工作区，锁屏形同虚设。改为状态源放服务端：`POST /v1/auth/lock` 写 Redis `lock:screen:<userId>`（TTL 24h 自愈），解锁复用 verify-password（成功顺带 DEL），登出清标志，前端启动用 `GET /auth/lock-state` 纠正本地 sessionStorage 镜像 —— 换设备/清缓存/关机重开全拦得住。语义按账号不按设备；Redis 故障一律 fail-open（不重蹈验证码卡登录页覆辙）；`interactedRef` 防启动期在途响应覆盖用户刚点的锁屏 |
 | 2026-11-19 | [搜索防闪烁](./2026-11-19-搜索防闪烁.md) | 修复 | 服务端筛选落地后每个页面都是 `loading ? 骨架卡片 : 表格卡片`，一搜索整卡卸载重挂 → 输入框失焦、布局跳动。全局改法：骨架屏只认「首次加载」（`useServerTable` 新增 `booted`，页面 own-loading 的自己加），之后搜索/翻页表格保持挂载，`DataTable` 新增 `loading` 属性盖 `bg-background/60` 半透明遮罩 + 转圈。顺带揪出一个静默 bug：`QueryMessageDto` 没继承 `PagerDto`，全局 ValidationPipe 的 whitelist 把 `page/pageSize` 无声剔除，前端传 `pageSize=20` 恒被按 10 条返回（service 手写 `& { page? }` 交集签名是识别信号，已全消灭）；dashboard 冒烟两条 viewer 断言是旧预期（模板早已把用户/角色模块对只读档排除，按设计返回 null），已改回 null。另记两个环境问题：隔离/演示冒烟弱口令被密码策略拦、provision-all 补权后角色权限缓存未失效 |
