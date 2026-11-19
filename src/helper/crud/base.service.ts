@@ -196,4 +196,43 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
       throw new NotFoundException(`${this.entityName}不存在`)
     }
   }
+
+  /**
+   * 按 id 软删（del_flag 类实体用）：与 delete 相同的严格租户写条件。
+   *
+   * 子类不要再用「this.findOne(id) 后 repository.update(id, { delFlag: 1 })」：
+   * findOne 的读范围包含 tenant_id=0 共享行，按 id 直写会把平台共享数据软删掉。
+   */
+  async softDelete(id: number | string, patch: DeepPartial<T>): Promise<void> {
+    const qb = this.repository
+      .createQueryBuilder()
+      .update()
+      .set(patch as never)
+      .where('id = :id', { id })
+    if (this.hasTenantColumn()) {
+      const condition = tenantWriteCondition()
+      if (condition) qb.andWhere(condition.clause, condition.params)
+    }
+    const result = await qb.execute()
+    if (!result.affected) {
+      throw new NotFoundException(`${this.entityName}不存在`)
+    }
+  }
+
+  /**
+   * 写路径加载实体：与 softDelete/update 的严格写范围一致。
+   * 业务校验（如有无子节点、有无关联用户）应基于这个结果，不能基于包含共享行的 findOne。
+   */
+  protected async findOneForWrite(id: number | string): Promise<T> {
+    const where: FindOptionsWhere<T> = { id } as FindOptionsWhere<T>
+    if (this.hasTenantColumn()) {
+      const tenantId = TenantContext.filterTenantId()
+      if (tenantId !== null) (where as Record<string, unknown>).tenantId = tenantId
+    }
+    const entity = await this.repository.findOne({ where })
+    if (!entity) {
+      throw new NotFoundException(`${this.entityName}不存在`)
+    }
+    return entity
+  }
 }

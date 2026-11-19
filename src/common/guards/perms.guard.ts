@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core'
 
 import { PERMS_KEY } from '../decorators/perms.decorator'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 
 /**
  * 全局按钮级权限守卫：读取 @Perms() 声明，校验用户是否持有该权限标识
@@ -61,8 +62,12 @@ export class PermsGuard implements CanActivate {
     const roleIds = roles.map((role: { id: string }) => role.id)
     // 走缓存：角色 → sys_role_permission → sys_permission.perms（无效/已删除菜单不算数）
     const owned = await this.permissionCache.getRolesPerms(roleIds)
+    // 租户套餐是接口级上限：角色授权 ∩ 套餐授权。只在前端隐藏菜单不够——
+    // 收窄/清空套餐后，旧 token 仍能直接调被收回模块的接口。
+    const tenantId = TenantContext.filterTenantId()
+    const packagePerms = tenantId !== null && tenantId > 0 ? await this.permissionCache.getTenantPerms(tenantId) : null
 
-    if (required.some(perm => owned.has(perm))) {
+    if (required.some(perm => owned.has(perm) && (packagePerms === null || packagePerms.has(perm)))) {
       return true
     }
     throw new ForbiddenException('无操作权限')

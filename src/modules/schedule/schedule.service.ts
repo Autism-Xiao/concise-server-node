@@ -1,10 +1,11 @@
 import { BadRequestException, ForbiddenException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { DataSource, Repository } from 'typeorm'
+import { DataSource, Repository, type SelectQueryBuilder } from 'typeorm'
 
 import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
 import { Pagination } from '../../helper/paginate'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 import { BaseCalendarEntity } from './entities/base-calendar.entity'
 import { BaseScheduleEventEntity } from './entities/base-schedule-event.entity'
 import { BaseScheduleReminderLogEntity } from './entities/base-schedule-reminder-log.entity'
@@ -34,12 +35,22 @@ export class ScheduleService {
 
   /* ---------------- 日历分类 ---------------- */
 
-  /** 当前用户可见的日历：自己的 + 公开的 */
+  /** 当前用户可见的日历：自己的 + 本租户内用户公开的 */
   async listCalendars(userId: string): Promise<BaseCalendarEntity[]> {
-    return this.calendarRepo.find({ where: [{ ownerId: userId }, { isPublic: true }], order: { id: 'ASC' } })
+    const qb = this.calendarRepo.createQueryBuilder('c')
+    this.applyCalendarVisibility(qb, userId)
+    return qb.orderBy('c.id', 'ASC').getMany()
   }
 
   async createCalendar(userId: string, dto: CreateCalendarDto): Promise<BaseCalendarEntity> {
+    // 代建只属于平台管理员：ownerId 来自客户端，普通用户传别人的 id 就能往对方日历里塞数据
+    if (dto.ownerId && dto.ownerId !== userId) {
+      if (!TenantContext.isSuper()) {
+        throw new ForbiddenException('只有平台管理员可以代建日历')
+      }
+      const target = await this.dataSource.query<Array<{ id: string }>>('SELECT id FROM sys_user WHERE id = ? AND del_flag = 0', [dto.ownerId])
+      if (!target.length) throw new NotFoundException('目标用户不存在')
+    }
     const ownerId = dto.ownerId ? dto.ownerId : userId
     const row = this.calendarRepo.create({
       name: dto.name,
@@ -89,9 +100,11 @@ export class ScheduleService {
 
   /* ---------------- 日程事件 ---------------- */
 
-  /** 区间查询：我的日历 + 公开日历的事件（供月视图渲染） */
+  /** 区间查询：我的日历 + 本租户内公开日历的事件（供月视图渲染） */
   async listEvents(userId: string, dto: QueryScheduleEventDto): Promise<BaseScheduleEventEntity[]> {
-    const visible = await this.calendarRepo.find({ where: [{ ownerId: userId }, { isPublic: true }], select: { id: true } })
+    const visibleQb = this.calendarRepo.createQueryBuilder('c').select('c.id', 'id')
+    this.applyCalendarVisibility(visibleQb, userId)
+    const visible = await visibleQb.getRawMany<{ id: string | number }>()
     if (visible.length === 0) return []
     const start = dto.startDate ? new Date(dto.startDate) : undefined
     const end = dto.endDate ? this.endOfDay(new Date(dto.endDate)) : undefined
@@ -112,8 +125,12 @@ export class ScheduleService {
     if (!event) throw new NotFoundException('日程不存在')
     const calendar = await this.calendarRepo.findOne({ where: { id: event.calendarId } })
     if (!calendar) throw new NotFoundException('所属日历不存在')
-    if (calendar.ownerId !== userId && !calendar.isPublic) {
-      throw new BizException(BizErrorCode.SCHEDULE_OWNERSHIP, '无权查看该日程', HttpStatus.FORBIDDEN)
+    if (calendar.ownerId !== userId) {
+      // 公开也只在本租户内公开：日程是个人数据，不跟着租户切分，但“公开”不能跨租户
+      const visible = calendar.isPublic && (await this.isPublicCalendarVisible(calendar.ownerId))
+      if (!visible) {
+        throw new BizException(BizErrorCode.SCHEDULE_OWNERSHIP, '无权查看该日程', HttpStatus.FORBIDDEN)
+      }
     }
     return event
   }
@@ -235,6 +252,56 @@ export class ScheduleService {
 
   private assertOwner(calendar: BaseCalendarEntity, userId: string, label: string): void {
     if (calendar.ownerId !== userId) throw new BizException(BizErrorCode.SCHEDULE_OWNERSHIP, `只能操作自己的${label}`, HttpStatus.FORBIDDEN)
+  }
+
+  /**
+   * 日历可见性：自己的日历无条件可见；公开日历只对「与属主同租户」的用户可见。
+   *
+   * 日程刻意不按租户切分（跟随人，切租户不丢个人日程），但没有租户列的代价是不能用
+   * applyTenantScope。这里通过 sys_user_tenant 反查属主的当前租户：
+   * - 平台视角（null）：公开日历全部可见
+   * - 租户视角（>0）：仅属主属于该租户时可见
+   * - 无租户归属（0）：仅属主也没有任何租户归属时可见
+   */
+  private applyCalendarVisibility(qb: SelectQueryBuilder<BaseCalendarEntity>, userId: string): void {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) {
+      qb.where('(c.owner_id = :userId OR c.is_public = 1)', { userId })
+      return
+    }
+    if (tenantId === 0) {
+      qb.where(
+        `(c.owner_id = :userId OR (c.is_public = 1 AND NOT EXISTS (
+           SELECT 1 FROM sys_user_tenant ut WHERE ut.user_id = c.owner_id AND ut.status = 0
+         )))`,
+        { userId }
+      )
+      return
+    }
+    qb.where(
+      `(c.owner_id = :userId OR (c.is_public = 1 AND EXISTS (
+         SELECT 1 FROM sys_user_tenant ut
+          WHERE ut.user_id = c.owner_id AND ut.tenant_id = :__calendarTenantId AND ut.status = 0
+       )))`,
+      { userId, __calendarTenantId: tenantId }
+    )
+  }
+
+  /** 公开日历是否对当前租户可见（getEvent 单条读取用） */
+  private async isPublicCalendarVisible(ownerId: string): Promise<boolean> {
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId === null) return true
+    if (tenantId === 0) {
+      const rows = await this.dataSource.query<Array<{ one: number }>>('SELECT 1 AS one FROM sys_user_tenant WHERE user_id = ? AND status = 0 LIMIT 1', [
+        ownerId
+      ])
+      return rows.length === 0
+    }
+    const rows = await this.dataSource.query<Array<{ one: number }>>(
+      'SELECT 1 AS one FROM sys_user_tenant WHERE user_id = ? AND tenant_id = ? AND status = 0 LIMIT 1',
+      [ownerId, tenantId]
+    )
+    return rows.length > 0
   }
 
   private endOfDay(d: Date): Date {

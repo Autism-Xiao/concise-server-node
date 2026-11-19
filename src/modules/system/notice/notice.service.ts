@@ -6,7 +6,7 @@ import { BaseService } from '../../../helper/crud/base.service'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
-import { paginate, type Pagination } from '../../../helper/paginate'
+import { applySort, paginate, type Pagination } from '../../../helper/paginate'
 import { applyTenantScope, tenantWriteCondition } from '../../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { UserEntity } from '../../user/entities/user.entity'
@@ -19,6 +19,16 @@ import type { UpdateNoticeDto } from './dto/update-notice.dto'
 export const NOTICE_IMPORT_MAX_ROWS = 1000
 /** 导入文件大小上限（5MB，与用户/角色导入保持一致） */
 export const NOTICE_IMPORT_MAX_SIZE = 5 * 1024 * 1024
+
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const NOTICE_SORTABLE: Record<string, string> = {
+  title: 'title',
+  priority: 'priority',
+  msgCategory: 'msgCategory',
+  sendStatus: 'sendStatus',
+  sendTime: 'sendTime',
+  createTime: 'createTime'
+}
 
 /** 导入字段：用于按表头别名定位列，列顺序无关 */
 type NoticeImportField = 'id' | 'title' | 'msgCategory' | 'priority' | 'sendStatus' | 'msgType' | 'userIds' | 'startTime' | 'endTime' | 'msgContent'
@@ -115,6 +125,8 @@ export class NoticeService extends BaseService<SysAnnouncementEntity> {
       .orderBy('n.create_time', 'DESC')
       .addOrderBy('n.id', 'DESC')
     applyTenantScope(qb, 'n')
+    // 表头排序走白名单，未命中保留默认的创建时间倒序
+    applySort(qb, 'n', query, NOTICE_SORTABLE)
 
     const keyword = query.keyword?.trim()
     if (keyword) {

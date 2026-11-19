@@ -39,13 +39,26 @@ export class TenantMiddleware implements NestMiddleware {
     }
 
     let userId: string | undefined
+    let appTenantId: number | null = null
     try {
       const jwt = this.configService.get<JwtConfig>(jwtConfig.KEY)
-      const payload = this.jwtService.verify<{ id?: string }>(token, { secret: jwt?.secret })
-      userId = payload?.id
+      const payload = this.jwtService.verify<{ id?: string; app?: boolean; tenantId?: number }>(token, { secret: jwt?.secret })
+      // 应用令牌（client_credentials）：payload.id 是应用 ID，不是 sys_user.id；
+      // 拿它去查租户归属只会得到「无归属 -> 0」，而且会把应用当成用户。
+      // 应用归属租户随令牌一起签发，直接作为上下文；应用状态/最新 scope 由 JwtStrategy 再核。
+      if (payload?.app === true) {
+        appTenantId = Number(payload.tenantId ?? 0)
+      } else {
+        userId = payload?.id
+      }
     } catch {
       // 令牌无效：交给 JwtAuthGuard 回 401，这里只给一个安全的空上下文
       TenantContext.run({ tenantId: 0, isSuper: false }, next)
+      return
+    }
+
+    if (appTenantId !== null) {
+      TenantContext.run({ tenantId: appTenantId, isSuper: false }, next)
       return
     }
 

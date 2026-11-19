@@ -296,18 +296,17 @@ export class AuthService {
     }
 
     // 功能套餐交集：租户用户可见的菜单 ⊆ 该租户已开通菜单（sys_tenant_menu）。
-    // 与 RoleService.assignMenus 的写入端校验构成双保险——就算关联表里有超套餐的脏授权，
-    // 也不会出现在侧边栏、不下发权限码。套餐行缺失时按未受限处理（升级窗口兜底，避免把租户锁死）。
+    // 与 RoleService.assignMenus 的写入端校验、PermsGuard 的接口端校验构成三保险。
+    // 空套餐 = 没有开通任何功能（fail-closed），不能再回退成全量 ——
+    // 否则平台把套餐清空后，租户反而看到全部菜单和权限码，与「停用全部功能」完全相反。
     let scopedMenus = allMenus
     const currentTenantId = TenantContext.currentTenantId()
     if (currentTenantId !== null && currentTenantId > 0) {
       const packageRows = await this.dataSource.query<Array<{ pid: string }>>('SELECT permission_id AS pid FROM sys_tenant_menu WHERE tenant_id = ?', [
         currentTenantId
       ])
-      if (packageRows.length > 0) {
-        const packageIds = new Set(packageRows.map((row: { pid: string }) => row.pid))
-        scopedMenus = allMenus.filter(menu => packageIds.has(menu.id))
-      }
+      const packageIds = new Set(packageRows.map((row: { pid: string }) => row.pid))
+      scopedMenus = allMenus.filter(menu => packageIds.has(menu.id))
     }
 
     // 非超管：汇总各角色授权的菜单/按钮 id

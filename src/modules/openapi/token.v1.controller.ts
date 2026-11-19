@@ -55,7 +55,9 @@ export class TokenV1Controller {
   async issueToken(@Body() dto: AppTokenDto) {
     const app = await this.appService.verifyCredentials(dto.client_id, dto.client_secret)
     const accessToken = await this.jwtService.signAsync(
-      { id: app.id, username: app.appName, app: true, scopes: this.appService.parseScopes(app) },
+      // tenantId 给 TenantMiddleware 用：应用令牌没有用户归属，不能拿 app.id 去查 sys_user。
+      // JwtStrategy 会重新查库确认应用状态/归属租户，这里的值只负责把请求上下文指到正确租户。
+      { id: app.id, username: app.appName, app: true, tenantId: app.tenantId, scopes: this.appService.parseScopes(app) },
       { secret: this.jwt.secret, expiresIn: APP_TOKEN_EXPIRES_IN }
     )
     return {

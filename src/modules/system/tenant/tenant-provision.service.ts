@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { DataSource, type EntityManager } from 'typeorm'
 
 import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
@@ -99,6 +99,12 @@ export class TenantProvisionService {
    * @param menus 预先查好的租户级菜单，批量场景下复用，避免 N 次全表查询；不传则现查
    */
   async provisionIn(manager: EntityManager, tenantId: number, operator?: string, menus?: TenantMenuNode[]): Promise<TenantProvisionResult> {
+    // 防御：任何内部调用（脚本、后续批量任务）都不能对不存在的租户初始化，
+    // 否则会写入一堆永远没人用的角色/套餐孤儿行。控制器先 findOne 只是入口之一。
+    const tenantRows = await manager.query<Array<{ id: number }>>('SELECT id FROM sys_tenant WHERE id = ? AND del_flag = 0 LIMIT 1', [tenantId])
+    if (!tenantRows.length) {
+      throw new NotFoundException('租户不存在或已删除')
+    }
     const menuRows = menus ?? (await this.loadTenantMenus(manager))
     const existingRows = await manager.query<Array<{ id: string; roleCode: string }>>('SELECT id, role_code AS roleCode FROM sys_role WHERE tenant_id = ?', [
       tenantId
@@ -208,8 +214,10 @@ export class TenantProvisionService {
         await this.permissionCache.invalidateRole(role.roleId)
         changed = true
       }
-      // 套餐扩容会改变登录菜单树的交集结果，鉴权用户缓存同样要失效
+      // 套餐扩容会改变登录菜单树/接口权限的交集结果：
+      // 鉴权用户缓存与 PermsGuard 的租户套餐权限缓存都要失效
       if (result.packageAdded > 0) {
+        await this.permissionCache.invalidateTenant(result.tenantId)
         changed = true
       }
     }

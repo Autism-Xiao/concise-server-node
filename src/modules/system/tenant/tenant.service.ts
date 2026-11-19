@@ -3,12 +3,15 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm'
 import { Brackets, DataSource, Repository } from 'typeorm'
 
 import { Pagination } from '../../../helper/paginate/pagination'
+import { applySort } from '../../../helper/paginate/sort'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { PermissionCacheService } from '../../../shared/permission-cache/permission-cache.service'
+import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
 import { TenantAccessService } from '../../../shared/tenant/tenant-access.service'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { isDuplicateEntryError } from '../../../utils/db-error.util'
+import { randomId32 } from '../../../utils/password.util'
 import { SystemConfigService } from '../config/system-config.service'
 import { UserService } from '../../user/user.service'
 import { UserEntity } from '../../user/entities/user.entity'
@@ -47,6 +50,14 @@ export interface TenantApplyQuota {
   reason: '' | 'NEED_VIP' | 'QUOTA_EXCEEDED'
 }
 
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const TENANT_SORTABLE: Record<string, string> = {
+  name: 'name',
+  code: 'code',
+  status: 'status',
+  createTime: 'createTime'
+}
+
 @Injectable()
 export class TenantService {
   constructor(
@@ -59,6 +70,7 @@ export class TenantService {
     private readonly tenantAccess: TenantAccessService,
     private readonly provision: TenantProvisionService,
     private readonly permissionCache: PermissionCacheService,
+    private readonly authUserCache: AuthUserCacheService,
     private readonly config: SystemConfigService,
     private readonly userService: UserService,
     private readonly logService: LogService
@@ -66,8 +78,9 @@ export class TenantService {
 
   /** 分页列表（租户是平台级数据，不参与租户隔离） */
   async list(query: QueryTenantDto): Promise<Pagination<TenantEntity>> {
-    const page = query.current ?? 1
-    const size = query.size ?? 10
+    // page/pageSize 是统一参数；current/size 是旧名兼容（见 QueryTenantDto）
+    const page = query.page ?? query.current ?? 1
+    const size = query.pageSize ?? query.size ?? 10
     const qb = this.repository.createQueryBuilder('t').where('t.del_flag = 0')
 
     const keyword = query.keyword?.trim()
@@ -85,10 +98,10 @@ export class TenantService {
       qb.andWhere('t.status = :status', { status: query.status })
     }
 
-    // 带出每个租户的人数，列表页不用再逐个请求
+    // 带出每个租户的人数，列表页不用再逐个请求；排序列走白名单
     qb.orderBy('t.id', 'ASC')
-      .skip((page - 1) * size)
-      .take(size)
+    applySort(qb, 't', query, TENANT_SORTABLE)
+    qb.skip((page - 1) * size).take(size)
     const [records, total] = await qb.getManyAndCount()
 
     const counts = await this.countUsers(records.map(item => item.id))
@@ -199,6 +212,22 @@ export class TenantService {
     let tenant: TenantEntity
     try {
       tenant = await this.dataSource.transaction(async manager => {
+        // 配额的真实判定放在事务内：外面 applyQuota 只是给前端快速反馈，
+        // 并发两次「开通」都可能通过外部检查。锁住申请人这一行，把同一用户的并发开通串行化。
+        await manager.query('SELECT id FROM sys_user WHERE id = ? FOR UPDATE', [userId])
+        if (quota.maxTenants >= 0) {
+          const countRows = await manager.query<Array<{ c: number | string }>>(
+            'SELECT COUNT(*) AS c FROM sys_tenant WHERE owner_user_id = ? AND del_flag = 0',
+            [userId]
+          )
+          if (Number(countRows[0]?.c ?? 0) >= quota.maxTenants) {
+            throw new BizException(
+              BizErrorCode.TENANT_APPLY_QUOTA,
+              `最多可开通 ${quota.maxTenants} 个租户，已达上限，请联系平台提升额度`,
+              HttpStatus.BAD_REQUEST
+            )
+          }
+        }
         const saved = await manager.getRepository(TenantEntity).save(entity)
         await this.provision.provisionIn(manager, saved.id, operator)
         const roles = await manager.query<Array<{ id: string }>>('SELECT id FROM sys_role WHERE tenant_id = ? AND role_code = ? LIMIT 1', [saved.id, 'admin'])
@@ -207,7 +236,13 @@ export class TenantService {
           throw new BizException(BizErrorCode.TENANT_NO_ADMIN_TEMPLATE, '租户默认角色初始化失败，请稍后重试', HttpStatus.INTERNAL_SERVER_ERROR)
         }
         await manager.query('INSERT INTO sys_user_tenant (user_id, tenant_id, status, create_time) VALUES (?, ?, 0, NOW())', [userId, saved.id])
-        await manager.query('INSERT IGNORE INTO sys_user_role (user_id, role_id) VALUES (?, ?)', [userId, adminRoleId])
+        // tenant_id 与 UserService.assignRoles 保持一致，避免同一张表一半有归属一半是 0
+        await manager.query('INSERT IGNORE INTO sys_user_role (id, user_id, role_id, tenant_id) VALUES (?, ?, ?, ?)', [
+          randomId32(),
+          userId,
+          adminRoleId,
+          saved.id
+        ])
         await manager.query('UPDATE sys_user SET login_tenant_id = ?, update_time = NOW() WHERE id = ?', [saved.id, userId])
         return saved
       })
@@ -217,9 +252,11 @@ export class TenantService {
       }
       throw error
     }
-    // 新增了角色授权 + 用户归属：权限集合与租户归属缓存都要失效
-    this.permissionCache.invalidateAll()
-    this.tenantAccess.invalidate()
+    // 新增了角色授权 + 用户归属：权限集合、用户态、租户归属缓存都要失效。
+    // 少了 authUserCache 这一条，新管理员在 30s 内仍是不带 admin 角色的旧快照，进新租户处处 403。
+    await this.permissionCache.invalidateAll()
+    this.authUserCache.invalidate(userId)
+    this.tenantAccess.invalidate(userId)
     return tenant
   }
 
@@ -257,24 +294,37 @@ export class TenantService {
       throw new BadRequestException('默认租户不允许删除')
     }
     await this.findOne(id)
-    const userCount = await this.userTenantRepository.count({ where: { tenantId: id, status: 0 } })
+    // 人数只算未删除用户：软删用户原本会永久占着名额，而用户列表里又看不到他们
+    const userRows = await this.dataSource.query<Array<{ c: number | string }>>(
+      `SELECT COUNT(*) AS c
+         FROM sys_user_tenant ut
+         JOIN sys_user u ON u.id = ut.user_id
+        WHERE ut.tenant_id = ? AND ut.status = 0 AND u.del_flag = 0`,
+      [id]
+    )
+    const userCount = Number(userRows[0]?.c ?? 0)
     if (userCount > 0) {
       throw new BadRequestException(`该租户下还有 ${userCount} 个用户，请先在「分配用户」里移除后再删除`)
     }
     await this.dataSource.transaction(async manager => {
       await manager.update(TenantEntity, id, { delFlag: 1, updateTime: new Date() })
-      // 先删授权再删角色（role_permission 无外键，顺序反了不会报错但会留孤儿授权）
+      // 先删授权/角色绑定再删角色（无外键，顺序反了不会报错但会留下孤儿行）
       const roles = await manager.query<Array<{ id: string }>>('SELECT id FROM sys_role WHERE tenant_id = ?', [id])
       if (roles.length > 0) {
         const ids = roles.map(role => role.id)
         const placeholders = ids.map(() => '?').join(',')
+        await manager.query(`DELETE FROM sys_user_role WHERE role_id IN (${placeholders})`, ids)
         await manager.query(`DELETE FROM sys_role_permission WHERE role_id IN (${placeholders})`, ids)
         await manager.query(`DELETE FROM sys_role WHERE id IN (${placeholders})`, ids)
       }
+      // 套餐、成员关系、默认登录租户都是租户生命周期的一部分，不能留给孤儿行
+      await manager.query('DELETE FROM sys_tenant_menu WHERE tenant_id = ?', [id])
       await manager.query('DELETE FROM sys_user_tenant WHERE tenant_id = ?', [id])
+      await manager.query('UPDATE sys_user SET login_tenant_id = NULL WHERE login_tenant_id = ?', [id])
     })
-    // 角色授权变了，权限集合缓存必须整体失效
-    this.permissionCache.invalidateAll()
+    // 角色授权/成员关系都变了：权限集合、用户态、租户归属缓存必须整体失效
+    await this.permissionCache.invalidateAll()
+    this.authUserCache.invalidateAll()
     this.tenantAccess.invalidate()
   }
 
@@ -444,6 +494,7 @@ export class TenantService {
     await this.findOne(tenantId)
     const targetIds = [...new Set(userIds.filter(Boolean))]
 
+    let removedUserIds: string[] = []
     const result = await this.dataSource.transaction(async manager => {
       const current = await manager.find(UserTenantEntity, { where: { tenantId } })
       const currentIds = new Set(current.map(item => item.userId))
@@ -451,13 +502,22 @@ export class TenantService {
 
       const removeRows = current.filter(item => !targetSet.has(item.userId))
       const addIds = targetIds.filter(id => !currentIds.has(id))
+      removedUserIds = removeRows.map(item => item.userId)
 
       if (removeRows.length) {
         await manager.delete(
           UserTenantEntity,
           removeRows.map(item => item.id)
         )
-        await manager.query(`UPDATE sys_user SET login_tenant_id = NULL WHERE login_tenant_id = ? AND id IN (${removeRows.map(() => '?').join(',')})`, [
+        // 只删该用户在本租户角色上的绑定；他可能同时属于别的租户，别把别处角色一起清掉
+        const userPlaceholders = removeRows.map(() => '?').join(',')
+        await manager.query(
+          `DELETE ur FROM sys_user_role ur
+             INNER JOIN sys_role r ON r.id = ur.role_id
+            WHERE r.tenant_id = ? AND ur.user_id IN (${userPlaceholders})`,
+          [tenantId, ...removeRows.map(item => item.userId)]
+        )
+        await manager.query(`UPDATE sys_user SET login_tenant_id = NULL WHERE login_tenant_id = ? AND id IN (${userPlaceholders})`, [
           tenantId,
           ...removeRows.map(item => item.userId)
         ])
@@ -471,6 +531,10 @@ export class TenantService {
       return { added: addIds.length, removed: removeRows.length }
     })
 
+    // 被移出租户的用户，JWT 用户态缓存里还带着本租户角色（RolesGuard 直接读它），必须立刻失效
+    for (const userId of removedUserIds) {
+      this.authUserCache.invalidate(userId)
+    }
     this.tenantAccess.invalidate()
     return result
   }

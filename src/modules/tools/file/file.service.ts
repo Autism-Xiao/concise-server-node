@@ -260,7 +260,8 @@ export class FileService {
       const hash = tempPath ? await this.hashFile(tempPath) : crypto.createHash('sha256').update(file.buffer).digest('hex')
 
       // 冲突先判：skip 直接返回（不必算配额）；overwrite 的配额增量要扣掉被替换文件的大小
-      const existing = await this.fileRepository.findOne({ where: { ownerId, parentId, name: safeName, isDeleted: 0 } })
+      // 同一用户可能属于多个租户，同名判断必须带租户：否则租户 B 上传同名文件会覆盖/跳过租户 A 的文件
+      const existing = await this.fileRepository.findOne({ where: { ownerId, parentId, name: safeName, isDeleted: 0, ...this.tenantWhere() } })
       let name = safeName
       let overwriting: FileEntity | null = null
       if (existing) {
@@ -474,7 +475,7 @@ export class FileService {
     for (const item of items) {
       let currentId = item.parentId
       for (let depth = 0; depth < FILE_MAX_DEPTH && currentId !== FILE_ROOT_ID; depth++) {
-        const parent = await this.fileRepository.findOne({ where: { id: currentId, ownerId } })
+        const parent = await this.fileRepository.findOne({ where: { id: currentId, ownerId, ...this.tenantWhere() } })
         if (!parent) break
         if (parent.isDeleted === 1) restoreIds.add(parent.id)
         currentId = parent.parentId
@@ -483,9 +484,11 @@ export class FileService {
     for (const item of items) restoreIds.add(item.id)
 
     let renamed = 0
-    const targets = await this.fileRepository.find({ where: { id: In([...restoreIds]), ownerId } })
+    const targets = await this.fileRepository.find({ where: { id: In([...restoreIds]), ownerId, ...this.tenantWhere() } })
     for (const target of targets) {
-      const conflict = await this.fileRepository.findOne({ where: { ownerId, parentId: target.parentId, name: target.name, isDeleted: 0 } })
+      const conflict = await this.fileRepository.findOne({
+        where: { ownerId, parentId: target.parentId, name: target.name, isDeleted: 0, ...this.tenantWhere() }
+      })
       if (!conflict) continue
       const next = await this.uniqueName(ownerId, target.parentId, target.name)
       await this.fileRepository.update(target.id, { name: next })
@@ -706,7 +709,7 @@ export class FileService {
     const base = ext ? name.slice(0, -(ext.length + 1)) : name
     for (let index = 1; index < 1000; index++) {
       const candidate = ext ? `${base}(${index}).${ext}` : `${base}(${index})`
-      const exists = await this.fileRepository.findOne({ where: { ownerId, parentId, name: candidate, isDeleted: 0 } })
+      const exists = await this.fileRepository.findOne({ where: { ownerId, parentId, name: candidate, isDeleted: 0, ...this.tenantWhere() } })
       if (!exists) return this.truncateName(candidate)
     }
     throw new BadRequestException('同名文件过多，请先整理目录')

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
 
 import { AuthUserCacheService } from '../../../shared/auth-cache/auth-user-cache.service'
+import { PermissionCacheService } from '../../../shared/permission-cache/permission-cache.service'
 import { randomId32 } from '../../../utils/password.util'
 import { MenuEntity } from '../../menu/entities/menu.entity'
 import { buildMenuTree, type MenuTreeItem } from '../../menu/menu.service'
@@ -35,7 +36,8 @@ export class TenantPackageService {
     private readonly packageRepository: Repository<TenantMenuEntity>,
     @InjectRepository(MenuEntity)
     private readonly menuRepository: Repository<MenuEntity>,
-    private readonly authUserCache: AuthUserCacheService
+    private readonly authUserCache: AuthUserCacheService,
+    private readonly permissionCache: PermissionCacheService
   ) {}
 
   /** 套餐菜单 id 集合（授权校验/菜单树过滤共用；表无行 = 空套餐 = 无可授权菜单） */
@@ -83,8 +85,10 @@ export class TenantPackageService {
       }
     })
 
-    // 菜单树快照随套餐变化：登录用户缓存里的 roles/permissions/menus 全部重算
+    // 菜单树快照随套餐变化：登录用户缓存里的 roles/permissions/menus 全部重算；
+    // 接口侧 PermsGuard 用的套餐权限集合也要立即失效（Redis 缓存跨实例生效）
     this.authUserCache.invalidateAll()
+    await this.permissionCache.invalidateTenant(tenantId)
     return { total: ids.length }
   }
 }

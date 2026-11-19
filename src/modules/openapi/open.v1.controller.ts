@@ -40,11 +40,12 @@ export class OpenV1Controller {
 
   /**
    * 应用租户过滤：tenantId > 0 的应用只看得到本租户用户；tenantId = 0（平台应用）可见全平台。
-   * 之前两个接口都不带租户条件 —— 租户 A 的应用能拉到租户 B 的用户（含姓名/邮箱）。
+   * 用户归属在 sys_user_tenant，sys_user 没有 tenant_id 列 —— 之前按 u.tenant_id 过滤，
+   * 租户应用调用会直接 Unknown column 500，平台应用则等于没过滤。
    */
   private applyAppTenantScope(qb: ReturnType<Repository<UserEntity>['createQueryBuilder']>, tenantId: number): void {
     if (tenantId > 0) {
-      qb.andWhere('u.tenant_id = :tenantId', { tenantId })
+      qb.andWhere('EXISTS (SELECT 1 FROM sys_user_tenant ut WHERE ut.user_id = u.id AND ut.tenant_id = :tenantId AND ut.status = 0)', { tenantId })
     }
   }
 

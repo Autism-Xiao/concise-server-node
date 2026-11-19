@@ -5,7 +5,7 @@ import { Repository } from 'typeorm'
 import { BaseService } from '../../../helper/crud/base.service'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
-import { paginate, type Pagination } from '../../../helper/paginate'
+import { applySort, paginate, type Pagination } from '../../../helper/paginate'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { UserService } from '../../user/user.service'
 import { TaskEntity } from './entities/task.entity'
@@ -23,6 +23,15 @@ const STATUS_LABELS: Record<number, string> = { 0: '待处理', 1: '进行中', 
 
 /** 未指派的哨兵值：assignee_id 是字符串主键，'0' 表示没有负责人 */
 export const TASK_UNASSIGNED = '0'
+
+/** 可排序字段白名单：前端列 id → 实体属性名 */
+const TASK_SORTABLE: Record<string, string> = {
+  title: 'title',
+  priority: 'priority',
+  status: 'status',
+  dueTime: 'dueTime',
+  createTime: 'createTime'
+}
 
 @Injectable()
 export class TaskService extends BaseService<TaskEntity> {
@@ -93,7 +102,7 @@ export class TaskService extends BaseService<TaskEntity> {
     }
   }
 
-  /** 分页列表：keyword/priority/status/assigneeId 过滤，records 附带负责人姓名 */
+  /** 分页列表：keyword/priority/status/assigneeId 过滤 + 白名单排序，records 附带负责人姓名 */
   async listByQuery(query: {
     page?: number
     pageSize?: number
@@ -101,9 +110,12 @@ export class TaskService extends BaseService<TaskEntity> {
     priority?: number
     status?: number
     assigneeId?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
   }): Promise<Pagination<TaskEntity>> {
     const qb = this.repository.createQueryBuilder('task').orderBy('task.id', 'DESC')
     applyTenantScope(qb, 'task')
+    applySort(qb, 'task', query, TASK_SORTABLE)
     if (query.keyword) {
       qb.andWhere('task.title LIKE :keyword', { keyword: `%${query.keyword}%` })
     }
@@ -130,10 +142,20 @@ export class TaskService extends BaseService<TaskEntity> {
    *    但首页 dashboard.myTasks 走裸 SQL 不隔离 → 卡片显示 3 条、点进去 0 条，自相矛盾；
    * 2. 被指派到其他租户数据上的任务，换个租户视角再看就"消失"了，与「我的待办」语义冲突。
    */
-  async mine(userId: string, query: { page?: number; pageSize?: number; status?: number }): Promise<Pagination<TaskEntity>> {
+  async mine(
+    userId: string,
+    query: { page?: number; pageSize?: number; status?: number; keyword?: string; priority?: number; sortBy?: string; sortOrder?: 'asc' | 'desc' }
+  ): Promise<Pagination<TaskEntity>> {
     const qb = this.repository.createQueryBuilder('task').where('task.assigneeId = :assigneeId', { assigneeId: userId }).orderBy('task.id', 'DESC')
+    applySort(qb, 'task', query, TASK_SORTABLE)
     if (query.status !== undefined) {
       qb.andWhere('task.status = :status', { status: query.status })
+    }
+    if (query.priority !== undefined) {
+      qb.andWhere('task.priority = :priority', { priority: query.priority })
+    }
+    if (query.keyword?.trim()) {
+      qb.andWhere('task.title LIKE :keyword', { keyword: `%${query.keyword.trim()}%` })
     }
     const result = await paginate(qb, { page: query.page, pageSize: query.pageSize })
     await this.attachAssignees(result.records)

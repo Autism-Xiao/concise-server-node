@@ -1,11 +1,11 @@
 import { Injectable, BadRequestException, HttpStatus, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { In, Repository, type DeepPartial } from 'typeorm'
+import { Repository, type DeepPartial } from 'typeorm'
 
 import { BaseService } from '../../../helper/crud/base.service'
 import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
-import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
+import { applyTenantScope, tenantWriteCondition } from '../../../shared/tenant/tenant-scope.util'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../../helper/crud/batch-delete'
 import { UserEntity } from '../../user/entities/user.entity'
 import { DeptEntity } from './entities/dept.entity'
@@ -106,7 +106,8 @@ export class DeptService extends BaseService<DeptEntity> {
 
   /** 删除：有下级或挂了（未删除的）用户时不允许删（软删，置 del_flag='1'） */
   async delete(id: string): Promise<void> {
-    await this.findOne(id)
+    // 用严格写范围加载：共享部门（tenant_id=0）对租户是只读的，不能先做校验再按 id 写
+    await this.findOneForWrite(id)
     const childCount = await this.repository.count({ where: { parentId: id, delFlag: '0' } })
     if (childCount > 0) {
       throw new BizException(BizErrorCode.DEPT_HAS_CHILDREN, '该部门下存在子部门，无法删除', HttpStatus.BAD_REQUEST)
@@ -120,13 +121,20 @@ export class DeptService extends BaseService<DeptEntity> {
     if (userCount > 0) {
       throw new BizException(BizErrorCode.DEPT_HAS_USERS, '该部门下存在用户，无法删除', HttpStatus.BAD_REQUEST)
     }
-    await this.repository.update(id, { delFlag: '1' })
+    await this.softDelete(id, { delFlag: '1' })
   }
 
   /** 批量删除部门：逐条走 delete，保留「有子部门 / 有用户不可删」的保护并收集原因 */
   async batchDelete(ids: string[]): Promise<BatchDeleteResult> {
     const normalized = normalizeBatchIds(ids)
-    const targets = await this.repository.find({ where: { id: In(normalized), delFlag: '0' } })
+    const qb = this.repository
+      .createQueryBuilder('dept')
+      .where('dept.id IN (:...ids)', { ids: normalized })
+      .andWhere('dept.del_flag = :delFlag', { delFlag: '0' })
+    // 批量删除同样只处理本租户可写的行：跨租户/共享部门的 id 不进入结果，避免失败明细带出对方名称
+    const condition = tenantWriteCondition('dept.tenant_id')
+    if (condition) qb.andWhere(condition.clause, condition.params)
+    const targets = await qb.getMany()
     // 部门有层级，删除结果依赖处理顺序：子部门先删掉，父部门的「还有子部门」保护就不再成立。
     // repository.find 的返回顺序由数据库决定（会变），所以这里显式按入参顺序处理 ——
     // 结果才是确定的：前端按勾选顺序提交，父部门先到就先被规则挡住，不会时好时坏。

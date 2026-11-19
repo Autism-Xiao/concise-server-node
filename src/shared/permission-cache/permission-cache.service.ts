@@ -6,6 +6,9 @@ import { RedisService } from '../redis/redis.service'
 /** 单角色权限缓存 key 前缀 */
 const KEY_PREFIX = 'perm:role:'
 
+/** 租户功能套餐权限缓存 key 前缀 */
+const TENANT_KEY_PREFIX = 'perm:tenant:'
+
 /** 缓存有效期（秒）：只是兜底，真正保证一致性的是写入侧主动失效 */
 const TTL_SECONDS = 300
 
@@ -75,6 +78,61 @@ export class PermissionCacheService {
   }
 
   /**
+   * 租户功能套餐对应的权限码集合（sys_tenant_menu ⋈ sys_permission）
+   *
+   * 语义：空集合 = 该租户没有开通任何功能（fail-closed），是有效结果而不是缓存未命中。
+   * PermsGuard 用它和角色权限取交集：收窄套餐后，即使角色历史上授权过被收回的菜单，
+   * 接口也会立即 403，不用等角色授权被清理。
+   */
+  async getTenantPerms(tenantId: number): Promise<Set<string>> {
+    if (tenantId <= 0) return new Set()
+    const key = TENANT_KEY_PREFIX + tenantId
+    const client = this.redis.client
+    if (client) {
+      try {
+        const cached = await client.get(key)
+        if (cached !== null) {
+          return new Set(JSON.parse(cached) as string[])
+        }
+      } catch (error) {
+        this.warnDegraded(error)
+      }
+    }
+
+    const rows = await this.dataSource
+      .createQueryBuilder()
+      .select('p.perms', 'perms')
+      .from('sys_permission', 'p')
+      .innerJoin('sys_tenant_menu', 'tm', 'tm.permission_id = p.id')
+      .where('tm.tenant_id = :tenantId', { tenantId })
+      .andWhere("p.scope = 'tenant'")
+      .andWhere("p.status = '1'")
+      .andWhere('p.del_flag = 0')
+      .getRawMany<{ perms: string | null }>()
+    const perms = [...new Set(rows.map(row => row.perms).filter((perm): perm is string => !!perm))]
+
+    if (client) {
+      try {
+        await client.setex(key, TTL_SECONDS, JSON.stringify(perms))
+      } catch (error) {
+        this.warnDegraded(error)
+      }
+    }
+    return new Set(perms)
+  }
+
+  /** 套餐变更后调用：该租户的套餐权限集合已变 */
+  async invalidateTenant(tenantId: number): Promise<void> {
+    const client = this.redis.client
+    if (!client) return
+    try {
+      await client.del(TENANT_KEY_PREFIX + tenantId)
+    } catch (error) {
+      this.warnDegraded(error)
+    }
+  }
+
+  /**
    * 平台级权限标识集合（sys_permission.scope='platform'）
    *
    * PermsGuard 用它做「作用域拦截」：命中的权限码要求 is_platform_admin=1，
@@ -119,15 +177,17 @@ export class PermissionCacheService {
     const client = this.redis.client
     if (!client) return
     try {
-      let cursor = '0'
-      do {
-        // 角色数量有限（几十个），SCAN 比 KEYS 安全：不阻塞 Redis 主线程
-        const [next, keys] = await client.scan(cursor, 'MATCH', `${KEY_PREFIX}*`, 'COUNT', 200)
-        cursor = next
-        if (keys.length > 0) {
-          await client.del(...keys)
-        }
-      } while (cursor !== '0')
+      // 角色 + 租户套餐两类 key 都要清。数量有限，SCAN 比 KEYS 安全：不阻塞 Redis 主线程
+      for (const pattern of [`${KEY_PREFIX}*`, `${TENANT_KEY_PREFIX}*`]) {
+        let cursor = '0'
+        do {
+          const [next, keys] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 200)
+          cursor = next
+          if (keys.length > 0) {
+            await client.del(...keys)
+          }
+        } while (cursor !== '0')
+      }
     } catch (error) {
       this.warnDegraded(error)
     }

@@ -69,10 +69,13 @@ export class DictItemService extends BaseService<SysDictItemEntity> {
       throw new BadRequestException(`字典「${code}」不存在或已删除`)
     }
 
-    const items = await this.itemRepository.find({
-      where: { dictId: dict.id, status: 1 },
-      order: { sortOrder: 'ASC', id: 'ASC' }
-    })
+    const itemsQb = this.itemRepository
+      .createQueryBuilder('item')
+      .where('item.dictId = :dictId', { dictId: dict.id })
+      .andWhere('item.status = :status', { status: 1 })
+    // 读路径与写路径同口径：租户视角只能看到本租户 + 平台共享的字典项
+    applyTenantScope(itemsQb, 'item')
+    const items = await itemsQb.orderBy('item.sortOrder', 'ASC').addOrderBy('item.id', 'ASC').getMany()
 
     return {
       dictId: dict.id,

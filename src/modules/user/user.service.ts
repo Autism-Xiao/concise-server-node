@@ -6,13 +6,14 @@ import { BizErrorCode } from '../../common/enums/biz-error-code.enum'
 import { BizException } from '../../common/exceptions/biz.exception'
 import { BaseService } from '../../helper/crud/base.service'
 import { normalizeBatchIds, runBatchDelete, type BatchDeleteResult } from '../../helper/crud/batch-delete'
-import { paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
+import { applySort, paginate, type PaginateOptions, type Pagination } from '../../helper/paginate'
 import { PermissionCacheService } from '../../shared/permission-cache/permission-cache.service'
 import { AuthUserCacheService } from '../../shared/auth-cache/auth-user-cache.service'
 import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../shared/rate-limit/login-fail.util'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
+import { TenantAccessService } from '../../shared/tenant/tenant-access.service'
 import { OnlineService } from '../ops/online/online.service'
 import { randomToken } from '../../utils/random-token.util'
 import { describeDuplicateEntry, isDuplicateEntryError } from '../../utils/db-error.util'
@@ -58,6 +59,16 @@ export const USER_IMPORT_DEFAULT_PASSWORD = '123456'
 
 /** 登录账号规则：3~100 位，字母开头，允许字母/数字/下划线/点/横线/@（与登录框输入习惯一致的宽松规则） */
 const USERNAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.@-]{2,99}$/
+
+/** 可排序字段白名单：前端列 id → 实体属性名（含不到的列点了表头也只走默认的创建时间倒序） */
+const USER_SORTABLE: Record<string, string> = {
+  username: 'username',
+  realname: 'realname',
+  email: 'email',
+  phone: 'phone',
+  status: 'status',
+  createTime: 'createTime'
+}
 
 /** 导入结果：逐行统计 + 失败明细（前端据此展示导入报告） */
 export interface UserImportResult {
@@ -214,6 +225,7 @@ export class UserService extends BaseService<UserEntity> {
     private readonly permissionCacheService: PermissionCacheService,
     private readonly userSettingService: UserSettingService,
     private readonly authUserCache: AuthUserCacheService,
+    private readonly tenantAccess: TenantAccessService,
     private readonly systemConfig: SystemConfigService,
     private readonly webhookService: WebhookService
   ) {
@@ -616,6 +628,8 @@ export class UserService extends BaseService<UserEntity> {
   /** 列表/导出共用的查询构造：过滤条件集中一处，避免导出和列表口径跑偏 */
   private async buildListQuery(query: QueryUserDto, actor?: DataScopeActor): Promise<SelectQueryBuilder<UserEntity>> {
     const qb = (await this.scopedQuery(actor)).orderBy('user.create_time', 'DESC')
+    // 表头排序走白名单：排序列 + id 兜底，保证深翻页时行序稳定
+    applySort(qb, 'user', query, USER_SORTABLE)
 
     if (query.keyword) {
       qb.andWhere(userKeywordClause('user', query.keyword), { keyword: userKeywordParam(query.keyword) })
@@ -970,6 +984,8 @@ export class UserService extends BaseService<UserEntity> {
     if (user.username === 'admin') {
       throw new BizException(BizErrorCode.BUSINESS_ERROR, '内置管理员账号不允许删除')
     }
+    // 先取归属租户：事务里会清掉 sys_user_tenant，之后再查就拿不到 webhook 事件的租户了
+    const tenantRows = await this.repository.query('SELECT tenant_id FROM `sys_user_tenant` WHERE user_id = ? AND status = 0 ORDER BY id LIMIT 1', [id])
     await this.runInTransaction(async manager => {
       // 关联表必须跟着清：sys_user_role / sys_user_depart 不会随软删失效，
       // 不清会出现两个后果：① 角色删除保护把已删用户算成「还有 N 个用户」，角色永久删不掉；
@@ -977,6 +993,9 @@ export class UserService extends BaseService<UserEntity> {
       await manager.query('DELETE FROM sys_user_role WHERE user_id = ?', [id])
       await manager.query('DELETE FROM sys_user_depart WHERE user_id = ?', [id])
       await manager.query('DELETE FROM sys_user_post WHERE user_id = ?', [id])
+      // 租户归属也要清：否则软删用户会一直占着租户名额，租户删除接口永远提示「还有用户」，
+      // 而用户列表又因为 del_flag=1 看不到这些人，管理员没有任何入口清理。
+      await manager.query('DELETE FROM sys_user_tenant WHERE user_id = ?', [id])
       // 水印个性化配置同样按 user_id 主键，不清会在表里越积越多
       await manager.query('DELETE FROM sys_user_watermark WHERE user_id = ?', [id])
       // 界面设置**刻意不清**：软删是可恢复的，回复后就是同一个人，主题/字号丢了不可逆；
@@ -986,9 +1005,9 @@ export class UserService extends BaseService<UserEntity> {
     })
     // 删号即失效：缓存里若还留着这个人，鉴权会继续放行到下次过期
     this.authUserCache.invalidate(id)
+    this.tenantAccess.invalidate(id)
     // 开放平台事件：软删也通知（订阅方一般用于同步通讯录/回收站）
-    // 事件归属租户：取被删账号在 sys_user_tenant 的主归属（拿不到就按 0 平台事件，只发平台级订阅）
-    const tenantRows = await this.repository.query('SELECT tenant_id FROM `sys_user_tenant` WHERE user_id = ? AND status = 0 ORDER BY id LIMIT 1', [user.id])
+    // 事件归属租户：取删除前的主归属（拿不到就按 0 平台事件，只发平台级订阅）
     this.webhookService.dispatch('user.deleted', { id, username: user.username }, { tenantId: Number(tenantRows?.[0]?.tenant_id ?? 0) })
   }
 
@@ -1119,6 +1138,9 @@ export class UserService extends BaseService<UserEntity> {
     await this.repository.update(id, { isPlatformAdmin: enabled ? 1 : 0, updateBy: actor.username, updateTime: new Date() })
     // 降权必须立刻生效：清掉 JwtStrategy 的用户态缓存，否则 30s 内旧值仍被当作平台管理员
     this.authUserCache.invalidate(id)
+    // TenantMiddleware 自己还有一份租户归属缓存：不清的话，取消平台管理员后最长 30s
+    // 仍会按“平台视角”（tenantId=null）解析，大量租户级查询会直接跳过租户条件读全库
+    this.tenantAccess.invalidate(id)
     return this.findOneDetail(id)
   }
 
@@ -1281,6 +1303,9 @@ export class UserService extends BaseService<UserEntity> {
       // 才会真的建一行空设置，所以这步不能省
       await this.userSettingService.ensure(id, manager)
     })
+    // 恢复后账号状态/归属可能变化，清掉鉴权与租户归属缓存，下一次请求重新解析
+    this.authUserCache.invalidate(id)
+    this.tenantAccess.invalidate(id)
     // 回收站里的行是裸查出来的（无关联），重查一次补齐角色/部门
     await this.attachRoles([recycled])
     await this.attachDepts([recycled])
