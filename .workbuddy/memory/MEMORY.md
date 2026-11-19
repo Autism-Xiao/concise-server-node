@@ -36,7 +36,9 @@
 - **界面设置上云**：`sys_user_setting`（**故意无 tenant_id**）+ `GET|PUT /v1/users/me/settings`；白名单唯一入口 `user-setting.util.ts`，**加设置项必须同步改**；库里只存差异（`stripDefaultSettings`）；前端 `lib/settings.ts` 不能用 `getApiResult`（401 会踢登录页）。
 - **参数配置（租户两级，2026-11-17）**：`sys_config` 有 `tenant_id`（0=平台级）+ `allow_tenant`（1=租户可覆盖），唯一键 `(tenant_id, config_key)`。读取回退链：租户覆盖行 → 平台行 → 代码 `DEFAULTS`；缓存键 `${tenantId}::${key}`，**任何写入后整表清缓存**（逐键失效会漏平台行变更对租户回退的影响）。租户只能写 allow_tenant=1 的键（首次写入按平台行元数据生成覆盖行），`DELETE /v1/configs/override?configKey=` 取消覆盖。开放参数给租户 = 把该行 allow_tenant 置 1，零代码。
 - **VIP / 自助开通租户（2026-11-17）**：`sys_user.vip_level + vip_expire_at`（NULL=永久，过期只影响新开通）；额度 `sys_config.tenant.vip.maxTenants`（默认 1、allow_tenant=0）；**按 `sys_tenant.owner_user_id` 数「自己开的团队」**，别数 sys_user_tenant（建号自动加入默认租户会白吃额度）。`GET /v1/tenants/apply/quota`、`POST /v1/tenants/apply`、`PUT /v1/users/:id/vip`（权限点 `system:user:vip` scope=platform）。错误码 8104 需 VIP / 8105 超限。
-- **数据库约定**：新表显式 `COLLATE=utf8mb4_unicode_ci`（sys_user 是 unicode_ci，默认 0900_ai_ci JOIN 会炸）；`@Column({length})` 可空要显式 `type:'varchar'`（否则推断成 Object）；`Pagination` 无链式方法，列表一律 `toPagination()`，数据源类（tree/options/code）才返数组。
+- **数据库约定**：新表显式 `COLLATE=utf8mb4_unicode_ci`（sys_user 是 unicode_ci，默认 0900_ai_ci JOIN 会炸）；`@Column({length})` 可空要显式 `type:'varchar'`（否则推断成 Object）；**列表接口一律返回 service 的 `Pagination`（2026-11-19 起 `toPagination` 已下线）**，数据源类（tree/options/code）才返数组。
+- **列表服务端筛选（2026-11-19）**：所有列表 DTO 继承 `PagerDto`（page/pageSize/sortBy/sortOrder）；排序唯一入口 `helper/paginate/sort.ts` 的 `applySort(qb, alias, query, 白名单)`（前端列 id→实体属性，命中后补 `addOrderBy(id)` 防并列行翻页重复）；**列表与导出必须共用同一个 `buildXxxQuery`**，否则口径漂移。前端表格页用 `useServerTable`（防抖+防竞态+自动回第 1 页），树形/分组小表用 `useDataTable`+`manualFiltering`（关键字给后端，状态列仍本地）。**新列表 DTO 忘继承 PagerDto 时 whitelist 会无声剔除 page/pageSize**（识别信号：service 签名手写 `& { page?: number }` 交集）。
+- **前端 loading 规约（2026-11-19）**：骨架屏只认「首次加载」（`useServerTable` 的 `booted` / 页面自建 booted state），之后的搜索/翻页表格保持挂载，`<DataTable loading={loading} />` 盖半透明遮罩；**任何页面都不要用 loading 把含搜索框的整卡卸载重挂**。
 - **前端弹框规约**（concise-admin）：DialogContent 默认固定头尾（自动分拣 Header/Footer），Footer 必须是 DialogContent 直接子元素——写进 `<form>` 会被划进滚动区；表单写法 `form id="x-form"` + 提交按钮 `form="x-form"`；自绘满幅布局传 `layout="free"`。互斥少选项切换用 `ui/segmented.tsx`。
 
 - **代码生成器**（2026-11-15）：页面 /system/codegen（scope=platform，生产默认禁用 `CODEGEN_ENABLED`）→ `src/modules/codegen` spawn `scripts/gen-module.cjs`（唯一模板源，支持 `--spec` JSON / `--out` 暂存预览 / `--json` 清单 / `--no-migration`）。改模板后必须用极端字段组合（无唯一/无搜索/全可选）各编译一遍——已修过 `[never[]]` 与 MaxLength import 两个分支漏。错误码 9201/9202/9203。**force 语义 = 只补齐缺失文件**（写盘一律 `writeIfAbsent` 不覆盖；表已存在时传 `--no-migration` 不产重复迁移，结果带 warnings 说明没做的事）。前端 9201 的「弹二次确认」必须带 `!force` 守卫，否则 force 也过不去时无限弹框。`--out` 暂存模式不查真实仓库（否则对已有模块预览返回 0 文件）。
@@ -44,7 +46,7 @@
 ## 测试数据与冒烟（本地 dev 库）
 
 - `admin / admin123`（超管 id=1）；`guest / guest123`（无角色）；`auditor1`（仅 system:log:*）。角色 admin/editor/viewer **每租户各一套**（看到「角色重复」是同名模板，不能删）。
-- `scripts/smoke-*.mjs`：dashboard 60 / tenant 26 / provision 27 / user-setting 18 / captcha 18 / batch-io 31，需 `PORT=3461 CAPTCHA_ENABLED=false` 实例（captcha 脚本相反，要 `true`，否则退出码 2）。
+- `scripts/smoke-*.mjs`（2026-11-19 实测）：server-list 24 / tenant 30 / tenant-provision 27 / tenant-admin 20 / tenant-demo 21 / tenant-isolation（弱口令断） / user-setting 18 / batch-io 31 / dict-color 21 / dashboard 60（viewer 两块按模板设计是 null）。需 `PORT=3461 CAPTCHA_ENABLED=false` 实例（captcha 脚本相反，要 `true`）。残留数据用 `cleanup-smoke-data.mjs --apply` 清。
 - 跑单测用 `npm test`（= `node --test tests/*.test.cjs`），直接 `node --test tests/` 会全红。
 
 ## 遗留 / 下一步
@@ -53,3 +55,5 @@
 - 可选：字典/公告/任务按钮权限录入菜单、操作日志导出。~~验证码接 Redis~~ **已实现**（challenge/ticket 走 Redis MULTI GET+DEL 一次性，支持多实例）；sys_log 时间索引也已齐全，勿再当优化项。
 - 设计未落地：「个人权限可监管别的部门」→ 建议新表 `sys_user_supervise_dept`，`applyDataScope` 合并 own ∪ supervise（用户中断未确认，未开发）。
 - 说明书挂账（未做）：套餐→菜单打包、用户数/存储配额、代维审计标记；参数配置租户级与 VIP 自助开通（含额度）已完成默认版。
+- **provision-all 补权后不失效角色权限缓存**（2026-11-19 发现）：给存量角色补模板授权后 Redis `perm:role:*` 仍是旧集合，需手动失效或等 TTL；应在 provision-all 里调 invalidateAll。
+- smoke-tenant-isolation / smoke-tenant-demo 弱口令建号被密码策略 400 拦（脚本与策略脱节，未修）。

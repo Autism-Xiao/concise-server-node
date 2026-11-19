@@ -196,7 +196,9 @@ export class AuthV1Controller {
   @ApiBearerAuth('jwt')
   @ApiOperation({
     summary: '校验当前用户密码（v1）',
-    description: '锁屏解锁等场景校验密码，不产生任何副作用；失败与登录共用失败锁定计数（连错 5 次锁 24 小时）'
+    description:
+      '锁屏解锁等场景校验密码；失败与登录共用失败锁定计数（连错 5 次锁 24 小时）。' +
+      '校验通过会顺带清除该账号的服务端锁屏标志（lock:screen:*）——锁屏页调本接口即完成解锁'
   })
   // 限流守卫在认证之前执行，req.user 还不存在，by:'account' 退化成按 IP；
   // 这里只做防滥用兜底（20 次/5 分钟/IP），真正的安全闸门是「失败共享登录锁定计数」
@@ -205,6 +207,30 @@ export class AuthV1Controller {
   @Post('verify-password')
   verifyPassword(@Request() req: { user: { username: string } }, @Body() dto: VerifyPasswordDto) {
     return this.authService.verifyPassword(req.user.username, dto.password)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
+    summary: '锁屏（v1）',
+    description:
+      '锁标志存服务端（Redis，TTL 默认 24h 自愈），状态源在服务端而非浏览器本地：' +
+      '关机重开/换设备/清缓存都会被锁屏拦住。按账号维度（A 端锁屏，B 端同账号一并锁）。' +
+      'Redis 不可用时 fail-open：仅当前会话本地锁住、不持久化'
+  })
+  @HttpCode(HttpStatus.OK)
+  @Post('lock')
+  lock(@Request() req: { user: { id: string } }) {
+    return this.authService.lockScreen(req.user.id)
+  }
+
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
+    summary: '查询锁屏状态（v1）',
+    description: '前端启动时以本接口结果纠正本地锁屏标志；任何查询失败都按未锁处理（fail-open）'
+  })
+  @Get('lock-state')
+  lockState(@Request() req: { user: { id: string } }) {
+    return this.authService.getScreenLockState(req.user.id)
   }
 
   @ApiBearerAuth('jwt')

@@ -12,6 +12,7 @@ import { BizErrorCode } from '../../../common/enums/biz-error-code.enum'
 import { BizException } from '../../../common/exceptions/biz.exception'
 import { RateLimitService } from '../../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../../shared/rate-limit/login-fail.util'
+import { RedisService } from '../../../shared/redis/redis.service'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { UserService, USER_STATUS } from '../../user/user.service'
 import { LogService } from '../../system/log/log.service'
@@ -33,6 +34,11 @@ export const LOGIN_MAX_FAILS = Math.max(envNumber('LOGIN_MAX_FAILS', 5), 1)
  * 语义：第 LOGIN_MAX_FAILS 次密码错误时起算锁定，到期自动解锁（或管理员提前解锁）。
  */
 export const LOGIN_LOCK_SECONDS = Math.max(envNumber('LOGIN_LOCK_HOURS', 24) * 3600, 60)
+/**
+ * 锁屏标志 TTL（秒），可用环境变量 SCREEN_LOCK_HOURS 覆盖，默认 24 小时。
+ * 自愈兜底：锁屏后没解锁就关机 / 断网，到期自动解除，不会把人永久锁在门外。
+ */
+export const SCREEN_LOCK_TTL_SECONDS = Math.max(envNumber('SCREEN_LOCK_HOURS', 24) * 3600, 300)
 /** refreshToken 并发刷新宽限期：超过这个间隔还在用「已换掉的」令牌，判定为泄露后被重放 */
 const REFRESH_REUSE_GRACE_MS = 10 * 1000
 
@@ -138,6 +144,8 @@ export class AuthService {
     private readonly menuService: MenuService,
     private readonly onlineService: OnlineService,
     private readonly rateLimitService: RateLimitService,
+    // 锁屏标志的共享存储：多标签页/多端一致，关机重开也不丢（Redis 不可用时 fail-open）
+    private readonly redis: RedisService,
     // 套餐交集查询（sys_tenant_menu）：只读 DataSource，不走 forFeature
     @InjectDataSource()
     private readonly dataSource: DataSource,
@@ -484,7 +492,62 @@ export class AuthService {
         : new BizException(BizErrorCode.LOGIN_FAILED, passwordFailureMessage(failure.remaining, false), HttpStatus.BAD_REQUEST)
     }
     await this.rateLimitService.reset(failKey)
+    // 解锁即清服务端锁屏标志：锁屏页校验通过就调这里，前端无需再单独请求
+    await this.unlockScreen(user.id)
     return { verified: true }
+  }
+
+  /**
+   * 锁屏：服务端记录标志（Redis），状态源在服务端而非浏览器本地
+   *
+   * 为什么放服务端：锁屏标志存 sessionStorage 时，关闭系统重开后标志消失，
+   * 但登录凭证（localStorage）还在，重开直接进工作区 —— 锁屏形同虚设。
+   * 放 Redis 后换设备/清缓存/关机重开都拦得住，前端只是渲染服务端事实。
+   *
+   * 语义按 userId 不按设备：A 电脑锁屏 B 电脑也锁 —— 锁屏防的是「人不在座位」。
+   * Redis 不可用时 fail-open：本地锁住本次会话但不持久化（warn 日志），不重蹈
+   * 验证码强依赖 Redis 卡死登录页的覆辙。
+   */
+  async lockScreen(userId: string): Promise<{ locked: true; persisted: boolean }> {
+    const client = this.redis.client
+    if (!client) {
+      this.logger.warn(`Redis 未启用，锁屏标志不持久化（userId=${userId}），仅本地会话生效`)
+      return { locked: true, persisted: false }
+    }
+    try {
+      await client.set(this.screenLockKey(userId), '1', 'EX', SCREEN_LOCK_TTL_SECONDS)
+      return { locked: true, persisted: true }
+    } catch (error) {
+      this.logger.warn(`锁屏标志写入失败（fail-open，userId=${userId}）：${error instanceof Error ? error.message : error}`)
+      return { locked: true, persisted: false }
+    }
+  }
+
+  /** 查询锁屏状态：任何异常都按未锁处理（fail-open），前端以本接口结果纠正本地标志 */
+  async getScreenLockState(userId: string): Promise<{ locked: boolean }> {
+    const client = this.redis.client
+    if (!client) return { locked: false }
+    try {
+      return { locked: (await client.get(this.screenLockKey(userId))) === '1' }
+    } catch (error) {
+      this.logger.warn(`锁屏状态查询失败（fail-open，userId=${userId}）：${error instanceof Error ? error.message : error}`)
+      return { locked: false }
+    }
+  }
+
+  /** 解锁（清标志）：verify-password 成功与退出登录都会调用；失败不影响主流程 */
+  private async unlockScreen(userId: string): Promise<void> {
+    const client = this.redis.client
+    if (!client) return
+    try {
+      await client.del(this.screenLockKey(userId))
+    } catch (error) {
+      this.logger.warn(`锁屏标志清除失败（TTL 到期自愈，userId=${userId}）：${error instanceof Error ? error.message : error}`)
+    }
+  }
+
+  private screenLockKey(userId: string): string {
+    return `lock:screen:${userId}`
   }
 
   /** 令牌剩余有效期（秒），取令牌自身 exp；解析失败用兜底值 */
@@ -514,6 +577,9 @@ export class AuthService {
       }
     }
     await this.onlineService.logout(token, ttlOf(token), refreshToken, refreshToken ? ttlOf(refreshToken) : undefined)
+    // 登出必须清锁屏标志：否则换人登录同一账号会被锁屏挡在门外（锁标志按账号维度）
+    const payload = this.jwtService.decode(token) as { id?: string } | null
+    if (payload?.id) await this.unlockScreen(payload.id)
     return { loggedOut: true }
   }
 
