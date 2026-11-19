@@ -4,6 +4,7 @@
 
 | 日期 | 主题 | 类型 | 要点 |
 | --- | --- | --- | --- |
+| 2026-11-19 | [冒烟部门清理脚本修正](./2026-11-19-冒烟部门清理脚本修正.md) | 修复 | `cleanup-smoke-data.mjs` 原只删 `del_flag=1` 软删部门，冒烟建的父/子部门是 `del_flag=0` 正常态故全漏（同隔离租户漏清问题）。新增 `SMOKE_DEPART_PREFIXES=['smoke_']`，部门条件改「名字命中 smoke_ 或 软删」，删部门前按 `dep_id` 先清 `sys_user_depart`。实删 10 行（5 组父/子部门），复核全 0、17 个正常部门未动。坑：`departWhere` 必须放在 `likeClause` 定义后（const TDZ）；`sys_file.parent_id IN (uuid)` 会类型转换成 0 误报；冒烟菜单仍软删未清 |
 | 2026-11-19 | [清理隔离测试租户残留](./2026-11-19-清理隔离测试租户残留.md) | 运维 | 隔离测试租户 mwkl83iy 等 6 个是 del_flag=0 的正常租户，通用 cleanup-smoke-data.mjs 只删软删租户故漏掉。新建 `scripts/cleanup-isolation-tenants.mjs`：按 `name LIKE '隔离测试租户%' AND owner_user_id IS NULL` 精确命中，用户关联安全阀 + 事务回滚，级联顺序对齐 TenantService.remove（含易漏的 582 条 sys_tenant_menu）。实删 1642 行（1032 权限/18 角色/582 套餐菜单/4 日志/6 租户），库里只剩默认 + 2 个 demo 租户 |
 | 2026-11-19 | [用户管理状态水印列补圆点](./2026-11-19-用户管理状态水印列补圆点.md) | 增强 | 菜单管理等页状态用 `StatusBadge`（静态圆点+文字），用户管理状态/水印两列还是纯文字标签无圆点。两列统一换成 `StatusBadge`，与其他 10+ 页一致；水印列保留「强制开/关」文案拼接，`watermarkEffective === true` 收窄布尔避免 TS2322。tsc/eslint/vite build 全绿 |
 | 2026-11-19 | [无列显示页面刷新按钮靠右](./2026-11-19-无列显示页面刷新按钮靠右.md) | 增强 | 菜单管理/部门管理/行政区划没有列显示按钮，刷新按钮仍留在搜索框旁或标题栏中间。按「和用户管理一致，在右侧」：卡片工具栏加 `ms-auto`，菜单刷新按钮补 ms-auto、部门从搜索框前移到框后、行政区划从标题栏按钮组移到卡片内工具栏末尾。不加列显示，只让刷新单独靠右。tsc/eslint/vite build 全绿 |

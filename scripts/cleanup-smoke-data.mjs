@@ -38,6 +38,13 @@ const SMOKE_DICT_CODES = ['test_dict']
 /** 冒烟公告标题前缀 */
 const SMOKE_ANNOUNCE_PREFIXES = ['smoke_', 'bs_']
 
+/**
+ * 冒烟部门名前缀。冒烟脚本建的部门是 del_flag=0 的正常态，只靠软删条件会漏掉，
+ * 所以这里按名字前缀单独命中（父/子部门都带 smoke_ 前缀）。
+ */
+const SMOKE_DEPART_PREFIXES = ['smoke_']
+const DEPART_PARAMS = SMOKE_DEPART_PREFIXES.map(p => `${p}%`)
+
 const conn = await mysql.createConnection({
   host: process.env.SMOKE_DB_HOST ?? '127.0.0.1',
   port: Number(process.env.SMOKE_DB_PORT ?? 3306),
@@ -50,6 +57,7 @@ const conn = await mysql.createConnection({
 
 const likeClause = (column, prefixes) => prefixes.map(() => `${column} LIKE ?`).join(' OR ')
 const inClause = values => values.map(() => '?').join(',')
+const departWhere = likeClause('depart_name', SMOKE_DEPART_PREFIXES) + ' OR del_flag = 1'
 
 // 冒烟账号的 WHERE 条件与参数，供各步骤复用（子查询里别名不同，单独生成列名）
 const userWhere = alias => {
@@ -171,10 +179,16 @@ const STEPS = [
     params: ANN_PARAMS
   },
   {
-    name: '软删的测试部门',
+    name: '冒烟部门的账号关联',
+    table: 'sys_user_depart',
+    where: `dep_id IN (SELECT id FROM sys_depart WHERE ${departWhere})`,
+    params: DEPART_PARAMS
+  },
+  {
+    name: '冒烟部门（含正常态 smoke_ 父/子部门与软删测试部门）',
     table: 'sys_depart',
-    where: 'del_flag = 1',
-    params: []
+    where: departWhere,
+    params: DEPART_PARAMS
   }
 ]
 
