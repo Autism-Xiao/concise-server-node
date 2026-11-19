@@ -133,7 +133,7 @@ export class PreviewCodegenDto {
   @Type(() => CodegenFieldDto)
   fields: CodegenFieldDto[]
 
-  @ApiPropertyOptional({ description: '仅生成接口：目标模块已存在时允许继续（已有文件仍会被跳过，不会覆盖）' })
+  @ApiPropertyOptional({ description: '目标模块已存在时允许重新生成：同名文件先备份到 .codegen-backup 再覆盖；不带此参数遇到已存在模块会报 9201' })
   @IsOptional()
   @IsBoolean()
   force?: boolean

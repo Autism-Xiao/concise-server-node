@@ -214,6 +214,16 @@ const writeCount = { ok: 0, skip: 0 }
 const written = []
 const skippedFiles = []
 const overwrittenFiles = []
+/**
+ * 预览专用：每个产物在【真实仓库】里的状态（server:相对路径 / admin:相对路径 -> new|skip|overwrite）。
+ * --out 暂存时不看真实仓库会导致「预览说全部新建，实际生成却跳过/覆盖」，这里把真实状态带回预览页。
+ */
+const stagedFileStatus = {}
+function statusKey(file) {
+  if (file.startsWith(serverRoot + path.sep)) return `server:${path.relative(serverRoot, file).split(path.sep).join('/')}`
+  if (file.startsWith(adminRoot + path.sep)) return `admin:${path.relative(adminRoot, file).split(path.sep).join('/')}`
+  return `other:${path.basename(file)}`
+}
 /** 覆盖模式的备份根目录（只在真的覆盖了文件时才存在） */
 const backupRoot = path.join(serverRoot, '.codegen-backup', backupStamp)
 /** 对外展示的相对路径：后端仓库内直接相对 serverRoot，前端仓库加 concise-admin/ 前缀 */
@@ -244,8 +254,15 @@ function writeFile(file, content) {
   console.log(`生成: ${rel}`)
 }
 function writeIfAbsent(file, content) {
-  // --out 暂存模式（预览）不看真实仓库：预览的语义是「将会生成什么」，即使同名文件已存在也要完整展示
-  if (!OUT_ROOT && fs.existsSync(file)) {
+  const rel = displayRel(file)
+  // --out 暂存模式（预览）：内容照常写进暂存目录（预览要看到完整产物），
+  // 但记录真实仓库里同名文件的状态，回传给页面标注「将新建 / 将跳过 / 将覆盖」。
+  if (OUT_ROOT) {
+    stagedFileStatus[statusKey(file)] = fs.existsSync(file) ? (OVERWRITE ? 'overwrite' : 'skip') : 'new'
+    writeFile(file, content)
+    return
+  }
+  if (fs.existsSync(file)) {
     const rel = displayRel(file)
     if (!OVERWRITE) {
       console.log(`跳过（已存在）: ${rel}`)
@@ -356,8 +373,9 @@ if (parsedFields.some(field => field.unique)) usedValidators.add('MaxLength')
 // Query DTO 的 keyword 恒用 @MaxLength(64)，与是否出现唯一字段无关
 usedValidators.add('MaxLength')
 const validatorImports = [...usedValidators].filter(name => name !== 'Type' && !name.startsWith('Api')).join(', ') || 'IsOptional'
-const listDtoValidators = 'IsInt, IsOptional, MaxLength'
 const needsType = usedValidators.has('Type')
+// ListDto 的 page/pageSize/sortBy/sortOrder 由 PagerDto 提供，这里不再重复声明。
+// 注意列名前缀：dto 文件在 src/modules/<m>/dto/，PagerDto 在 src/common/dto/ → 相对路径 ../../../common/dto/pager.dto
 
 const createDtoFields = parsedFields
   .map(field => {
@@ -406,6 +424,7 @@ writeIfAbsent(
   dtoFile,
   `import { ${validatorImports} } from 'class-validator'
 ${needsType ? "import { Type } from 'class-transformer'\n" : ''}import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
+import { PagerDto } from '../../../common/dto/pager.dto'
 
 export class Create${ModulePascal}Dto {
 ${createDtoFields}
@@ -415,20 +434,8 @@ export class Update${ModulePascal}Dto {
 ${updateDtoFields}
 }
 
-/** 列表查询参数：page/pageSize 必须显式转数字，否则 ValidationPipe 白名单会丢弃字符串形态的分页 */
-export class List${ModulePascal}Dto {
-  @ApiPropertyOptional({ description: '页码，从 1 起' })
-  @IsOptional()
-  @IsInt()
-  @Type(() => Number)
-  page?: number
-
-  @ApiPropertyOptional({ description: '每页条数' })
-  @IsOptional()
-  @IsInt()
-  @Type(() => Number)
-  pageSize?: number
-
+/** 列表查询参数：分页/排序由 PagerDto 统一提供（page/pageSize/sortBy/sortOrder），这里只放业务过滤项 */
+export class List${ModulePascal}Dto extends PagerDto {
   @ApiPropertyOptional({ description: '模糊搜索关键字' })
   @IsOptional()
   @MaxLength(64, { message: '关键字最长 64 位' })
@@ -439,22 +446,33 @@ ${listQueryFields ? `\n\n${listQueryFields}` : ''}
 )
 
 // ---------- service ----------
+// 注意：QueryBuilder 里 `alias.xxx` 用的是【实体属性名（驼峰）】，不是数据库列名（蛇形）。
+// 早期版本直接拼 field.name，遇到 customer_name 这类下划线字段会 EntityPropertyNotFoundError，
+// 且 assertAllUnique 里 record[field] 也取不到驼峰 DTO 属性 → 查重静默失效。
 const searchConds = parsedFields
   .filter(field => field.search)
-  .map(field => `      qb.andWhere('${moduleCamel}.${field.name} LIKE :keyword', { keyword: \`%\${query.keyword}%\` })`)
+  .map(field => `      qb.andWhere('${moduleCamel}.${tsProp(field.name)} LIKE :keyword', { keyword: \`%\${query.keyword}%\` })`)
   .join('\n')
 const queryConds = parsedFields
   .filter(field => field.query)
   .map(field => {
     const name = tsProp(field.name)
     return `    if (query.${name} !== undefined && query.${name} !== null) {
-      qb.andWhere('${moduleCamel}.${field.name} = :${name}', { ${name}: query.${name} })
+      qb.andWhere('${moduleCamel}.${name} = :${name}', { ${name}: query.${name} })
     }`
   })
   .join('\n')
 const uniqueFields = parsedFields.filter(field => field.unique)
-const uniquePropList = uniqueFields.map(field => `'${field.name}'`).join(', ')
-const uniqueLabelMap = uniqueFields.map(field => `    ${field.name}: '${field.comment}'`).join('\n') || '    // 无唯一字段'
+const uniquePropList = uniqueFields.map(field => `'${tsProp(field.name)}'`).join(', ')
+const uniqueLabelMap = uniqueFields.map(field => `    ${tsProp(field.name)}: '${field.comment}'`).join(',\n') || '    // 无唯一字段'
+
+/** 排序白名单：key 为前端列 id（实体属性名），value 为 QB 属性名；applySort 命中后补 id 兜底防翻页重复 */
+const sortableEntries = parsedFields
+  .filter(field => field.type !== 'text')
+  .map(field => `  ${tsProp(field.name)}: '${tsProp(field.name)}'`)
+const sortableBlock = `const ${ModulePascal}SORTABLE: Record<string, string> = {
+${sortableEntries.length ? sortableEntries.join(',\n') + ',\n' : ''}  id: 'id'
+}`
 
 const serviceFile = path.join(serverRoot, `src/modules/${moduleSnake}/${moduleSnake}.service.ts`)
 writeIfAbsent(
@@ -465,11 +483,13 @@ import { Repository } from 'typeorm'
 
 import { isDuplicateEntryError } from '../../utils/db-error.util'
 import { BaseService } from '../../helper/crud/base.service'
-import { paginate, type Pagination } from '../../helper/paginate'
+import { applySort, paginate, type Pagination } from '../../helper/paginate'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
 import { Create${ModulePascal}Dto, List${ModulePascal}Dto, Update${ModulePascal}Dto } from './dto/${moduleSnake}.dto'
 import { ${ModulePascal}Entity } from './entities/${moduleSnake}.entity'
+
+${sortableBlock}
 
 @Injectable()
 export class ${ModulePascal}Service extends BaseService<${ModulePascal}Entity> {
@@ -506,11 +526,12 @@ ${uniqueLabelMap}
     }
   }
 
-  /** 分页列表：keyword${parsedFields.some(field => field.search) ? '（模糊）' : ''}${parsedFields.some(field => field.query) ? ' + 精确过滤' : ''} */
+  /** 分页列表：keyword（模糊）${parsedFields.some(field => field.search) ? '' : '（未配置 s 字段时搜索恒空）'}${parsedFields.some(field => field.query) ? ' + 精确过滤' : ''} + 白名单排序 */
   async listByQuery(query: List${ModulePascal}Dto): Promise<Pagination<${ModulePascal}Entity>> {
     const qb = this.repository.createQueryBuilder('${moduleCamel}').orderBy('${moduleCamel}.id', 'DESC')
     applyTenantScope(qb, '${moduleCamel}')
     qb.andWhere('${moduleCamel}.delFlag = 0')
+    applySort(qb, '${moduleCamel}', query, ${ModulePascal}SORTABLE)
     if (query.keyword) {
 ${searchConds || "      qb.andWhere('1 = 0') // 未配置 s 字段"}
     }
@@ -754,11 +775,13 @@ ${alterBlock}    await queryRunner.query(\`
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    // 只回滚生成器写入的 4 个精确菜单节点：绝不用 LIKE 'menu_${moduleSnake}%'（会误删 menu_${moduleSnake}_other 之类）
+    const menuIds = ['menu_${moduleSnake}', 'menu_${moduleSnake}_add', 'menu_${moduleSnake}_edit', 'menu_${moduleSnake}_del']
     await queryRunner.query(
-      "DELETE FROM \`sys_role_permission\` WHERE \`permission_id\` IN (SELECT \`id\` FROM (SELECT \`id\` FROM \`sys_permission\` WHERE \`id\` LIKE 'menu_${moduleSnake}%') t)"
+      "DELETE FROM \`sys_role_permission\` WHERE \`permission_id\` IN (SELECT \`id\` FROM \`sys_permission\` WHERE \`id\` IN ('" + menuIds.join("','") + "'))"
     )
-    await queryRunner.query("DELETE FROM \`sys_permission\` WHERE \`id\` LIKE 'menu_${moduleSnake}%'")
-    await queryRunner.query(\`DROP TABLE IF EXISTS \\\`${table}\\\`\`)
+    await queryRunner.query("DELETE FROM \`sys_permission\` WHERE \`id\` IN ('" + menuIds.join("','") + "')")
+    // 故意不 DROP 业务表：回滚只撤销菜单授权；删表会丢数据，需要人工确认后手工执行
   }
 }
 `
@@ -783,7 +806,7 @@ const feApiFields = feFields.map(field => `  ${field.tsName}?: ${TYPE_MAP[field.
 const apiFile = path.join(adminRoot, `src/features/${moduleSnake}/api.ts`)
 writeIfAbsent(
   apiFile,
-  `import { getApiResult } from '@/lib/http'
+  `import { getApiResult, type PageResult } from '@/lib/http'
 
 /** ${label}（生成器产物） */
 export interface ${ModulePascal} {
@@ -797,12 +820,22 @@ ${feApiFields}
 
 export type ${ModulePascal}WritePayload = Partial<Omit<${ModulePascal}, 'id' | 'createBy' | 'updateBy' | 'createdAt' | 'updatedAt'>>
 
-export function fetch${ModulePascal}s(params: { page?: number; pageSize?: number; keyword?: string } = {}) {
+/** 列表查询参数：分页/排序与后端 PagerDto 对齐，业务过滤项（query 字段）可选追加 */
+export interface ${ModulePascal}ListParams {
+  page?: number
+  pageSize?: number
+  keyword?: string
+  sortBy?: string
+  sortOrder?: 'asc' | 'desc'
+${feFields.filter(field => field.query).map(field => `  ${field.tsName}?: ${TYPE_MAP[field.type].ts}`).join('\n')}
+}
+
+export function fetch${ModulePascal}s(params: ${ModulePascal}ListParams = {}) {
   const qs = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== '') qs.set(key, String(value))
+    if (value !== undefined && value !== null && value !== '') qs.set(key, String(value))
   })
-  return getApiResult<{ records: ${ModulePascal}[]; total: number }>(\`/backend-api/v1/${moduleSnake}s?\${qs.toString()}\`)
+  return getApiResult<PageResult<${ModulePascal}>>(\`/backend-api/v1/${moduleSnake}s?\${qs.toString()}\`)
 }
 
 export function create${ModulePascal}(payload: ${ModulePascal}WritePayload) {
@@ -835,7 +868,7 @@ const feCell = field => {
         return <span>{labels[row.getValue<number>('${field.tsName}')] ?? '-'}</span>`
   }
   if (field.type === 'bool') {
-    return `return <span>{${value} ? '是' : '否'}</span>`
+    return `return <StatusBadge ok={!!${value}} label={${value} ? '是' : '否'} />`
   }
   if (field.type === 'datetime') {
     return `const text = String(${value} ?? '').replace('T', ' ').slice(0, 16)
@@ -1001,16 +1034,17 @@ ${labelNode}
 const indexFile = path.join(adminRoot, `src/features/${moduleSnake}/index.tsx`)
 writeIfAbsent(
   indexFile,
-  `import { useEffect, useMemo, useState } from 'react'
+  `import { useCallback, useMemo, useState } from 'react'
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
+import { RefreshButton } from '@/components/ui/refresh-button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ConfirmDialog } from '@/components/confirm-dialog'
-import { DataTable, DataTableColumnHeader, DataTablePagination, DataTableViewOptions, useDataTable } from '@/components/data-table'
+${feHasType('bool') ? "import { StatusBadge } from '@/components/status-badge'\n" : ''}import { ConfirmDialog } from '@/components/confirm-dialog'
+import { DataTable, DataTableColumnHeader, DataTablePagination, DataTableViewOptions, useServerTable, type ServerTableQuery } from '@/components/data-table'
 import { hasPermission } from '@/lib/auth'
 import {
   create${ModulePascal},
@@ -1027,27 +1061,18 @@ ${feFields.map(field => `  ${field.tsName}: '${field.comment}'`).join(',\n')},
   actions: '操作'
 }
 
-/** ${label}管理（生成器产物：DataTable + 抽屉表单规约） */
+/** ${label}管理（生成器产物：服务端分页/筛选/排序 + 抽屉表单规约） */
 export function ${ModulePascal}Page() {
-  const [list, setList] = useState<${ModulePascal}[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<${ModulePascal} | null>(null)
   const [deleting, setDeleting] = useState<${ModulePascal} | null>(null)
 
-  const load = () => {
-    setLoading(true)
-    setError(null)
-    fetch${ModulePascal}s({ pageSize: 500 })
-      .then(res => setList(res.records ?? []))
-      .catch(e => setError(e instanceof Error ? e.message : '加载失败'))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(load, [])
-
-  const ${moduleCamel}s = useMemo(() => list ?? [], [list])
+  /** 列表查询：搜索/排序/翻页全部交给后端，query 字段作额外过滤条件 */
+  const fetchPage = useCallback(
+    ({ page, pageSize, keyword, sortBy, sortOrder }: ServerTableQuery<Record<string, never>>) =>
+      fetch${ModulePascal}s({ page, pageSize, keyword, sortBy, sortOrder }),
+    []
+  )
 
   const columns = useMemo<ColumnDef<${ModulePascal}>[]>(
     () => [
@@ -1078,9 +1103,9 @@ ${feColumns},
     []
   )
 
-  const { table, keyword, setKeyword } = useDataTable({
-    data: ${moduleCamel}s,
+  const { table, keyword, setKeyword, loading, booted, error, total, reload } = useServerTable({
     columns,
+    query: fetchPage,
     getRowId: item => String(item.id)
   })
 
@@ -1090,7 +1115,7 @@ ${feColumns},
       .then(() => {
         toast.success(editing ? '${label}已更新' : '${label}已创建')
         setFormOpen(false)
-        load()
+        reload()
       })
       .catch(e => toast.error(e instanceof Error ? e.message : '保存失败'))
   }
@@ -1100,7 +1125,7 @@ ${feColumns},
     delete${ModulePascal}(deleting.id)
       .then(() => {
         toast.success('已删除')
-        load()
+        reload()
       })
       .catch(e => toast.error(e instanceof Error ? e.message : '删除失败'))
     setDeleting(null)
@@ -1113,7 +1138,7 @@ ${feColumns},
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">${label}管理</h1>
-          <p className="text-muted-foreground text-sm">共 {${moduleCamel}s.length} 个${label}</p>
+          <p className="text-muted-foreground text-sm">共 {total >= 0 ? total : 0} 个${label}</p>
         </div>
         {hasPermission('${permsPrefix}:add') && (
           <Button
@@ -1128,7 +1153,7 @@ ${feColumns},
         )}
       </div>
 
-      {loading ? (
+      {!booted ? (
         <Card>
           <CardContent className="space-y-3 py-6">
             <Skeleton className="h-9 w-full max-w-md" />
@@ -1139,7 +1164,7 @@ ${feColumns},
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12">
             <p className="text-muted-foreground text-sm">{error}</p>
-            <Button variant="outline" onClick={load}>
+            <Button variant="outline" onClick={reload}>
               重试
             </Button>
           </CardContent>
@@ -1152,10 +1177,11 @@ ${feColumns},
                 <Search className="text-muted-foreground absolute start-2.5 top-1/2 size-4 -translate-y-1/2" />
                 <Input placeholder="搜索" className="ps-8" value={keyword} onChange={e => setKeyword(e.target.value)} />
               </div>
+              <RefreshButton onClick={() => void reload()} className="ms-auto" />
               <DataTableViewOptions table={table} columnLabels={columnLabels} />
             </div>
 
-            <DataTable table={table} emptyText="没有匹配的${label}" />
+            <DataTable table={table} loading={loading} emptyText="没有匹配的${label}" />
             <DataTablePagination table={table} />
           </CardContent>
         </Card>
@@ -1299,7 +1325,8 @@ if (JSON_OUT) {
       migrationSkipped,
       addedColumns: missingFields.map(field => field.name),
       dryRun: DRY_RUN,
-      staged: Boolean(OUT_ROOT)
+      staged: Boolean(OUT_ROOT),
+      stagedStatus: OUT_ROOT ? stagedFileStatus : undefined
     })}`
   )
 }

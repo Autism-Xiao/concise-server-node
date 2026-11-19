@@ -45,6 +45,8 @@ interface RunResult {
     overwritten?: string[]
     backupDir?: string
     addedColumns?: string[]
+    /** 预览专用：每个暂存文件在真实仓库的状态（server:路径 / admin:路径 -> new|skip|overwrite） */
+    stagedStatus?: Record<string, 'new' | 'skip' | 'overwrite'>
   }
 }
 
@@ -58,6 +60,8 @@ export interface CodegenFile {
   lines: number
   truncated: boolean
   content: string
+  /** 预览时该文件在真实仓库的状态：new=将新建 / skip=已存在将跳过 / overwrite=已存在将覆盖；生成结果里为 undefined */
+  stagedStatus?: 'new' | 'skip' | 'overwrite'
 }
 
 export interface CodegenPreviewResult {
@@ -163,7 +167,12 @@ export class CodegenService {
       // 表已存在时脚本会产出「补缺失列」的迁移，正好让人在预览里先看清要 ALTER 什么
       const cliArgs = ['--spec', specFile, '--out', outDir, '--no-register', '--json']
       const { log, manifest } = await this.run(cliArgs, '预览')
-      const files = this.collectStaged(outDir)
+      const files = this.collectStaged(outDir, manifest?.stagedStatus)
+      const willSkip = files.filter(file => file.stagedStatus === 'skip').length
+      const warnings = this.warnings(dto, existingColumns)
+      if (willSkip > 0) {
+        warnings.unshift(`有 ${willSkip} 个文件在仓库中已存在：默认「执行生成」会跳过它们，勾选「重新生成」才会备份后覆盖（文件列表已标注）`)
+      }
       return {
         module: manifest?.module ?? dto.module,
         label: manifest?.label ?? dto.label,
@@ -171,7 +180,7 @@ export class CodegenService {
         menuId: manifest?.menuId ?? `menu_${dto.module}`,
         files,
         touched: this.touchedRegistrations(dto.module),
-        warnings: this.warnings(dto, existingColumns),
+        warnings,
         log
       }
     } finally {
@@ -438,7 +447,7 @@ export class CodegenService {
   }
 
   /** 把暂存目录里的产物读回内存：<out>/server/** 与 <out>/admin/** */
-  private collectStaged(outDir: string): CodegenFile[] {
+  private collectStaged(outDir: string, stagedStatus?: Record<string, 'new' | 'skip' | 'overwrite'>): CodegenFile[] {
     const files: CodegenFile[] = []
     const walk = (dir: string, scope: 'server' | 'admin', base: string) => {
       if (!existsSync(dir)) return
@@ -450,14 +459,16 @@ export class CodegenService {
         }
         const stat = statSync(full)
         const raw = readFileSync(full, 'utf8')
+        const relPath = path.relative(base, full).split(path.sep).join('/')
         files.push({
           scope,
-          path: path.relative(base, full).split(path.sep).join('/'),
+          path: relPath,
           language: this.languageOf(entry.name),
           bytes: stat.size,
           lines: raw.split('\n').length,
           truncated: raw.length > MAX_PREVIEW_BYTES,
-          content: raw.length > MAX_PREVIEW_BYTES ? `${raw.slice(0, MAX_PREVIEW_BYTES)}\n/* 内容超长已截断 */` : raw
+          content: raw.length > MAX_PREVIEW_BYTES ? `${raw.slice(0, MAX_PREVIEW_BYTES)}\n/* 内容超长已截断 */` : raw,
+          stagedStatus: stagedStatus?.[`${scope}:${relPath}`]
         })
       }
     }
