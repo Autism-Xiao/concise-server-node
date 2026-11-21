@@ -10,6 +10,7 @@ import { ApplyTenantDto } from './dto/apply-tenant.dto'
 import { AssignUsersDto, QueryTenantUserDto, SwitchTenantDto } from './dto/tenant-user.dto'
 import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto'
 import { CreateTenantDto } from './dto/create-tenant.dto'
+import { QueryExpiringTenantDto } from './dto/query-expiring-tenant.dto'
 import { QueryTenantDto } from './dto/query-tenant.dto'
 import { SetTenantPackageDto } from './dto/set-tenant-package.dto'
 import { UpdateTenantDto } from './dto/update-tenant.dto'
@@ -50,6 +51,18 @@ export class TenantV1Controller {
   @Get('mine')
   mine(@Req() req: AuthedRequest) {
     return this.tenantService.mine(req.user!.id)
+  }
+
+  @ApiOperation({
+    summary: '即将到期租户列表',
+    description:
+      '平台运营视图：未来 N 天内到期（含今天）+ 已到期未停用（daysLeft 为负）的正常租户，按到期日升序；' +
+      '每日 tenantExpireJob 会按窗口给开通人发站内信提醒；需 system:tenant:list'
+  })
+  @Get('expiring')
+  @Perms('system:tenant:list')
+  listExpiring(@Query() query: QueryExpiringTenantDto) {
+    return this.tenantService.listExpiring(query.days)
   }
 
   @ApiOperation({ summary: '切换当前租户', description: '校验归属后记住选择；后续请求用 X-Tenant-Id 请求头生效' })

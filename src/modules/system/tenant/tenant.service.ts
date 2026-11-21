@@ -117,6 +117,66 @@ export class TenantService {
     return tenant
   }
 
+  /** 平台「即将到期」租户项：含已到期未停用的（daysLeft 为负），供仪表盘/提醒入口消费 */
+  async listExpiring(days = 30): Promise<
+    Array<{
+      id: number
+      name: string
+      code: string
+      plan: string
+      expireAt: string
+      /** 剩余天数：0 = 今天到期，负数 = 已过期 N 天 */
+      daysLeft: number
+      expired: boolean
+      ownerUserId: string | null
+      ownerName: string | null
+      userCount: number
+    }>
+  > {
+    // 窗口收敛到 1-365 天，防呆
+    const windowDays = Math.min(Math.max(Math.floor(days) || 30, 1), 365)
+    const rows = await this.dataSource.query<
+      {
+        id: number
+        name: string
+        code: string
+        plan: string
+        expireAt: string
+        ownerUserId: string | null
+        ownerName: string | null
+        userCount: number
+      }[]
+    >(
+      `SELECT t.id, t.name, t.code, t.plan,
+              DATE_FORMAT(t.expire_at, '%Y-%m-%d') AS expireAt,
+              t.owner_user_id AS ownerUserId,
+              u.username AS ownerName,
+              (SELECT COUNT(*) FROM sys_user_tenant ut WHERE ut.tenant_id = t.id AND ut.status = 0) AS userCount
+         FROM sys_tenant t
+         LEFT JOIN sys_user u ON u.id = t.owner_user_id
+        WHERE t.del_flag = 0 AND t.status = 0
+          AND t.expire_at IS NOT NULL AND t.expire_at <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
+        ORDER BY t.expire_at ASC, t.id ASC`,
+      [windowDays]
+    )
+    const todayKey = new Date().toISOString().slice(0, 10)
+    return rows.map(row => {
+      const daysLeft = Math.round((Date.parse(row.expireAt) - Date.parse(todayKey)) / 86_400_000)
+      return {
+        id: Number(row.id),
+        name: row.name,
+        code: row.code,
+        plan: row.plan,
+        expireAt: row.expireAt,
+        daysLeft,
+        expired: daysLeft < 0,
+        ownerUserId: row.ownerUserId,
+        ownerName: row.ownerName,
+        userCount: Number(row.userCount ?? 0)
+      }
+    })
+  }
+
   /**
    * 新建租户
    *
