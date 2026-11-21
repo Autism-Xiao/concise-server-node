@@ -112,6 +112,11 @@ export function accountLockedMessage(): string {
   return `密码错误次数过多，账号已锁定 ${formatLockDuration(LOGIN_LOCK_SECONDS)}，到期自动解冻，或联系管理员提前解锁`
 }
 
+/** 两步验证失败提示（未锁定）：保留了「验证码」语义，不冒充「密码错误」 */
+export function totpFailureMessage(remaining: number): string {
+  return `动态验证码或备份码不正确，还可尝试 ${Math.max(remaining, 0)} 次（连续错误 ${LOGIN_MAX_FAILS} 次将锁定账号）`
+}
+
 /**
  * 补齐首页菜单节点（仪表盘）。
  *
@@ -222,13 +227,16 @@ export class AuthService {
       return result
     } catch (error) {
       const failure = await this.recordLoginFailure(failKey, dto.username, error)
-      // 密码错误时把「还剩几次」写进返回文案；未达上限仍走 401，达到上限转 429 + ACCOUNT_LOCKED
+      const isTotpFailure = error instanceof BizException && error.getBizCode() === BizErrorCode.TOTP_INVALID
+      // 密码/2FA 错误把「还剩几次」写进返回文案；未达上限保留各自的码与状态，达到上限转 429 + ACCOUNT_LOCKED
       const finalError =
         failure == null
           ? error
           : failure.locked
             ? new BizException(BizErrorCode.ACCOUNT_LOCKED, accountLockedMessage(), HttpStatus.TOO_MANY_REQUESTS)
-            : new BizException(BizErrorCode.LOGIN_FAILED, passwordFailureMessage(failure.remaining, true), HttpStatus.UNAUTHORIZED)
+            : isTotpFailure
+              ? new BizException(BizErrorCode.TOTP_INVALID, totpFailureMessage(failure.remaining), HttpStatus.BAD_REQUEST)
+              : new BizException(BizErrorCode.LOGIN_FAILED, passwordFailureMessage(failure.remaining, true), HttpStatus.UNAUTHORIZED)
       const message = finalError instanceof HttpException ? finalError.message : '登录异常'
       await this.logService.recordLogin({ userId: knownUserId, username: dto.username, status: 1, message, ip: meta.ip, userAgent: meta.userAgent })
       throw finalError
@@ -384,6 +392,12 @@ export class AuthService {
 
     // 认证专用查询：refresh 请求无 accessToken，租户上下文是 0，走 findOneDetail 会被可见性断言误杀
     const user = await this.userService.findOneDetailForAuth(String(payload.id))
+    // 冻结账号不得换发新令牌：与登录口径（status===NORMAL）保持一致。
+    // 虽然冻结时 setStatus 已 kickUser + 写用户级吊销标记，但那是依赖「冻结动作成功执行」的纵深防线；
+    // 手工改库 / 历史数据绕过吊销时，这里作为最后一道闸门直接拒绝。
+    if (user.status !== USER_STATUS.NORMAL) {
+      throw new BizException(BizErrorCode.ACCOUNT_DISABLED, '账号已被冻结，请联系管理员', HttpStatus.FORBIDDEN)
+    }
     const result = await this.issueTokens(user)
     // 轮换：旧 refreshToken 立即作废（TTL 到其自然过期，不占用长期空间）
     await this.onlineService.markRevoked(refreshToken, this.remainingTtl(refreshToken, this.parseExpiresIn(this.jwt.refreshExpiresIn)))
@@ -452,10 +466,19 @@ export class AuthService {
     )
   }
 
-  /** 只有「账号密码错误」才计数：验证码错误、账号冻结、已锁定都不算密码尝试 */
+  /**
+   * 计入失败锁定：密码错误（1007）与两步验证错误（2106）都算。
+   *
+   * 为什么 2FA 要计入：攻击者已掌握正确密码时，2FA 是最后一道防线；若验证码错误不计数，
+   * 就能在账号维度无限在线爆破（IP 限流换代理可绕）。TOTP_REQUIRED(2105，缺码) 不算失败，
+   * 账号冻结/已锁定/验证码票据错误等也不计入。
+   */
   private async recordLoginFailure(failKey: string, username: string, error: unknown): Promise<PasswordFailureState | null> {
-    const isPasswordFailure = error instanceof BizException && error.getBizCode() === BizErrorCode.LOGIN_FAILED
-    if (!isPasswordFailure) {
+    if (!(error instanceof BizException)) {
+      return null
+    }
+    const code = error.getBizCode()
+    if (code !== BizErrorCode.LOGIN_FAILED && code !== BizErrorCode.TOTP_INVALID) {
       return null
     }
     return this.countPasswordFailure(failKey, username)

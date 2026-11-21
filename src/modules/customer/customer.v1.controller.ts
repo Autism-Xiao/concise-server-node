@@ -1,10 +1,15 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Request } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
 import { CreateCustomerDto, ListCustomerDto, UpdateCustomerDto } from './dto/customer.dto'
 import { CustomerService } from './customer.service'
+
+/** owner 级数据范围所需的最小 actor 结构（JwtStrategy 注入的 req.user 满足它） */
+interface OwnerRequest {
+  user?: { id: string; isPlatformAdmin?: number; roles?: Array<{ dataScope?: number | null }> | null }
+}
 
 /** 客户 v1 接口：统一挂 /api/v1，按钮权限 customer:* */
 @ApiTags('客户')
@@ -13,11 +18,11 @@ import { CustomerService } from './customer.service'
 export class CustomerV1Controller {
   constructor(private readonly customerService: CustomerService) {}
 
-  @ApiOperation({ summary: '客户分页', description: '需 customer:list' })
+  @ApiOperation({ summary: '客户分页', description: '需 customer:list；角色 data_scope=仅本人时只看自己创建的客户' })
   @Perms('customer:list')
   @Get()
-  list(@Query() query: ListCustomerDto) {
-    return this.customerService.listByQuery(query)
+  list(@Query() query: ListCustomerDto, @Request() req: OwnerRequest) {
+    return this.customerService.listByQuery(query, req.user)
   }
 
   @ApiOperation({ summary: '客户详情', description: '需 customer:list' })

@@ -145,10 +145,11 @@ export class TotpService {
    */
   async consumeBackupCode(userId: string, code: string): Promise<boolean> {
     if (!code) return false
-    const row = await this.backupRepository.findOne({ where: { userId, codeHash: digestBackupCode(code) } })
-    if (!row || row.usedAt) return false
-    await this.backupRepository.update(row.id, { usedAt: new Date() })
-    return true
+    // 原子消费：把「查行→判 usedAt→UPDATE」三步合并为一条带条件的 UPDATE。
+    // 否则两个并发登录会同时读到 usedAt=null 并都通过，备份码被用两次（违背一次性）。
+    // WHERE usedAt IS NULL 由数据库保证只有一个连接能改到行，affected===1 者胜出。
+    const result = await this.backupRepository.update({ userId, codeHash: digestBackupCode(code), usedAt: IsNull() }, { usedAt: new Date() })
+    return (result.affected ?? 0) === 1
   }
 
   /** 生成并落库一批新备份码（先删旧的全部：重新生成即作废旧码） */

@@ -18,6 +18,9 @@
  */
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:3461'
 const ADMIN = { username: process.env.ADMIN_USER || 'admin', password: process.env.ADMIN_PASS || 'admin123' }
+// 建号口令必须过密码策略（≥8 位 + 四类至少三类 + 非常见/序列 + 不含用户名）。
+// 旧值 iso123456 只有小写+数字两类，被 requireComplexity 拦成 400，导致整个隔离冒烟中断。
+const NEW_USER_PASSWORD = 'Sm0ke@Iso2026'
 const STAMP = Date.now().toString(36)
 
 let pass = 0
@@ -83,13 +86,13 @@ async function main() {
   const otherTenantId = otherRes.result?.id
 
   const username = `iso_${STAMP}`
-  const userRes = await api('/users', { method: 'POST', token: adminToken, body: { username, realname: '隔离测试账号', password: 'iso123456', status: 1 } })
+  const userRes = await api('/users', { method: 'POST', token: adminToken, body: { username, realname: '隔离测试账号', password: NEW_USER_PASSWORD, status: 1 } })
   const userId = userRes.result?.id
   if (!userId) throw new Error(`建用户失败: ${userRes.status} ${JSON.stringify(userRes.body)}`)
 
   try {
     await api(`/tenants/${tenantId}/users`, { method: 'PUT', token: adminToken, body: { userIds: [userId] } })
-    const userToken = await login(username, 'iso123456')
+    const userToken = await login(username, NEW_USER_PASSWORD)
 
     /* ---------- 2. 非平台管理员的边界 ---------- */
     const mine = await api('/tenants/mine', { token: userToken })
@@ -167,11 +170,11 @@ async function main() {
     check('改租户水印不影响平台默认', platformSetting.result?.content === platformMark, platformSetting.result?.content)
     check('租户读到自己那份水印策略', tenantSetting.result?.content === tenantMark, tenantSetting.result?.content)
 
-    const inheritorRes = await api('/users', { method: 'POST', token: adminToken, body: { username: `iso2_${STAMP}`, realname: '继承测试', password: 'iso123456', status: 1 } })
+    const inheritorRes = await api('/users', { method: 'POST', token: adminToken, body: { username: `iso2_${STAMP}`, realname: '继承测试', password: NEW_USER_PASSWORD, status: 1 } })
     const inheritorId = inheritorRes.result?.id
     if (inheritorId) {
       await api(`/tenants/${tenantId}/users`, { method: 'PUT', token: adminToken, body: { userIds: [userId, inheritorId] } })
-      const inheritorToken = await login(`iso2_${STAMP}`, 'iso123456')
+      const inheritorToken = await login(`iso2_${STAMP}`, NEW_USER_PASSWORD)
       const inherited = await api('/users/me/watermark', { token: inheritorToken, tenant: tenantId })
       check('同租户新账号继承该租户的水印策略', JSON.stringify(inherited.result?.lines ?? []).includes('租户水印'), inherited.result?.lines)
       await api(`/users/${inheritorId}`, { method: 'DELETE', token: adminToken })

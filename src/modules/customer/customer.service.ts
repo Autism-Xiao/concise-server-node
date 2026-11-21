@@ -6,7 +6,8 @@ import { isDuplicateEntryError } from '../../utils/db-error.util'
 import { BaseService } from '../../helper/crud/base.service'
 import { applySort, paginate, type Pagination } from '../../helper/paginate'
 import { TenantContext } from '../../shared/tenant/tenant.context'
-import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
+import { createTenantQb } from '../../shared/tenant/tenant-qb.factory'
+import { applyOwnerScope, type OwnerScopeActor } from '../../shared/permission/owner-scope.util'
 import { CreateCustomerDto, ListCustomerDto, UpdateCustomerDto } from './dto/customer.dto'
 import { CustomerEntity } from './entities/customer.entity'
 
@@ -38,9 +39,8 @@ export class CustomerService extends BaseService<CustomerEntity> {
 
   /** 唯一键查重：excludeId 供更新时排除自身；按租户作用域查（唯一键也是 (tenant_id, 字段)） */
   private async assertUnique(field: string, value: string | number, excludeId?: number): Promise<void> {
-    const qb = this.repository.createQueryBuilder('t').where('t.' + field + ' = :value', { value })
+    const qb = createTenantQb(this.repository, 't').where('t.' + field + ' = :value', { value })
     if (excludeId !== undefined) qb.andWhere('t.id != :excludeId', { excludeId })
-    this.applyTenantToQuery(qb, 't')
     const exists = await qb.getOne()
     if (exists) throw new BadRequestException(`${this.uniqueLabels[field] ?? field}「${value}」已存在`)
   }
@@ -55,11 +55,11 @@ export class CustomerService extends BaseService<CustomerEntity> {
     }
   }
 
-  /** 分页列表：keyword（模糊） */
-  async listByQuery(query: ListCustomerDto): Promise<Pagination<CustomerEntity>> {
-    const qb = this.repository.createQueryBuilder('customer').orderBy('customer.id', 'DESC')
-    applyTenantScope(qb, 'customer')
+  /** 分页列表：keyword（模糊）；角色 data_scope=仅本人时按 createBy 收窄 */
+  async listByQuery(query: ListCustomerDto, actor?: OwnerScopeActor | null): Promise<Pagination<CustomerEntity>> {
+    const qb = createTenantQb(this.repository, 'customer').orderBy('customer.id', 'DESC')
     qb.andWhere('customer.delFlag = 0')
+    applyOwnerScope(qb, 'customer', actor)
     applySort(qb, 'customer', query, CUSTOMER_SORTABLE)
     if (query.keyword) {
       qb.andWhere('customer.name LIKE :keyword', { keyword: `%${query.keyword}%` })

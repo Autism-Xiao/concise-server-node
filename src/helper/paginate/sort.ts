@@ -26,7 +26,9 @@ export interface SortQuery {
  * （比如按状态排），没有唯一键兜底 MySQL 的 LIMIT/OFFSET 结果会重复或漏行。
  */
 export function applySort<T extends ObjectLiteral>(qb: SelectQueryBuilder<T>, alias: string, query: SortQuery, allow: Record<string, string>): boolean {
-  const column = query.sortBy ? allow[query.sortBy] : undefined
+  // 必须用自有属性判定：普通对象直接索引时 sortBy='__proto__'/'constructor'/'toString'
+  // 会命中 Object.prototype 上的成员，拼出非法排序列让 TypeORM 抛错（列表接口稳定 500）。
+  const column = query.sortBy && Object.prototype.hasOwnProperty.call(allow, query.sortBy) ? allow[query.sortBy] : undefined
   if (!column) return false
   const direction = query.sortOrder?.toLowerCase() === 'desc' ? 'DESC' : 'ASC'
   qb.orderBy(`${alias}.${column}`, direction)

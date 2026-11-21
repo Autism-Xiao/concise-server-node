@@ -29,8 +29,9 @@
 
 - **权限**：user—role—menu 多对多（user_roles/role_menus），全局 JwtAuthGuard→RolesGuard→PermsGuard 顺序注册；`@Public()`/`@Roles()`/`@Perms()`（实时查 menu.permission，admin bypass）。权限集合走 `PermissionCacheService`，改 role_permission 必调 invalidateRole/invalidateAll。跨模块 `@InjectRepository` 必须本模块 forFeature 注册对方实体。
 - **密码**：新数据 Argon2id（m=19456/t=2/p=1），历史 jeecg 格式登录成功后就地升级；`verifyPassword` 是异步的，调用要 await。双令牌 access 2h / refresh 7d。
-- **2FA**：纯 `node:crypto` 的 TOTP（RFC6238/HMAC-SHA1/30s/6 位/±1 步 `timingSafeEqual`）；`sys_user.totp_secret` 是 `select:false` → 认证查询必须显式 `addSelect`，否则门禁静默失效；无码 2105 / 错码 2106 且不计入锁定；`/v1/auth/2fa/{status,setup,activate,deactivate}`。已知限制：SSO 不校验、备份恢复码未做。
-- **多租户**：`sys_tenant` + `sys_user_tenant` + `sys_user.login_tenant_id`；9 张业务表 `tenant_id`（**0 = 平台共享，所有租户可见**）。隔离唯一入口 `shared/tenant/tenant-scope.util.ts`（null 不过滤 / 0 只看共享 / >0 本租户+共享）；上下文必须由全局中间件 `TenantContext.run` 建立（Guard 里 set 无效）；手写 QB 要 `applyTenantScope`（用 andWhere+Brackets，别 where 覆盖）。前端 localStorage `concise-tenant` → 自动带 `X-Tenant-Id`。建租户自动生成 admin/editor/viewer 模板（`tenant-role-template.ts`，admin `is_builtin=1`）；平台新增租户级菜单后要跑 `POST /v1/tenants/provision-all`。
+- **2FA**：纯 `node:crypto` 的 TOTP（RFC6238/HMAC-SHA1/30s/6 位/±1 步 `timingSafeEqual`）；`sys_user.totp_secret` 是 `select:false` → 认证查询必须显式 `addSelect`，否则门禁静默失效；无码 2105（不计失败）/ 错码 2106（**已计入账号锁定**，与 LOGIN_FAILED 共用阈值，2026-11-21 修）；`/v1/auth/2fa/{status,setup,activate,deactivate}`。备份恢复码**已实现**（`totp.service.ts`：只存 sha256、**条件原子 UPDATE `used_at IS NULL` 防并发重放**，2026-11-21 修）。已知限制：SSO 不校验。
+- **多租户**：`sys_tenant` + `sys_user_tenant` + `sys_user.login_tenant_id`；9 张业务表 `tenant_id`（**0 = 平台共享，所有租户可见**）。隔离唯一入口 `shared/tenant/tenant-scope.util.ts`（null 不过滤 / 0 只看共享 / >0 本租户+共享）；上下文必须由全局中间件 `TenantContext.run` 建立（Guard 里 set 无效）；**手写 QB 一律用 `shared/tenant/tenant-qb.factory.ts` 的 `createTenantQb(repo, alias)`（内部调 applyTenantScope，杜绝漏加）**，写路径用 tenantWriteCondition（不含共享行）。TypeORM 无全局 WHERE 拦截器，应用层靠工厂+单测+CI 隔离冒烟兜底。前端 localStorage `concise-tenant` → 自动带 `X-Tenant-Id`。建租户自动生成 admin/editor/viewer 模板（`tenant-role-template.ts`，admin `is_builtin=1`）；平台新增租户级菜单后要跑 `POST /v1/tenants/provision-all`。
+- **owner 级行权限**（2026-11-21）：`shared/permission/owner-scope.util.ts` 复用 `data_scope`（1 ALL 不收窄 / 2、3、4 按 createBy=self，部门档无 dept_id 保守退化为 self；多角色 Math.min 取最大权限=最小数值）。customer/biz_order 列表接入，controller list 传 `req.user`。详情/导出未接（findOne 被 BaseService 写路径复用）；supplier 无 createBy 暂未接。端到端冒烟受限于 customer 菜单权限未录入，靠 7 个单测守。
 - **数据权限**：`sys_role.data_scope` 走 `UserService.countScoped`；`scope === ALL(1)` 必须直接放行（漏了会 `1=0` 一条查不到）。首页 `GET /v1/dashboard/overview` 不挂 `@Perms`，**无权限的块返回 null 不是 0**，降级块带 `scope:'all'|'self'`；前端只判 null 不判权限。
 - **水印**：`resolveWatermarkState` 是唯一判定入口（off > enforced=2 > enforced=1 > forced > 用户??全局）；用户侧只能改 enabled/content/density，样式参数仅全局可改。
 - **界面设置上云**：`sys_user_setting`（**故意无 tenant_id**）+ `GET|PUT /v1/users/me/settings`；白名单唯一入口 `user-setting.util.ts`，**加设置项必须同步改**；库里只存差异（`stripDefaultSettings`）；前端 `lib/settings.ts` 不能用 `getApiResult`（401 会踢登录页）。
@@ -47,7 +48,7 @@
 ## 测试数据与冒烟（本地 dev 库）
 
 - `admin / admin123`（超管 id=1）；`guest / guest123`（无角色）；`auditor1`（仅 system:log:*）。角色 admin/editor/viewer **每租户各一套**（看到「角色重复」是同名模板，不能删）。
-- `scripts/smoke-*.mjs`（2026-11-19 实测）：server-list 24 / tenant 30 / tenant-provision 27 / tenant-admin 20 / tenant-demo 21 / tenant-isolation（弱口令断） / user-setting 18 / batch-io 31 / dict-color 21 / dashboard 60（viewer 两块按模板设计是 null）。需 `PORT=3461 CAPTCHA_ENABLED=false` 实例（captcha 脚本相反，要 `true`）。残留数据用 `cleanup-smoke-data.mjs --apply` 清。
+- `scripts/smoke-*.mjs`（2026-11-19 实测）：server-list 24 / tenant 30 / tenant-provision 27 / tenant-admin 20 / tenant-demo 21 / tenant-isolation 23（弱口令已修 Sm0ke@Iso2026）/ user-setting 18 / batch-io 31 / dict-color 27 / dashboard 60（viewer 两块按模板设计是 null）/ file 39 / auth-lock 22 / dept-status 9 / menu-perm 14 / platform-admin 8。需 `PORT=3461 CAPTCHA_ENABLED=false` 实例（captcha 脚本相反，要 `true`）。**captcha 17/18**：容差断言仍按 ±5，后端已收紧 TOLERANCE=3（脚本 + captcha.service.ts:134 注释待同步，别当产品 bug）；tenant-isolation 建号弱口令**已修**（2026-11-21 改合规口令，23/23 通过并接入 CI）。`smoke-file` 跑要 `SMOKE_BASE=http://127.0.0.1:3461/api`（带 /api）。残留数据用 `cleanup-smoke-data.mjs --apply` 清。
 - 跑单测用 `npm test`（= `node --test tests/*.test.cjs`），直接 `node --test tests/` 会全红。
 
 ## 遗留 / 下一步
@@ -56,5 +57,6 @@
 - 可选：字典/公告/任务按钮权限录入菜单、操作日志导出。~~验证码接 Redis~~ **已实现**（challenge/ticket 走 Redis MULTI GET+DEL 一次性，支持多实例）；sys_log 时间索引也已齐全，勿再当优化项。
 - 设计未落地：「个人权限可监管别的部门」→ 建议新表 `sys_user_supervise_dept`，`applyDataScope` 合并 own ∪ supervise（用户中断未确认，未开发）。
 - 说明书挂账（未做）：套餐→菜单打包、用户数/存储配额、代维审计标记；参数配置租户级与 VIP 自助开通（含额度）已完成默认版。
-- **provision-all 补权后不失效角色权限缓存**（2026-11-19 发现）：给存量角色补模板授权后 Redis `perm:role:*` 仍是旧集合，需手动失效或等 TTL；应在 provision-all 里调 invalidateAll。
+- ~~**provision-all 补权后不失效角色权限缓存**~~ **已修**（2026-11-19）：`tenant-provision.service.ts:214/220/225` 现在按变更调 invalidateRole + invalidateTenant + authUserCache.invalidateAll。别再当问题。
+- **安全审计 S1（2026-11-19，待用户决策）**：`.env` 被 git 跟踪（提交 28df4e2 起，`.gitignore` 的 `# .env` 是注释态），明文 JWT 双密钥 + DB 口令入库 → 可伪造超管令牌。修复要轮换密钥 + `git rm --cached .env` + BFG 清历史 + 恢复 ignore，需团队协同。详见 docs/2026-11-19-全面审计报告.md。DB 口令 6 位纯数字也是高危 H1。
 - smoke-tenant-isolation / smoke-tenant-demo 弱口令建号被密码策略 400 拦（脚本与策略脱节，未修）。

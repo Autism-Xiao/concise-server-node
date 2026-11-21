@@ -6,7 +6,8 @@ import { isDuplicateEntryError } from '../../utils/db-error.util'
 import { BaseService } from '../../helper/crud/base.service'
 import { applySort, paginate, type Pagination } from '../../helper/paginate'
 import { TenantContext } from '../../shared/tenant/tenant.context'
-import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
+import { createTenantQb } from '../../shared/tenant/tenant-qb.factory'
+import { applyOwnerScope, type OwnerScopeActor } from '../../shared/permission/owner-scope.util'
 import { CreateBizOrderDto, ListBizOrderDto, UpdateBizOrderDto } from './dto/biz_order.dto'
 import { BizOrderEntity } from './entities/biz_order.entity'
 
@@ -37,9 +38,8 @@ export class BizOrderService extends BaseService<BizOrderEntity> {
 
   /** 唯一键查重：excludeId 供更新时排除自身；按租户作用域查（唯一键也是 (tenant_id, 字段)） */
   private async assertUnique(field: string, value: string | number, excludeId?: number): Promise<void> {
-    const qb = this.repository.createQueryBuilder('t').where('t.' + field + ' = :value', { value })
+    const qb = createTenantQb(this.repository, 't').where('t.' + field + ' = :value', { value })
     if (excludeId !== undefined) qb.andWhere('t.id != :excludeId', { excludeId })
-    this.applyTenantToQuery(qb, 't')
     const exists = await qb.getOne()
     if (exists) throw new BadRequestException(`${this.uniqueLabels[field] ?? field}「${value}」已存在`)
   }
@@ -54,11 +54,11 @@ export class BizOrderService extends BaseService<BizOrderEntity> {
     }
   }
 
-  /** 分页列表：keyword（模糊） + 精确过滤 */
-  async listByQuery(query: ListBizOrderDto): Promise<Pagination<BizOrderEntity>> {
-    const qb = this.repository.createQueryBuilder('bizOrder').orderBy('bizOrder.id', 'DESC')
-    applyTenantScope(qb, 'bizOrder')
+  /** 分页列表：keyword（模糊） + 精确过滤；角色 data_scope=仅本人时按 createBy 收窄 */
+  async listByQuery(query: ListBizOrderDto, actor?: OwnerScopeActor | null): Promise<Pagination<BizOrderEntity>> {
+    const qb = createTenantQb(this.repository, 'bizOrder').orderBy('bizOrder.id', 'DESC')
     qb.andWhere('bizOrder.delFlag = 0')
+    applyOwnerScope(qb, 'bizOrder', actor)
     applySort(qb, 'bizOrder', query, BIZ_ORDER_SORTABLE)
     if (query.keyword) {
       qb.andWhere('bizOrder.title LIKE :keyword', { keyword: `%${query.keyword}%` })
