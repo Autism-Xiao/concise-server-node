@@ -12,6 +12,8 @@ import { RolesGuard } from './common/guards/roles.guard'
 import { PermsGuard } from './common/guards/perms.guard'
 import { FeatureGuard } from './common/guards/feature.guard'
 import { QuotaGuard } from './common/guards/quota.guard'
+import { IdempotentInterceptor } from './common/interceptors/idempotent.interceptor'
+import { LockInterceptor } from './common/interceptors/lock.interceptor'
 import { RateLimitGuard } from './common/guards/rate-limit.guard'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
@@ -147,6 +149,9 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     // 全局异常过滤 + 统一响应包装 + 操作日志
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
+    // 声明式幂等/互斥：@Idempotent / @Lock 标注的端点才生效；放操作日志外层，拒绝也会留痕
+    { provide: APP_INTERCEPTOR, useClass: IdempotentInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: LockInterceptor },
     { provide: APP_INTERCEPTOR, useClass: OperLogInterceptor },
     // 计量放最内层：只观察 handler 的原始成功/失败，不感知外层响应包装
     { provide: APP_INTERCEPTOR, useClass: MeteringInterceptor },

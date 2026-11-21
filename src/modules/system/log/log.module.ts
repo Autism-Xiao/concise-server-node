@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
+import { RedisModule } from '../../../shared/redis/redis.module'
 import { SysLogChangeEntity } from './entities/log-change.entity'
 import { SysLogEntity } from './entities/sys-log.entity'
 import { ChangeLogService } from './change-log.service'
@@ -12,9 +13,10 @@ import { LogService } from './log.service'
  *
  * `ChangeLogService` 在 onModuleInit 里把自己注册成字段级变更的采集落点，
  * 所以它必须随模块正常实例化 —— 不要改成 lazy provider。
+ * RedisModule 给审计哈希链提供跨实例串行锁（同租户并发写日志时 prev 不分叉）。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([SysLogEntity, SysLogChangeEntity])],
+  imports: [TypeOrmModule.forFeature([SysLogEntity, SysLogChangeEntity]), RedisModule],
   controllers: [LogV1Controller],
   providers: [LogService, ChangeLogService],
   exports: [LogService, ChangeLogService]

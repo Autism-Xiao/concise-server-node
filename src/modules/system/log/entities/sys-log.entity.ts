@@ -95,4 +95,19 @@ export class SysLogEntity {
   @ApiProperty({ description: '事件时间' })
   @Column({ type: 'datetime', comment: '创建时间' })
   createTime: Date
+
+  /** 审计哈希链：写入顺序键（DB 自增，链顺序 = seq 升序） */
+  @ApiPropertyOptional({ description: '链顺序键（自增）', nullable: true })
+  @Column({ type: 'bigint', name: 'seq', nullable: true, transformer: { to: (v: unknown): unknown => v, from: (v: unknown): number => Number(v) } })
+  seq: number | null
+
+  /** 链上前一条（同租户）的 entry_hash；NULL = 链起点（迁移前存量） */
+  @ApiPropertyOptional({ description: '链上前一条哈希', nullable: true })
+  @Column({ type: 'varchar', length: 64, name: 'prev_hash', nullable: true })
+  prevHash: string | null
+
+  /** 本条链哈希 = sha256(prev + canonical)；NULL = 迁移点之前的存量行，不参与校验 */
+  @ApiPropertyOptional({ description: '本条链哈希', nullable: true })
+  @Column({ type: 'varchar', length: 64, name: 'entry_hash', nullable: true })
+  entryHash: string | null
 }

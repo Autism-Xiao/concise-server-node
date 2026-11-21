@@ -7,8 +7,10 @@ import { BizException } from '../../../common/exceptions/biz.exception'
 import { assertImportRows, createImportResult, failImportRow, type ImportResult, pickCell, resolveImportLayout } from '../../../helper/import/excel-import'
 import { applySort, paginate, type Pagination } from '../../../helper/paginate'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
+import { RedisService } from '../../../shared/redis/redis.service'
 import { randomId32 } from '../../../utils/password.util'
 import { parseRequestInfo } from '../../../utils/request-info.util'
+import { computeEntryHash, type AuditChainRow } from './audit-chain.util'
 import { SysLogEntity } from './entities/sys-log.entity'
 
 /** 可排序字段白名单：前端列 id → 实体属性名（日志量大，服务端排序比拉全量后排更稳） */
@@ -63,8 +65,177 @@ const DEFAULT_TENANT_ID = 1
 export class LogService {
   constructor(
     @InjectRepository(SysLogEntity)
-    private readonly logRepository: Repository<SysLogEntity>
+    private readonly logRepository: Repository<SysLogEntity>,
+    private readonly redis: RedisService
   ) {}
+
+  /**
+   * 审计哈希链写入槽：**插入与封印整体持锁**。
+   * 锁顺序 = seq 分配顺序（AUTO_INCREMENT 在锁内分配），保证 prev 永不分叉；
+   * 若只在锁内封印、锁外插入，两个并发写可能以相反顺序封印，造成链分叉。
+   *
+   * 抢锁失败重试 50 次（100ms 间隔，约 5 秒）；仍拿不到或 Redis 不可用则退化为
+   * 无锁直写（可能分叉，校验端如实报出）——审计封印绝不能阻塞业务写路径。
+   */
+  private async chainSlot<T>(tenantId: number, fn: () => Promise<T>): Promise<T> {
+    const client = this.redis.client
+    if (!client) return fn()
+    const key = `audit:chain:${tenantId}`
+    const token = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2)}`
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const acquired = await client.set(key, token, 'EX', 10, 'NX').catch(() => null)
+      if (acquired === 'OK') {
+        try {
+          return await fn()
+        } finally {
+          await client
+            .eval('if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end', 1, key, token)
+            .catch(() => undefined)
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    return fn()
+  }
+
+  /** 插入 + 封印（必须在同一锁槽内，见 chainSlot 注释） */
+  private async insertSealed(entity: SysLogEntity): Promise<void> {
+    await this.chainSlot(entity.tenantId, async () => {
+      await this.logRepository.save(entity)
+      if (process.env.AUDIT_CHAIN_ENABLED === 'false') return
+      try {
+        // 拿自增 seq 与落库后的 create_time：哈希必须用「库里实际存的值」——datetime 会截断毫秒，
+        // 用 JS Date（含 ms）算哈希的话，校验端用库值重算必然对不上（首个冒烟就栽在这里）
+        const seqRows = await this.logRepository.query<Array<{ seq: number | string; create_time: Date | string }>>(
+          'SELECT seq, create_time FROM sys_log WHERE id = ?',
+          [entity.id]
+        )
+        const seqRow = seqRows[0] as { seq?: number | string; create_time?: Date | string } | undefined
+        const seq = Number(seqRow?.seq)
+        if (!Number.isFinite(seq)) return
+
+        const prevRows = await this.logRepository.query<Array<{ entry_hash: string | null }>>(
+          `SELECT entry_hash FROM sys_log
+            WHERE tenant_id = ? AND seq < ? AND entry_hash IS NOT NULL
+            ORDER BY seq DESC LIMIT 1`,
+          [entity.tenantId, seq]
+        )
+        const prevHash = prevRows[0]?.entry_hash ?? null
+
+        const row: AuditChainRow = {
+          seq,
+          tenantId: entity.tenantId,
+          id: entity.id,
+          logType: entity.logType,
+          operateType: entity.operateType ?? null,
+          operateUserId: entity.operateUserId ?? null,
+          operateUserName: entity.operateUserName ?? null,
+          ip: entity.ip ?? '',
+          status: entity.status,
+          params: entity.params ?? null,
+          errorMsg: entity.errorMsg ?? null,
+          createTimeMs: new Date(seqRow.create_time as Date | string).getTime()
+        }
+        const entryHash = computeEntryHash(prevHash, row)
+        await this.logRepository.query('UPDATE sys_log SET prev_hash = ?, entry_hash = ? WHERE id = ?', [prevHash, entryHash, entity.id])
+        entity.prevHash = prevHash
+        entity.entryHash = entryHash
+        entity.seq = seq
+      } catch (error) {
+        console.error('[LogService] 审计哈希链封印失败（该行将保持未封印状态）:', error)
+      }
+    })
+  }
+
+  /**
+   * 校验哈希链完整性：窗口内逐行重算 entry_hash 并核对 prev 链接。
+   * - entry_hash 为 NULL 的行（迁移前存量/封印失败）计入 skipped，不参与衔接；
+   * - 每行校验两件事：prev_hash 与「上一条已封印行的 entry_hash」衔接、重算哈希与落库值一致；
+   * - 断裂后的行只标一条「前置行已断裂」，避免刷屏；不做任何修复。
+   */
+  async verifyChain(
+    limit = 1000,
+    tenantId?: number
+  ): Promise<{
+    checked: number
+    skipped: number
+    broken: Array<{ id: string; seq: number; issue: string }>
+    ok: boolean
+  }> {
+    const scopedTenant = tenantId ?? TenantContext.filterTenantId()
+    const window = Math.min(Math.max(Math.trunc(limit) || 1000, 1), 10_000)
+    // 窗口取「最新 N 条」再正序校验：审计关心的是最近写入是否可信，不是最老的存量
+    const rawRows = await this.logRepository.query<Array<Record<string, unknown>>>(
+      `SELECT id, tenant_id, seq, prev_hash, entry_hash, log_type, operate_type, operate_user_id,
+              operate_user_name, ip, status, params, error_msg, create_time
+         FROM sys_log
+        WHERE (? IS NULL OR tenant_id = ?) AND seq IS NOT NULL
+        ORDER BY seq DESC
+        LIMIT ${window}`,
+      [scopedTenant ?? null, scopedTenant ?? null]
+    )
+    const rows = [...rawRows].reverse()
+
+    const broken: Array<{ id: string; seq: number; issue: string }> = []
+    let checked = 0
+    let skipped = 0
+    /** 链按租户划分：校验状态（lastEntryHash/seeded/断裂标记）按租户独立维护。
+     *  平台视角（tenantId=null）会拿到所有租户的行，不能串成一条链 */
+    const state = new Map<number, { lastEntryHash: string | null; seeded: boolean; broken: boolean }>()
+    for (const raw of rows) {
+      const id = raw['id'] as string
+      const seq = Number(raw['seq'])
+      const tenantId = Number(raw['tenant_id'])
+      const entryHash = (raw['entry_hash'] as string | null) ?? null
+      if (!entryHash) {
+        skipped++
+        continue
+      }
+      let chain = state.get(tenantId)
+      if (!chain) {
+        chain = { lastEntryHash: null, seeded: false, broken: false }
+        state.set(tenantId, chain)
+      }
+      if (chain.broken) {
+        broken.push({ id, seq, issue: '前置行已断裂（连带）' })
+        continue
+      }
+      const storedPrev = (raw['prev_hash'] as string | null) ?? null
+      if (!chain.seeded) {
+        // 窗口起点无法校验「与窗口外行的衔接」（prev 指向更早的行），用其自身 prev 作种子；
+        // 后续行严格校验衔接 + 重算。内容篡改检测靠重算，不受种子影响
+        chain.lastEntryHash = storedPrev
+        chain.seeded = true
+      } else if (storedPrev !== chain.lastEntryHash) {
+        broken.push({ id, seq, issue: 'prev_hash 与上一条封印行不衔接（插行/删行）' })
+        chain.broken = true
+        continue
+      }
+      const row: AuditChainRow = {
+        seq,
+        tenantId,
+        id,
+        logType: Number(raw['log_type']),
+        operateType: raw['operate_type'] === null || raw['operate_type'] === undefined ? null : Number(raw['operate_type']),
+        operateUserId: (raw['operate_user_id'] as string | null) ?? null,
+        operateUserName: (raw['operate_user_name'] as string | null) ?? null,
+        ip: (raw['ip'] as string) ?? '',
+        status: Number(raw['status']),
+        params: (raw['params'] as string | null) ?? null,
+        errorMsg: (raw['error_msg'] as string | null) ?? null,
+        createTimeMs: new Date(raw['create_time'] as Date).getTime()
+      }
+      const recomputed = computeEntryHash(storedPrev, row)
+      if (recomputed !== entryHash) {
+        broken.push({ id, seq, issue: 'entry_hash 与重算值不一致（内容被改动）' })
+        chain.broken = true
+        continue
+      }
+      checked++
+      chain.lastEntryHash = entryHash
+    }
+    return { checked, skipped, broken, ok: broken.length === 0 }
+  }
 
   /** 记录一次登录尝试（成功或失败）；浏览器/系统/归属地在写入时统一解析，调用方只给 ip + userAgent 原料 */
   async recordLogin(input: LoginLogInput): Promise<void> {
@@ -73,23 +244,22 @@ export class LogService {
       const ip = input.ip.replace(/^::ffff:/, '')
       const { browser, os, location } = parseRequestInfo(ip, input.userAgent)
       const tenantId = await this.resolveLoginTenant(input.userId, input.tenantId)
-      await this.logRepository.save(
-        this.logRepository.create({
-          id: randomId32(),
-          tenantId,
-          logContent: input.message,
-          logType: 0,
-          operateUserId: input.userId,
-          operateUserName: input.username,
-          ip,
-          status: input.status,
-          browser,
-          os,
-          location,
-          createBy: input.username,
-          createTime: new Date()
-        })
-      )
+      const entity = this.logRepository.create({
+        id: randomId32(),
+        tenantId,
+        logContent: input.message,
+        logType: 0,
+        operateUserId: input.userId,
+        operateUserName: input.username,
+        ip,
+        status: input.status,
+        browser,
+        os,
+        location,
+        createBy: input.username,
+        createTime: new Date()
+      })
+      await this.insertSealed(entity)
     } catch (error) {
       console.error('[LogService] 登录日志写入失败:', error)
     }
@@ -128,25 +298,24 @@ export class LogService {
    */
   async recordOper(input: OperLogInput): Promise<void> {
     try {
-      await this.logRepository.save(
-        this.logRepository.create({
-          id: randomId32(),
-          tenantId: input.tenantId ?? TenantContext.currentTenantId() ?? 0,
-          isProxy: input.isProxy ?? (TenantContext.isProxy() ? 1 : 0),
-          logContent: `${input.module} - ${input.action}`.slice(0, 1000),
-          logType: 1,
-          operateType: input.operateType,
-          operateUserId: input.userId,
-          operateUserName: input.username ?? '未知',
-          ip: input.ip.replace(/^::ffff:/, ''),
-          status: input.status,
-          costTime: input.elapsed,
-          params: input.params,
-          errorMsg: input.errorMsg,
-          createBy: input.username,
-          createTime: new Date()
-        })
-      )
+      const entity = this.logRepository.create({
+        id: randomId32(),
+        tenantId: input.tenantId ?? TenantContext.currentTenantId() ?? 0,
+        isProxy: input.isProxy ?? (TenantContext.isProxy() ? 1 : 0),
+        logContent: `${input.module} - ${input.action}`.slice(0, 1000),
+        logType: 1,
+        operateType: input.operateType,
+        operateUserId: input.userId,
+        operateUserName: input.username ?? '未知',
+        ip: input.ip.replace(/^::ffff:/, ''),
+        status: input.status,
+        costTime: input.elapsed,
+        params: input.params,
+        errorMsg: input.errorMsg,
+        createBy: input.username,
+        createTime: new Date()
+      })
+      await this.insertSealed(entity)
     } catch (error) {
       console.error('[LogService] 操作日志写入失败:', error)
     }

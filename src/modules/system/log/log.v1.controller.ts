@@ -148,6 +148,18 @@ export class LogV1Controller {
   }
 
   @ApiOperation({
+    summary: '审计哈希链完整性校验',
+    description:
+      '从链起点（迁移点）起逐行重算 sha256 链哈希并核对衔接；断裂如实报出（内容改动/插行删行）。' +
+      'limit 收敛 1-10000，默认 1000；租户视角只校验本租户链，平台管理员校验平台链（tenantId 参数仅平台可指定）'
+  })
+  @Perms('system:log:change')
+  @Get('chain-verify')
+  async verifyChain(@Query('limit') limit?: string) {
+    return this.logService.verifyChain(Number(limit) || 1000)
+  }
+
+  @ApiOperation({
     summary: '某条记录的变更历史（v1）',
     description: '按表名 + 记录 ID 查，时间正序，供详情页/弹窗展示"这条数据被谁改过"'
   })

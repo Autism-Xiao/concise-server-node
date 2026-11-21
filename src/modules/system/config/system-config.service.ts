@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { EntityManager, Repository } from 'typeorm'
 import { isDuplicateEntryError } from '../../../utils/db-error.util'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
+import { emitChanges } from '../../../shared/audit/change-recorder'
 import type { BatchUpdateConfigDto, UpdateConfigItemDto } from './dto/config.dto'
 import { SysConfigEntity } from './entities/sys-config.entity'
 
@@ -235,35 +236,51 @@ export class SystemConfigService {
 
   /** 执行写入：租户视角 upsert 覆盖行（元数据抄平台行），平台视角直接更新平台行 */
   private async writeValue(target: WriteTarget, value: string, manager: EntityManager): Promise<void> {
+    // 变更前生效值：租户覆盖行为旧覆盖值，跟随平台时旧生效值 = 平台行值（insert 场景同理）
+    const oldValue = target.tenantRow?.configValue ?? target.platformRow.configValue
+    let recordId: string
     if (target.tenantId <= 0) {
-      await manager.update(SysConfigEntity, target.platformRow.id, { configValue: value })
-      return
-    }
-    if (target.tenantRow) {
-      await manager.update(SysConfigEntity, target.tenantRow.id, { configValue: value })
-      return
-    }
-    const src = target.platformRow
-    try {
-      await manager.insert(SysConfigEntity, {
-        configKey: src.configKey,
-        tenantId: target.tenantId,
-        configValue: value,
-        valueType: src.valueType,
-        configGroup: src.configGroup,
-        name: src.name,
-        remark: src.remark,
-        isBuiltin: 0,
-        allowTenant: 0,
-        delFlag: 0
-      })
-    } catch (error) {
-      // 并发下撞 (tenant_id, config_key) 联合唯一：转可读报错
-      if (isDuplicateEntryError(error)) {
-        throw new BadRequestException(`参数 ${src.configKey} 已有租户覆盖值，请勿重复创建`)
+      recordId = target.platformRow.id
+      await manager.update(SysConfigEntity, recordId, { configValue: value })
+    } else if (target.tenantRow) {
+      recordId = target.tenantRow.id
+      await manager.update(SysConfigEntity, recordId, { configValue: value })
+    } else {
+      const src = target.platformRow
+      try {
+        const inserted = await manager.insert(SysConfigEntity, {
+          configKey: src.configKey,
+          tenantId: target.tenantId,
+          configValue: value,
+          valueType: src.valueType,
+          configGroup: src.configGroup,
+          name: src.name,
+          remark: src.remark,
+          isBuiltin: 0,
+          allowTenant: 0,
+          delFlag: 0
+        })
+        recordId = String(inserted.identifiers[0]?.id ?? src.id)
+      } catch (error) {
+        // 并发下撞 (tenant_id, config_key) 联合唯一：转可读报错
+        if (isDuplicateEntryError(error)) {
+          throw new BadRequestException(`参数 ${src.configKey} 已有租户覆盖值，请勿重复创建`)
+        }
+        throw error
       }
-      throw error
     }
+    // 配额/开关等关键参数的变更审计：写成功才记（字段级 diff，oldValue=写入前生效值）；
+    // 失败静默——审计挂了不能影响业务写入（change-recorder 内部已吞异常）
+    emitChanges([
+      {
+        table: 'sys_config',
+        recordId,
+        field: 'configValue',
+        label: `${target.platformRow.configKey}（${target.platformRow.name}）`,
+        oldValue: oldValue ?? '',
+        newValue: value
+      }
+    ])
   }
 
   /** 当前生效租户：null（平台超管未指定）/ 0（无归属账号）都按平台 0 处理 */

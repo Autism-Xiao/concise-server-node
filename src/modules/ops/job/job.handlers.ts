@@ -7,6 +7,7 @@ import { DbBackupService } from '../../../shared/backup/db-backup.service'
 import { MessageService } from '../../message/message.service'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { tenantWriteSql } from '../../../shared/tenant/tenant-scope.util'
+import { runForAllTenants } from '../../../shared/tenant/tenant-job.util'
 
 /** 触发来源：cron 定时触发 / manual 页面「执行一次」 */
 export type JobTrigger = 'cron' | 'manual'
@@ -125,18 +126,18 @@ export class JobHandlerRegistry {
           throw new Error(`参数「${parameter}」不是合法天数`)
         }
         const todayKey = new Date().toISOString().slice(0, 10)
-        const expiring = await this.dataSource.query<{ id: number; name: string; code: string; expireAt: string; ownerUserId: string | null }[]>(
-          `SELECT id, name, code, DATE_FORMAT(expire_at, '%Y-%m-%d') AS expireAt, owner_user_id AS ownerUserId
-             FROM sys_tenant
-            WHERE del_flag = 0 AND status = 0
-              AND owner_user_id IS NOT NULL
-              AND expire_at IS NOT NULL AND expire_at >= CURDATE()
-              AND expire_at <= DATE_ADD(CURDATE(), INTERVAL ? DAY)`,
-          [Math.floor(days)]
-        )
-        let notified = 0
-        for (const tenant of expiring) {
-          if (!tenant.ownerUserId) continue
+        // 逐租户巡逻（runForAllTenants：单租户失败不中断整体，fn 在租户上下文内执行）
+        const results = await runForAllTenants(this.dataSource, async tenantId => {
+          const rows = await this.dataSource.query<{ id: number; name: string; code: string; expireAt: string; ownerUserId: string | null }[]>(
+            `SELECT id, name, code, DATE_FORMAT(expire_at, '%Y-%m-%d') AS expireAt, owner_user_id AS ownerUserId
+               FROM sys_tenant
+              WHERE id = ? AND del_flag = 0 AND status = 0
+                AND owner_user_id IS NOT NULL
+                AND expire_at IS NOT NULL AND expire_at <= DATE_ADD(CURDATE(), INTERVAL ? DAY)`,
+            [tenantId, Math.floor(days)]
+          )
+          const tenant = rows[0]
+          if (!tenant?.ownerUserId) return null
           const daysLeft = Math.round((Date.parse(tenant.expireAt) - Date.parse(todayKey)) / 86_400_000)
           // 当天去重：同接收人同日已收过「租户到期提醒」就不再发（手动重跑/多实例不重复轰炸）
           const dup = await this.dataSource.query<{ one: number }[]>(
@@ -146,12 +147,23 @@ export class JobHandlerRegistry {
               LIMIT 1`,
             [tenant.ownerUserId]
           )
-          if (dup.length) continue
+          if (dup.length) return null
           const content =
             daysLeft === 0
               ? `租户「${tenant.name}」（${tenant.code}）今日到期。到期后用户将无法进入该租户，请及时续期。`
               : `租户「${tenant.name}」（${tenant.code}）将于 ${tenant.expireAt} 到期（剩余 ${daysLeft} 天）。到期后用户将无法进入该租户，请及时续期。`
-          notified += await this.message.notify('租户到期提醒', content, [tenant.ownerUserId])
+          const notified = await this.message.notify('租户到期提醒', content, [tenant.ownerUserId])
+          return notified > 0
+        })
+        let expiringCount = 0
+        let notified = 0
+        for (const item of results) {
+          if (!item.ok) {
+            this.logger.warn(`[tenantExpireJob] 租户 ${item.tenantId} 巡逻失败：${item.error}`)
+            continue
+          }
+          expiringCount++
+          if (item.value) notified++
         }
 
         // 已到期但仍是「正常」状态的租户：读取时判定已拦截用户进入，这里只给平台管理员发汇总
@@ -174,10 +186,8 @@ export class JobHandlerRegistry {
             )
           }
         }
-        this.logger.log(
-          `[tenantExpireJob] 临期租户 ${expiring.length} 个，提醒开通人 ${notified} 人；已过期 ${expiredCount} 个，平台汇总 ${platformNotified} 人`
-        )
-        return `临期 ${expiring.length} 个（提醒 ${notified} 人），已过期 ${expiredCount} 个（平台汇总 ${platformNotified} 人）`
+        this.logger.log(`[tenantExpireJob] 临期租户 ${expiringCount} 个，提醒开通人 ${notified} 人；已过期 ${expiredCount} 个，平台汇总 ${platformNotified} 人`)
+        return `临期 ${expiringCount} 个（提醒 ${notified} 人），已过期 ${expiredCount} 个（平台汇总 ${platformNotified} 人）`
       },
       '租户到期提醒：临期租户给开通人发站内信、已过期给平台管理员发汇总；参数为提前提醒天数（默认 7）'
     )

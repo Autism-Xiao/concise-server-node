@@ -109,6 +109,56 @@ export class ChangeLogService implements OnModuleInit {
     return new Pagination<ChangeLogRow>(named, total, page, pageSize)
   }
 
+  /**
+   * 配置变更流水（配额管理页/租户用量页消费）：sys_config 行的 configValue 前后值，
+   * 二次查询带出 config_key 与参数名。租户视角只见本租户覆盖行的变更。
+   */
+  async listConfigChanges(query: {
+    page?: number
+    pageSize?: number
+    configKey?: string
+  }): Promise<Pagination<ChangeLogRow & { configKey?: string; configName?: string }>> {
+    const page = Math.max(1, Math.trunc(Number(query.page) || 1))
+    const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(query.pageSize) || 20)))
+
+    // 先按 config_key 过滤出目标行的 record_id 集合（键元数据只在 sys_config），再查变更行
+    let recordIds: string[] | null = null
+    if (query.configKey) {
+      const keyRows = await this.repo.manager.query<Array<{ id: string }>>('SELECT id FROM sys_config WHERE config_key LIKE ?', [`%${query.configKey}%`])
+      recordIds = keyRows.map(row => row.id)
+      if (!recordIds.length) return new Pagination([], 0, page, pageSize)
+    }
+
+    const qb = this.repo.createQueryBuilder('c').where('c.table_name = :tableName', { tableName: 'sys_config' })
+    if (recordIds) {
+      qb.andWhere('c.record_id IN (:...ids)', { ids: recordIds })
+    }
+    const tenantId = TenantContext.filterTenantId()
+    if (tenantId !== null) qb.andWhere('c.tenant_id = :tenantId', { tenantId })
+
+    const [rows, total] = await qb
+      .orderBy('c.create_time', 'DESC')
+      .addOrderBy('c.id', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize)
+      .getManyAndCount()
+
+    // record_id → 键名/参数名（一次查询，不逐行join）；id 列是数值型，统一转 string 对齐 recordId
+    const ids = [...new Set(rows.map(row => row.recordId).filter((id): id is string => !!id))]
+    const keyById = new Map<string, { configKey: string; configName: string }>()
+    if (ids.length) {
+      const found = await this.repo.manager.query<Array<{ id: number | string; config_key: string; name: string }>>(
+        `SELECT id, config_key, name FROM sys_config WHERE id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      )
+      for (const row of found) keyById.set(String(row.id), { configKey: row.config_key, configName: row.name })
+    }
+
+    const named = await this.attachUserNames(rows)
+    const enriched = named.map(row => Object.assign(row, keyById.get(row.recordId ?? '') ?? {}))
+    return new Pagination(enriched, total, page, pageSize)
+  }
+
   /** 某条记录的变更历史（详情页/弹窗用，按时间正序） */
   async listByRecord(tableName: string, recordId: string): Promise<ChangeLogRow[]> {
     const qb = this.repo.createQueryBuilder('c').where('c.table_name = :tableName', { tableName }).andWhere('c.record_id = :recordId', { recordId })

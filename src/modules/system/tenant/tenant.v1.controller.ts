@@ -5,6 +5,7 @@ import type { Request } from 'express'
 import { OperLog } from '../../../common/decorators/oper-log.decorator'
 import { Perms } from '../../../common/decorators/perms.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
+import { Idempotent } from '../../../common/decorators/idempotent.decorator'
 import { Pagination } from '../../../helper/paginate'
 import { ApplyTenantDto } from './dto/apply-tenant.dto'
 import { AssignUsersDto, QueryTenantUserDto, SwitchTenantDto } from './dto/tenant-user.dto'
@@ -136,6 +137,8 @@ export class TenantV1Controller {
   // 注意：限流守卫在 Jwt 之前执行，拿不到 req.user，by:'account' 实际退化成 IP 维度，
   // 所以这里直接按 IP 计数（10 次/小时，够正常用户开团队、也压得住刷接口）。
   @RateLimit({ limit: 10, window: 3600, message: '开通过于频繁，请稍后再试' })
+  // 双击防护：15 秒窗口内同用户同参数只落一次（连点两下会开出两个同名团队）
+  @Idempotent({ window: 15, message: '开通请求正在处理，请勿重复提交' })
   @OperLog('租户管理')
   @Post('apply')
   apply(@Body() dto: ApplyTenantDto, @Req() req: AuthedRequest) {

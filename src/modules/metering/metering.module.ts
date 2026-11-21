@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 
+import { LogModule } from '../system/log/log.module'
 import { MeteringInterceptor } from './metering.interceptor'
 import { MeteringV1Controller } from './metering.v1.controller'
 import { MeteringService } from './metering.service'
@@ -9,10 +10,11 @@ import { TenantUsageEntity } from './entities/tenant-usage.entity'
 /**
  * 用量计量：全局导出 service，供文件中心等业务模块主动埋点；
  * HTTP 调用量由 MeteringInterceptor 在 AppModule 里统一挂全局。
+ * LogModule 提供配置（配额）变更流水查询。
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([TenantUsageEntity])],
+  imports: [TypeOrmModule.forFeature([TenantUsageEntity]), LogModule],
   controllers: [MeteringV1Controller],
   providers: [MeteringService, MeteringInterceptor],
   exports: [MeteringService, MeteringInterceptor]
