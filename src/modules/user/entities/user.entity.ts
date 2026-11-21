@@ -105,6 +105,20 @@ export class UserEntity {
   @Column({ type: 'tinyint', default: 0, name: 'is_platform_admin', comment: '是否平台管理员(1是 0否)' })
   isPlatformAdmin: number
 
+  /**
+   * 是否租户管理员（至少一个租户绑定了 admin 角色）
+   *
+   * 与 is_platform_admin 的区别：
+   * - 平台管理员是账号属性，跨租户视角由 TenantContext 决定；
+   * - 租户管理员是派生状态，由 sys_user_role ⋈ sys_role(role_code='admin', tenant_id>0) 算出，
+   *   写路径（授予/移除角色、移出租户）同步维护。
+   *
+   * 作用：兜底防租户锁死（误删最后一个管理员时仍能识别）+ 前端快速标注，不作为鉴权唯一依据。
+   */
+  @ApiProperty({ description: '是否租户管理员：1 是 / 0 否（至少在一个租户持有 admin 角色）', example: 0, enum: [0, 1] })
+  @Column({ type: 'tinyint', default: 0, name: 'is_tenant_admin', comment: '是否租户管理员(1是 0否)' })
+  isTenantAdmin: number
+
   @ApiPropertyOptional({ description: '会员等级：0 普通 / 1 VIP（VIP 可自助开通租户）', example: 0, enum: [0, 1] })
   @Column({ type: 'tinyint', default: 0, name: 'vip_level', comment: '会员等级(0普通 1VIP)' })
   vipLevel?: number

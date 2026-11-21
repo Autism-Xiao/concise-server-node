@@ -13,6 +13,8 @@ export interface TenantMembershipItem {
 
 export interface TenantMembership {
   isSuper: boolean
+  /** 至少一个租户绑定了 admin 角色（sys_user.is_tenant_admin），供前端标注与兜底识别 */
+  isTenantAdmin: boolean
   tenants: TenantMembershipItem[]
   /** 上次登录/切换时选择的租户（sys_user.login_tenant_id），作为不带请求头时的默认值 */
   preferredTenantId: number | null
@@ -47,8 +49,8 @@ export class TenantAccessService {
     }
 
     const [profile, rows] = await Promise.all([
-      this.dataSource.query<{ isPlatformAdmin: number | null; loginTenantId: number | null }[]>(
-        'SELECT is_platform_admin AS isPlatformAdmin, login_tenant_id AS loginTenantId FROM sys_user WHERE id = ?',
+      this.dataSource.query<{ isPlatformAdmin: number | null; isTenantAdmin: number | null; loginTenantId: number | null }[]>(
+        'SELECT is_platform_admin AS isPlatformAdmin, is_tenant_admin AS isTenantAdmin, login_tenant_id AS loginTenantId FROM sys_user WHERE id = ?',
         [userId]
       ),
       this.dataSource.query<{ id: number; name: string; code: string; status: number; expireAt: string | null }[]>(
@@ -71,6 +73,7 @@ export class TenantAccessService {
     const isSuper = Number(profile[0]?.isPlatformAdmin ?? 0) === 1
     const value: TenantMembership = {
       isSuper,
+      isTenantAdmin: Number(profile[0]?.isTenantAdmin ?? 0) === 1,
       tenants: rows.map(row => ({ ...row, id: Number(row.id), status: Number(row.status) })),
       preferredTenantId: profile[0]?.loginTenantId != null ? Number(profile[0].loginTenantId) : null
     }

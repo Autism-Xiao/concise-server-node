@@ -243,6 +243,8 @@ export class TenantService {
           adminRoleId,
           saved.id
         ])
+        // 派生租户管理员标志位：自助开通人自动成为该租户管理员
+        await this.userService.syncTenantAdminFlag(userId, manager)
         await manager.query('UPDATE sys_user SET login_tenant_id = ?, update_time = NOW() WHERE id = ?', [saved.id, userId])
         return saved
       })
@@ -372,6 +374,7 @@ export class TenantService {
   async mine(userId: string): Promise<{
     current: number | null
     isSuper: boolean
+    isTenantAdmin: boolean
     tenants: { id: number; name: string; code: string; status: number; expireAt: string | null; usable: boolean }[]
   }> {
     const membership = await this.tenantAccess.loadMembership(userId)
@@ -384,6 +387,7 @@ export class TenantService {
     return {
       current,
       isSuper: membership.isSuper,
+      isTenantAdmin: membership.isTenantAdmin,
       tenants: source.map(item => ({
         id: item.id,
         name: item.name,
@@ -505,18 +509,45 @@ export class TenantService {
       removedUserIds = removeRows.map(item => item.userId)
 
       if (removeRows.length) {
+        const userPlaceholders = removeRows.map(() => '?').join(',')
+        const removedIds = removeRows.map(item => item.userId)
+        // 兜底：不能把本租户最后一个管理员移除，否则租户再无人可管（只有平台超管能代维）
+        const adminRows = await manager.query<Array<{ user_id: string }>>(
+          `SELECT ur.user_id
+             FROM sys_user_role ur
+             JOIN sys_role r ON r.id = ur.role_id
+            WHERE r.tenant_id = ? AND r.role_code = 'admin' AND ur.user_id IN (${userPlaceholders})`,
+          [tenantId, ...removedIds]
+        )
+        if (adminRows.length) {
+          const remainRows = await manager.query<Array<{ c: number | string }>>(
+            `SELECT COUNT(*) AS c
+               FROM sys_user_role ur
+               JOIN sys_role r ON r.id = ur.role_id
+               JOIN sys_user_tenant ut ON ut.user_id = ur.user_id AND ut.tenant_id = r.tenant_id AND ut.status = 0
+              WHERE r.tenant_id = ? AND r.role_code = 'admin' AND ur.user_id NOT IN (${userPlaceholders})`,
+            [tenantId, ...removedIds]
+          )
+          if (Number(remainRows[0]?.c ?? 0) === 0) {
+            throw new BadRequestException('该用户是本租户最后一个管理员，请先指定其他管理员后再移除')
+          }
+        }
+
         await manager.delete(
           UserTenantEntity,
           removeRows.map(item => item.id)
         )
         // 只删该用户在本租户角色上的绑定；他可能同时属于别的租户，别把别处角色一起清掉
-        const userPlaceholders = removeRows.map(() => '?').join(',')
         await manager.query(
           `DELETE ur FROM sys_user_role ur
              INNER JOIN sys_role r ON r.id = ur.role_id
             WHERE r.tenant_id = ? AND ur.user_id IN (${userPlaceholders})`,
-          [tenantId, ...removeRows.map(item => item.userId)]
+          [tenantId, ...removedIds]
         )
+        // 角色绑定变了：重新派生这些用户的 is_tenant_admin（可能还管着别的租户）
+        for (const userId of removedIds) {
+          await this.userService.syncTenantAdminFlag(userId, manager)
+        }
         await manager.query(`UPDATE sys_user SET login_tenant_id = NULL WHERE login_tenant_id = ? AND id IN (${userPlaceholders})`, [
           tenantId,
           ...removeRows.map(item => item.userId)

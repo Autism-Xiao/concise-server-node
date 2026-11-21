@@ -264,6 +264,12 @@ export class UserService extends BaseService<UserEntity> {
     const id = await this.runInTransaction(async manager => {
       const repo = this.repoOf(manager)
       const user = await repo.save(repo.create(data))
+      // 租户归属必须先于角色绑定落库：is_tenant_admin 的派生要 join sys_user_tenant，
+      // 而且「先入租户再绑角色」语义上也更正确（角色是租户内资产）
+      await manager.query('INSERT IGNORE INTO `sys_user_tenant` (`user_id`, `tenant_id`, `status`, `create_time`) VALUES (?, ?, 0, NOW())', [
+        user.id,
+        this.resolveJoinTenantId()
+      ])
       if (roleIds?.length) {
         await this.assignRoles(user.id, roleIds, manager)
       }
@@ -275,12 +281,6 @@ export class UserService extends BaseService<UserEntity> {
       }
       // 界面设置行随账号一起落库：同一事务，不留「有用户没设置」的半成品
       await this.userSettingService.ensure(user.id, manager)
-      // 租户归属：租户管理员建的号自动加入本租户；平台视角建的号落到默认租户 1
-      // （不写这行的话新账号 tenantId 解析成 0，登录后什么都看不到 —— 与存量账号升级时的处理保持一致）
-      await manager.query('INSERT IGNORE INTO `sys_user_tenant` (`user_id`, `tenant_id`, `status`, `create_time`) VALUES (?, ?, 0, NOW())', [
-        user.id,
-        this.resolveJoinTenantId()
-      ])
       return user.id
     })
     const created = (await this.findOneDetail(id)) as UserEntity
@@ -382,6 +382,22 @@ export class UserService extends BaseService<UserEntity> {
     const toAdd = roles.filter(role => !currentIds.has(role.id))
 
     if (toRemove.length) {
+      // 兜底：不能解绑某租户最后一个 admin 角色，否则该租户再无人能管
+      const removingRoles = await em.getRepository(RoleEntity).findBy({ id: In(toRemove) })
+      for (const role of removingRoles) {
+        if (role.roleCode !== 'admin' || Number(role.tenantId ?? 0) <= 0) continue
+        const remainRows = await em.query<Array<{ c: number | string }>>(
+          `SELECT COUNT(*) AS c
+             FROM sys_user_role ur
+             JOIN sys_role r ON r.id = ur.role_id
+             JOIN sys_user_tenant ut ON ut.user_id = ur.user_id AND ut.tenant_id = r.tenant_id AND ut.status = 0
+            WHERE r.tenant_id = ? AND r.role_code = 'admin' AND ur.user_id <> ?`,
+          [Number(role.tenantId), id]
+        )
+        if (Number(remainRows[0]?.c ?? 0) === 0) {
+          throw new BadRequestException(`不能取消租户 #${role.tenantId} 最后一个管理员角色，请先指定其他管理员`)
+        }
+      }
       const placeholders = toRemove.map(() => '?').join(',')
       await em.query(`DELETE FROM sys_user_role WHERE user_id = ? AND role_id IN (${placeholders})`, [id, ...toRemove])
     }
@@ -393,8 +409,30 @@ export class UserService extends BaseService<UserEntity> {
         Number(role.tenantId ?? 0)
       ])
     }
+    // 重新派生 is_tenant_admin 标志位（兜底防锁死 + 前端标注）
+    await this.syncTenantAdminFlag(id, em)
     // 角色变了，JwtStrategy 缓存的 roles 就过期了（RolesGuard 直接读它）
     this.authUserCache.invalidate(id)
+  }
+
+  /**
+   * 重新计算 sys_user.is_tenant_admin：
+   * 用户在任意租户持有 role_code='admin' 的租户级角色（且仍是该租户有效成员）时为 1。
+   *
+   * 所有会改变「用户 ↔ 租户 admin 角色」绑定的写路径都要调用：
+   * assignRoles、TenantService.applyCreate / assignUsers。
+   */
+  async syncTenantAdminFlag(userId: string, em: EntityManager = this.repository.manager): Promise<void> {
+    const rows = await em.query<Array<{ one: number }>>(
+      `SELECT 1 AS one
+         FROM sys_user_role ur
+         JOIN sys_role r ON r.id = ur.role_id
+         JOIN sys_user_tenant ut ON ut.user_id = ur.user_id AND ut.tenant_id = r.tenant_id AND ut.status = 0
+        WHERE ur.user_id = ? AND r.role_code = 'admin' AND r.tenant_id > 0
+        LIMIT 1`,
+      [userId]
+    )
+    await em.query('UPDATE sys_user SET is_tenant_admin = ? WHERE id = ?', [rows.length ? 1 : 0, userId])
   }
 
   /**
@@ -1001,7 +1039,7 @@ export class UserService extends BaseService<UserEntity> {
       // 界面设置**刻意不清**：软删是可恢复的，回复后就是同一个人，主题/字号丢了不可逆；
       // 而且它只是个人偏好，不像角色/水印那样有「恢复后必须重新确认」的安全含义。
       // 回收站里多留一行不影响任何按主键的查询，真正的清理交给将来的「回收站到期物理删除」。
-      await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null })
+      await this.repoOf(manager).update(id, { delFlag: 1, departIds: null, orgCode: null, isTenantAdmin: 0 })
     })
     // 删号即失效：缓存里若还留着这个人，鉴权会继续放行到下次过期
     this.authUserCache.invalidate(id)
