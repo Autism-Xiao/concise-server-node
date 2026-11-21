@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Ip, Post, Put, Request } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Ip, Post, Put, Request, UnauthorizedException } from '@nestjs/common'
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { Public } from '../../../common/decorators/public.decorator'
@@ -13,6 +13,7 @@ import { VerifyPasswordDto } from '../dto/verify-password.dto'
 import { AuthService, type PermissionResult } from '../services/auth.service'
 import { CaptchaService } from '../services/captcha.service'
 import { PasswordResetService } from '../services/password-reset.service'
+import { RememberMeService } from '../services/remember-me.service'
 import { TotpService } from '../services/totp.service'
 import type { UserEntity } from '../../user/entities/user.entity'
 
@@ -31,6 +32,7 @@ export class AuthV1Controller {
     private readonly captchaService: CaptchaService,
     private readonly totpService: TotpService,
     private readonly passwordResetService: PasswordResetService,
+    private readonly rememberMeService: RememberMeService,
     @Inject(captchaConfig.KEY) private readonly captcha: CaptchaConfig
   ) {}
 
@@ -72,9 +74,61 @@ export class AuthV1Controller {
   @RateLimit({ limit: 120, window: 60, message: '登录请求过于频繁，请稍后再试' })
   @HttpCode(HttpStatus.OK)
   @Post('login')
-  login(@Body() dto: LoginDto, @Request() req: { ip: string; headers: Record<string, string | string[] | undefined> }) {
+  async login(@Body() dto: LoginDto, @Request() req: { ip: string; headers: Record<string, string | string[] | undefined>; body?: Record<string, unknown> }) {
     const userAgent = req.headers['user-agent']
-    return this.authService.login(dto, { ip: req.ip ?? '', userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent })
+    const result = (await this.authService.login(dto, {
+      ip: req.ip ?? '',
+      userAgent: Array.isArray(userAgent) ? userAgent[0] : userAgent
+    })) as unknown as Record<string, unknown>
+
+    // 「记住登录」（方案 C）：登录成功且前端勾选时签发 Redis 凭证（不存密码，只存 refresh 链头）。
+    // rememberMe/rememberDays/deviceId 不进 LoginDto（全局 whitelist 会剥掉 DTO 外字段），从原始 body 读取；
+    // 签发失败（Redis 关/开关关）静默降级为「不记住」，绝不影响登录本身
+    const raw = (req.body ?? {}) as Record<string, unknown>
+    if (!raw.rememberMe) return result
+    try {
+      const remember = await this.rememberMeService.issue({
+        userId: String((result.userInfo as { id?: string } | undefined)?.id ?? ''),
+        deviceId: typeof raw.deviceId === 'string' ? raw.deviceId : undefined,
+        days: typeof raw.rememberDays === 'number' ? raw.rememberDays : undefined,
+        refreshToken: typeof result.refreshToken === 'string' ? result.refreshToken : ''
+      })
+      if (remember) return { ...result, rememberToken: remember.token, rememberDays: remember.days }
+    } catch {
+      // Redis 异常等：记住功能降级，不阻塞登录
+    }
+    return result
+  }
+
+  @ApiOperation({
+    summary: '记住登录凭证换取令牌（v1）',
+    description:
+      '用登录时签发的记住凭证免密换新令牌对（走 refreshToken 轮换，新链头写回记录）' +
+      '设备绑定校验失败/凭证失效/refresh 链断裂（改密、重置密码、封号触发的全量下线）一律 401 并清理记录'
+  })
+  @Public()
+  @RateLimit({ limit: 20, window: 60, message: '续登请求过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('remember/exchange')
+  rememberExchange(@Body() body?: { token?: string; deviceId?: string }) {
+    const token = typeof body?.token === 'string' ? body.token : ''
+    if (!token) throw new UnauthorizedException('缺少登录凭证')
+    const deviceId = typeof body?.deviceId === 'string' ? body.deviceId : undefined
+    return this.rememberMeService.exchange(token, deviceId)
+  }
+
+  @ApiOperation({
+    summary: '吊销记住登录凭证（v1）',
+    description: '登出时前端带上自己的凭证调用；幂等，token 不存在也返回成功'
+  })
+  @Public()
+  @RateLimit({ limit: 30, window: 60, message: '吊销请求过于频繁，请稍后再试' })
+  @HttpCode(HttpStatus.OK)
+  @Post('remember/revoke')
+  async rememberRevoke(@Body() body?: { token?: string }) {
+    const token = typeof body?.token === 'string' ? body.token : ''
+    if (token) await this.rememberMeService.revoke(token)
+    return { revoked: true }
   }
 
   @ApiBearerAuth('jwt')
@@ -112,7 +166,10 @@ export class AuthV1Controller {
   @RateLimit({ limit: 20, window: 300, message: '修改密码过于频繁，请稍后再试' })
   @Put('password')
   async changePassword(@Request() req: { user: { id: string; username: string } }, @Body() dto: ChangePasswordDto) {
-    return this.authService.changePassword(req.user.id, dto)
+    const result = await this.authService.changePassword(req.user.id, dto)
+    // 改密成功 = 旧凭证可能已泄露：吊销该用户全部「记住登录」凭证（会话下线已断 refresh 链，这里兜底清记录）
+    await this.rememberMeService.revokeUser(req.user.id)
+    return result
   }
 
   @ApiOperation({

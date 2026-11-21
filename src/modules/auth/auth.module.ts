@@ -18,6 +18,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard'
 import { AuthService } from './services/auth.service'
 import { CaptchaService } from './services/captcha.service'
 import { PasswordResetService } from './services/password-reset.service'
+import { RememberMeService } from './services/remember-me.service'
 import { SsoService } from './services/sso.service'
 import { TotpService } from './services/totp.service'
 import { UserBackupCodeEntity } from './entities/user-backup-code.entity'
@@ -49,7 +50,7 @@ import { JwtStrategy } from './strategies/jwt.strategy'
     })
   ],
   controllers: [AuthV1Controller, SsoV1Controller],
-  providers: [AuthService, CaptchaService, SsoService, TotpService, PasswordResetService, JwtStrategy, JwtAuthGuard],
+  providers: [AuthService, CaptchaService, SsoService, TotpService, PasswordResetService, RememberMeService, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard]
 })
 export class AuthModule {}
