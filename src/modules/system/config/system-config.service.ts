@@ -41,7 +41,10 @@ const DEFAULTS: Record<string, string> = {
   'tenant.ui.themeColor': '',
   'tenant.login.welcomeText': '',
   // 平台级：一个 VIP 账号最多能自助开通几个租户（0 或负数视为不限制，仅在代码侧兜底）
-  'tenant.vip.maxTenants': '1'
+  'tenant.vip.maxTenants': '1',
+  // 租户资源配额（allow_tenant=1；0 = 不限制，升级后存量租户行为不变）
+  'tenant.quota.maxUsers': '0',
+  'tenant.quota.maxStorageMb': '0'
 }
 
 /** 进程内缓存有效期（毫秒）：多实例部署时，别处改的值最多这么久后本实例生效 */

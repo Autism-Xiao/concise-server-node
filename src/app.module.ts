@@ -52,6 +52,10 @@ import { TenantMiddleware } from './shared/tenant/tenant.middleware'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 import { ApiScopeGuard } from './common/guards/api-scope.guard'
 import { OpenApiModule } from './modules/openapi/open.module'
+import { QuotaModule } from './shared/quota/quota.module'
+import { MeteringModule } from './modules/metering/metering.module'
+import { MeteringInterceptor } from './modules/metering/metering.interceptor'
+import { SensitiveInterceptor } from './common/interceptors/sensitive.interceptor'
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule()
 
@@ -74,6 +78,10 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     PermissionCacheModule,
     // 鉴权用户短缓存（JwtStrategy 读、账号写路径主动失效），全局模块
     AuthCacheModule,
+    // 租户资源配额（sys_config 驱动的 Seats / Storage 上限），全局模块
+    QuotaModule,
+    // 租户用量计量（sys_tenant_usage：API 调用 / 上传字节），全局模块
+    MeteringModule,
     // 多租户上下文（AsyncLocalStorage + 归属解析），全局模块
     TenantContextModule,
     // 业务模块
@@ -132,6 +140,10 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
     { provide: APP_INTERCEPTOR, useClass: OperLogInterceptor },
+    // 计量放最内层：只观察 handler 的原始成功/失败，不感知外层响应包装
+    { provide: APP_INTERCEPTOR, useClass: MeteringInterceptor },
+    // 字段级脱敏最靠近 handler：改的是原始数据，外层再统一包装 {code,result}
+    { provide: APP_INTERCEPTOR, useClass: SensitiveInterceptor },
     // 全局守卫：先限流（最便宜的拒绝），再 JWT 认证（@Public() 放行），再角色鉴权（@Roles()），再按钮级权限（@Perms()），最后开放接口 scope（@ApiScope()，只约束应用令牌）
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

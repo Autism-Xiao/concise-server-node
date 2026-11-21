@@ -11,9 +11,10 @@ export interface RateLimitOptions {
   /**
    * 计数维度
    * - ip（默认）：按「来源 IP + 接口」计数，防止单机刷接口
-   * - account：按「来源 IP + 接口 + 账号」计数，防止同一账号被反复撞库
+   * - account：按「来源 IP + 接口 + 账号」计数（守卫在 JWT 前，仅登录接口的 body.username 可用）
+   * - tenant：按「租户 + 接口」计数，匿名/平台视角回退到 IP；用于租户级 API 配额与恶意租户隔离
    */
-  by?: 'ip' | 'account'
+  by?: 'ip' | 'account' | 'tenant'
   /** 超限提示文案（默认通用文案） */
   message?: string
 }

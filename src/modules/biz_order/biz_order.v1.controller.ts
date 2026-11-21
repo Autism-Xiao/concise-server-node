@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
+import { Sensitive } from '../../common/decorators/sensitive.decorator'
 import { CreateBizOrderDto, ListBizOrderDto, UpdateBizOrderDto } from './dto/biz_order.dto'
 import { BizOrderService } from './biz_order.service'
 
@@ -14,6 +15,7 @@ interface OwnerRequest {
 /** 订单 v1 接口：统一挂 /api/v1，按钮权限 biz_order:* */
 @ApiTags('订单')
 @ApiBearerAuth('jwt')
+@Sensitive('amount')
 @Controller('v1/biz_orders')
 export class BizOrderV1Controller {
   constructor(private readonly bizOrderService: BizOrderService) {}

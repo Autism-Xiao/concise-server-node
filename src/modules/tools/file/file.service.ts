@@ -13,6 +13,8 @@ import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { getExtname, sanitizeFileName } from '../../../utils/file.util'
 import { detectImageSignature } from '../../../utils/image-signature.util'
+import { QuotaService } from '../../../shared/quota/quota.service'
+import { MeteringService } from '../../metering/metering.service'
 import { FileEntity } from './entities/file.entity'
 import type { CreateFolderDto } from './dto/create-folder.dto'
 import type { FileKind, QueryFileDto } from './dto/query-file.dto'
@@ -137,7 +139,9 @@ const KIND_LABELS: Record<Exclude<FileKind, 'all'>, string> = {
 export class FileService {
   constructor(
     @InjectRepository(FileEntity)
-    private readonly fileRepository: Repository<FileEntity>
+    private readonly fileRepository: Repository<FileEntity>,
+    private readonly quota: QuotaService,
+    private readonly metering: MeteringService
   ) {}
 
   /** 当前目录列表：文件夹优先，再按 sort 排；支持名称搜索、分类过滤、只看星标（星标视图跨目录） */
@@ -282,6 +286,8 @@ export class FileService {
       if (delta > 0 && used + delta > fileQuotaBytes()) {
         throw new BadRequestException(`存储空间不足：已用 ${this.readableSize(used)}，配额 ${this.readableSize(fileQuotaBytes())}，请先清理回收站`)
       }
+      // 租户级配额与个人配额叠加：两者都过才允许写入（0=不限制的租户不受影响）
+      await this.quota.assertStorageQuota(TenantContext.filterTenantId() ?? 0, delta)
 
       const storageKey = await this.persistUpload(tempPath, file.buffer, hash, ext)
 
@@ -298,6 +304,8 @@ export class FileService {
         if (previousKey && previousKey !== storageKey) {
           await this.removeStorageIfUnused(previousKey)
         }
+        this.metering.record('file.upload.count')
+        this.metering.record('file.upload.bytes', size)
         return { skipped: false, file: saved, message: `已覆盖「${safeName}」` }
       }
 
@@ -325,6 +333,8 @@ export class FileService {
       )
       // 前置校验与 INSERT 之间没有锁，并发上传可能双双通过；落地后再核一次，超额就撤销本次写入
       await this.assertQuotaAfterWrite(ownerId, saved)
+      this.metering.record('file.upload.count')
+      this.metering.record('file.upload.bytes', size)
       return { skipped: false, file: saved, message: name === safeName ? `已上传「${name}」` : `同名文件已存在，已保存为「${name}」` }
     } finally {
       // 临时文件兜底清理（正常路径已被 rename 掉，unlink 会失败，忽略即可）

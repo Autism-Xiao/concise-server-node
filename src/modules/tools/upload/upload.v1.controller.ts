@@ -30,7 +30,7 @@ export class UploadV1Controller {
   @ApiBody({ type: FileUploadDto })
   @ApiOkResponse({ description: '返回文件相对路径 path，静态访问地址为 {host}{path}' })
   @Perms('system:file:upload')
-  @RateLimit({ limit: 30, window: 60, message: '上传过于频繁，请稍后再试' })
+  @RateLimit({ limit: 60, window: 60, by: 'tenant', message: '本租户上传过于频繁，请稍后再试' })
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {

@@ -217,6 +217,14 @@ jobs:
           SMOKE_BASE: http://127.0.0.1:${{ env.PORT }}/api
         run: node scripts/smoke-file-recent.mjs
 
+      # P1 商业化底座：配额拒绝、计量落库、敏感字段按权限移除且编辑不回写打码值。
+      # 脚本自建自清临时账号/角色/客户，并把 maxUsers 配置恢复为 0。
+      - name: 冒烟 · P1 配额计量脱敏
+        env:
+          SMOKE_BASE: http://127.0.0.1:${{ env.PORT }}/api/v1
+          SMOKE_DB_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: node scripts/smoke-p1.mjs
+
       - name: 失败时输出服务端日志
         if: failure()
         run: tail -200 server.log || true

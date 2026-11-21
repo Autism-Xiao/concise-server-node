@@ -5,14 +5,13 @@ import { BizErrorCode } from '../enums/biz-error-code.enum'
 import { BizException } from '../exceptions/biz.exception'
 import { RATE_LIMIT_KEY, type RateLimitOptions } from '../decorators/rate-limit.decorator'
 import { envBoolean, envNumber } from '../../global/env'
+import { TenantContext } from '../../shared/tenant/tenant.context'
 import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
+import { buildRateLimitKey } from './rate-limit-key'
 
 /** 全局默认阈值：单 IP 单接口 120 次/分钟（正常后台操作远低于此，突发刷新也不会误伤） */
 const DEFAULT_LIMIT = 120
 const DEFAULT_WINDOW = 60
-
-/** 限流计数 key 前缀（与 Redis 在线会话/黑名单区分开，方便运维按前缀清理） */
-const KEY_PREFIX = 'rl:'
 
 interface RequestLike {
   ip?: string
@@ -47,6 +46,9 @@ export class RateLimitGuard implements CanActivate {
     }
 
     const options = this.reflector.getAllAndOverride<RateLimitOptions | undefined>(RATE_LIMIT_KEY, [context.getHandler(), context.getClass()])
+    // 全局维度可用 RATE_LIMIT_BY=tenant 切换；account 维度在 JWT 前拿不到用户，不开放为全局默认
+    const globalBy = process.env.RATE_LIMIT_BY?.trim().toLowerCase() === 'tenant' ? 'tenant' : 'ip'
+    const by = options?.by ?? globalBy
     const limit = options?.limit ?? envNumber('RATE_LIMIT_LIMIT', DEFAULT_LIMIT)
     const windowSeconds = options?.window ?? envNumber('RATE_LIMIT_WINDOW', DEFAULT_WINDOW)
     if (limit <= 0) {
@@ -61,8 +63,9 @@ export class RateLimitGuard implements CanActivate {
     // 未登录的登录接口回退到 body.username
     const bodyAccount = typeof request.body?.username === 'string' ? request.body.username : ''
     const rawAccount = request.user?.username ?? request.user?.id ?? bodyAccount
-    const account = options?.by === 'account' && typeof rawAccount === 'string' && rawAccount ? rawAccount.trim().toLowerCase() : ''
-    const key = `${KEY_PREFIX}${route}:${ip}${account ? `:${account}` : ''}`
+    const account = by === 'account' && typeof rawAccount === 'string' && rawAccount ? rawAccount.trim().toLowerCase() : ''
+    // TenantMiddleware 早于所有 Guard，这里一定有上下文；匿名为 0、平台视角为 null，都回退 IP 维度
+    const key = buildRateLimitKey({ route, ip, account, tenantId: TenantContext.filterTenantId(), by })
 
     const hit = await this.rateLimitService.increment(key, windowSeconds)
     if (hit.count > limit) {

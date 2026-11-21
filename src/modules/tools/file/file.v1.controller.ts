@@ -174,7 +174,7 @@ export class FileV1Controller {
   })
   @OperLog('文件管理')
   @Perms('system:file:upload')
-  @RateLimit({ limit: 60, window: 60, message: '上传过于频繁，请稍后再试' })
+  @RateLimit({ limit: 120, window: 60, by: 'tenant', message: '本租户上传过于频繁，请稍后再试' })
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('file', {

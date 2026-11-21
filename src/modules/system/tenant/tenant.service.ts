@@ -25,6 +25,7 @@ import { TenantEntity } from './entities/tenant.entity'
 import { UserTenantEntity } from './entities/user-tenant.entity'
 import { TenantProvisionService } from './tenant-provision.service'
 import { LogService } from '../log/log.service'
+import { QuotaService } from '../../../shared/quota/quota.service'
 
 /** 租户下的用户（只暴露安全字段，密码/盐不出现在这里） */
 export interface TenantUserItem {
@@ -73,7 +74,8 @@ export class TenantService {
     private readonly authUserCache: AuthUserCacheService,
     private readonly config: SystemConfigService,
     private readonly userService: UserService,
-    private readonly logService: LogService
+    private readonly logService: LogService,
+    private readonly quota: QuotaService
   ) {}
 
   /** 分页列表（租户是平台级数据，不参与租户隔离） */
@@ -507,6 +509,8 @@ export class TenantService {
       const removeRows = current.filter(item => !targetSet.has(item.userId))
       const addIds = targetIds.filter(id => !currentIds.has(id))
       removedUserIds = removeRows.map(item => item.userId)
+      // 配额按「实际新增」计算：覆盖式分配里已存在的成员不重复占额
+      await this.quota.assertUserQuota(tenantId, addIds.length)
 
       if (removeRows.length) {
         const userPlaceholders = removeRows.map(() => '?').join(',')

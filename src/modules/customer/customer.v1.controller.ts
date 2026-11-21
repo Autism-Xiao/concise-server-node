@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { Perms } from '../../common/decorators/perms.decorator'
+import { Sensitive } from '../../common/decorators/sensitive.decorator'
 import { CreateCustomerDto, ListCustomerDto, UpdateCustomerDto } from './dto/customer.dto'
 import { CustomerService } from './customer.service'
 
@@ -14,6 +15,7 @@ interface OwnerRequest {
 /** 客户 v1 接口：统一挂 /api/v1，按钮权限 customer:* */
 @ApiTags('客户')
 @ApiBearerAuth('jwt')
+@Sensitive('phone')
 @Controller('v1/customers')
 export class CustomerV1Controller {
   constructor(private readonly customerService: CustomerService) {}

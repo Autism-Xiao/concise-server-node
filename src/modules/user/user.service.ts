@@ -34,6 +34,7 @@ import type { QueryUserDto } from './dto/query-user.dto'
 import type { UpdateMyProfileDto } from './dto/update-my-profile.dto'
 import type { UpdateUserVipDto } from './dto/update-user-vip.dto'
 import { userKeywordClause, userKeywordParam } from './user-search.util'
+import { QuotaService } from '../../shared/quota/quota.service'
 
 /** 用户状态（对齐 sys_user）：1 正常 / 2 冻结 */
 export const USER_STATUS = { NORMAL: 1, FROZEN: 2 } as const
@@ -227,7 +228,8 @@ export class UserService extends BaseService<UserEntity> {
     private readonly authUserCache: AuthUserCacheService,
     private readonly tenantAccess: TenantAccessService,
     private readonly systemConfig: SystemConfigService,
-    private readonly webhookService: WebhookService
+    private readonly webhookService: WebhookService,
+    private readonly quota: QuotaService
   ) {
     super(repository, '用户')
   }
@@ -238,6 +240,8 @@ export class UserService extends BaseService<UserEntity> {
     const data: Partial<UserEntity> = { ...rest }
     this.stripUnwritableFields(data)
     data.levelId = await this.resolveLevelId(data.levelId)
+    // 租户 Seats 配额：放在事务外，超限直接业务错；0/负数配置由 QuotaService 视为不限制
+    await this.quota.assertUserQuota(this.resolveJoinTenantId())
     data.passwordExpireAt = normalizePasswordExpireAt(passwordExpireAt)
     // 唯一性预检：数据库唯一索引不区分软删除，必须提前给出可读提示（否则并发/软删占用会以 500 暴露）
     await this.assertUniqueFields(data)

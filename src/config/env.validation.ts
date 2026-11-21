@@ -119,6 +119,11 @@ class EnvironmentVariables {
   @IsNumberString({}, { message: 'RATE_LIMIT_WINDOW 必须是数字' })
   RATE_LIMIT_WINDOW?: string
 
+  /** 全局限流维度：ip（默认）/ tenant；account 在 JWT 前无效，故意不开放 */
+  @IsOptional()
+  @IsIn(['ip', 'tenant'], { message: 'RATE_LIMIT_BY 只能是 ip 或 tenant' })
+  RATE_LIMIT_BY?: string
+
   /** 登录失败锁定阈值：同账号连续密码错误多少次后锁定（默认 5） */
   @IsOptional()
   @IsNumberString({}, { message: 'LOGIN_MAX_FAILS 必须是数字' })
