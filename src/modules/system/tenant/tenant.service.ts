@@ -178,6 +178,100 @@ export class TenantService {
   }
 
   /**
+   * 平台租户仪表盘聚合（一次请求拿全运营概览，均只读）
+   *
+   * 数据来源与口径：
+   * - 概览/套餐分布/注册趋势：sys_tenant（del_flag=0）
+   * - API 调用量 Top：sys_tenant_usage（metric=api.calls，当月账期，metering 攒批有 ≤30s 延迟）
+   * - 配额水位：QuotaService 同款 SQL（活跃成员数、存储字节数），限额读 sys_config 租户覆盖行，
+   *   0 = 不限制；只返回有限额或有用量的租户，避免全量租户撑爆响应
+   */
+  async dashboard(): Promise<{
+    overview: { total: number; active: number; disabled: number; expiredActive: number; expiringIn30: number }
+    planDistribution: Array<{ plan: string; count: number }>
+    registerTrend: Array<{ month: string; count: number }>
+    apiCallsTop: Array<{ tenantId: number; name: string; calls: number }>
+    quotaWater: Array<{ tenantId: number; name: string; users: number; maxUsers: number; storageMb: number; maxStorageMb: number }>
+  }> {
+    // 概览：总数/正常/停用/已到期未停用/30 天内到期（前三个一组 SQL，后两个复用 expiring 逻辑）
+    const overviewRows = await this.dataSource.query<
+      Array<{ total: number | string; active: number | string; disabled: number | string; expiredActive: number | string; expiringIn30: number | string }>
+    >(
+      `SELECT COUNT(*) AS total,
+              SUM(t.status = 0) AS active,
+              SUM(t.status = 1) AS disabled,
+              SUM(t.status = 0 AND t.expire_at IS NOT NULL AND t.expire_at < CURDATE()) AS expiredActive,
+              SUM(t.status = 0 AND t.expire_at IS NOT NULL AND t.expire_at >= CURDATE() AND t.expire_at <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)) AS expiringIn30
+         FROM sys_tenant t WHERE t.del_flag = 0`
+    )
+    const o = overviewRows[0] ?? {}
+    const overview = {
+      total: Number(o.total ?? 0),
+      active: Number(o.active ?? 0),
+      disabled: Number(o.disabled ?? 0),
+      expiredActive: Number(o.expiredActive ?? 0),
+      expiringIn30: Number(o.expiringIn30 ?? 0)
+    }
+
+    // 套餐分布
+    const planRows = await this.dataSource.query<Array<{ plan: string; count: number | string }>>(
+      `SELECT t.plan, COUNT(*) AS count FROM sys_tenant t WHERE t.del_flag = 0 GROUP BY t.plan ORDER BY count DESC`
+    )
+    const planDistribution = planRows.map(row => ({ plan: row.plan, count: Number(row.count) }))
+
+    // 注册趋势：近 6 个自然月（含当月）
+    const trendRows = await this.dataSource.query<Array<{ month: string; count: number | string }>>(
+      `SELECT DATE_FORMAT(t.create_time, '%Y-%m') AS month, COUNT(*) AS count
+         FROM sys_tenant t
+        WHERE t.del_flag = 0 AND t.create_time >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 5 MONTH)
+        GROUP BY month ORDER BY month ASC`
+    )
+    const registerTrend = trendRows.map(row => ({ month: row.month, count: Number(row.count) }))
+
+    // API 调用量 Top 10（当月账期）
+    const period = `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}`
+    const apiRows = await this.dataSource.query<Array<{ tenantId: number; name: string; calls: number | string }>>(
+      `SELECT u.tenant_id AS tenantId, t.name, u.value AS calls
+         FROM sys_tenant_usage u
+         LEFT JOIN sys_tenant t ON t.id = u.tenant_id
+        WHERE u.metric = 'api.calls' AND u.period = ? AND u.value > 0
+        ORDER BY u.value DESC LIMIT 10`,
+      [period]
+    )
+    const apiCallsTop = apiRows.map(row => ({ tenantId: Number(row.tenantId), name: row.name ?? `租户 ${row.tenantId}`, calls: Number(row.calls) }))
+
+    // 配额水位：活跃成员数 + 存储量（与 QuotaService 口径一致），限额 0 = 不限制
+    const usageRows = await this.dataSource.query<Array<{ tenantId: number; name: string; users: number | string; storageMb: number | string }>>(
+      `SELECT t.id AS tenantId, t.name,
+              (SELECT COUNT(*) FROM sys_user_tenant ut INNER JOIN sys_user su ON su.id = ut.user_id AND su.del_flag = 0 WHERE ut.tenant_id = t.id AND ut.status = 0) AS users,
+              (SELECT COALESCE(SUM(f.size), 0) / 1024 / 1024 FROM sys_file f WHERE f.tenant_id = t.id AND f.is_deleted = 0 AND f.is_folder = 0) AS storageMb
+         FROM sys_tenant t
+        WHERE t.del_flag = 0 AND t.status = 0
+          AND ( EXISTS (SELECT 1 FROM sys_user_tenant ut WHERE ut.tenant_id = t.id AND ut.status = 0)
+             OR EXISTS (SELECT 1 FROM sys_file f WHERE f.tenant_id = t.id AND f.is_deleted = 0 AND f.is_folder = 0) )
+        ORDER BY storageMb DESC LIMIT 50`
+    )
+    const quotaWater = []
+    for (const row of usageRows) {
+      const tenantId = Number(row.tenantId)
+      const [maxUsers, maxStorageMb] = await Promise.all([
+        TenantContext.withTenant(tenantId, () => this.config.getNumber('tenant.quota.maxUsers', 0)),
+        TenantContext.withTenant(tenantId, () => this.config.getNumber('tenant.quota.maxStorageMb', 0))
+      ])
+      quotaWater.push({
+        tenantId,
+        name: row.name,
+        users: Number(row.users),
+        maxUsers,
+        storageMb: Math.round(Number(row.storageMb) * 100) / 100,
+        maxStorageMb
+      })
+    }
+
+    return { overview, planDistribution, registerTrend, apiCallsTop, quotaWater }
+  }
+
+  /**
    * 新建租户
    *
    * 租户落库与「默认角色初始化」放在同一个事务：只建出 sys_tenant 而没建角色的空壳租户，

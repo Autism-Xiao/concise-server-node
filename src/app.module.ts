@@ -11,6 +11,7 @@ import { OperLogInterceptor } from './common/interceptors/oper-log.interceptor'
 import { RolesGuard } from './common/guards/roles.guard'
 import { PermsGuard } from './common/guards/perms.guard'
 import { FeatureGuard } from './common/guards/feature.guard'
+import { QuotaGuard } from './common/guards/quota.guard'
 import { RateLimitGuard } from './common/guards/rate-limit.guard'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
@@ -38,6 +39,7 @@ import { TaskModule } from './modules/system/task/task.module'
 import { WatermarkModule } from './modules/system/watermark/watermark.module'
 import { UserSettingModule } from './modules/system/user-setting/user-setting.module'
 import { SystemConfigModule } from './modules/system/config/config.module'
+import { RedisModule } from './shared/redis/redis.module'
 import { LevelModule } from './modules/system/level/level.module'
 import { PostModule } from './modules/system/post/post.module'
 import { JobModule } from './modules/ops/job/job.module'
@@ -84,6 +86,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     QuotaModule,
     // 租户级特性开关（sys_config feature.* 键，@FeatureFlag + FeatureGuard），全局模块
     FeatureModule,
+    // Redis 共享连接：QuotaGuard 的增量计数器依赖（RateLimit/缓存模块各自按需 import）
+    RedisModule,
     // 租户用量计量（sys_tenant_usage：API 调用 / 上传字节），全局模块
     MeteringModule,
     // 多租户上下文（AsyncLocalStorage + 归属解析），全局模块
@@ -155,6 +159,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     { provide: APP_GUARD, useClass: PermsGuard },
     // 特性开关：@FeatureFlag 标注的端点在开关关闭的租户视角整体 403（无标注端点直通）
     { provide: APP_GUARD, useClass: FeatureGuard },
+    // 租户 API 配额：tenant.quota.apiCalls > 0 时按月账期拦截超限请求（429，白名单见守卫注释）
+    { provide: APP_GUARD, useClass: QuotaGuard },
     { provide: APP_GUARD, useClass: ApiScopeGuard }
   ]
 })

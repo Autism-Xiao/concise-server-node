@@ -65,6 +65,18 @@ export class TenantV1Controller {
     return this.tenantService.listExpiring(query.days)
   }
 
+  @ApiOperation({
+    summary: '租户仪表盘',
+    description:
+      '平台运营聚合：概览（总数/正常/停用/已到期未停用/30 天内到期）、套餐分布、注册趋势（近 6 月）、' +
+      'API 调用量 Top10（当月 metering 数据，攒批有 ≤30s 延迟）、配额水位（活跃成员/存储 vs 租户限额，0=不限）；需 system:tenant:list'
+  })
+  @Get('dashboard')
+  @Perms('system:tenant:list')
+  dashboard() {
+    return this.tenantService.dashboard()
+  }
+
   @ApiOperation({ summary: '切换当前租户', description: '校验归属后记住选择；后续请求用 X-Tenant-Id 请求头生效' })
   @Post('switch')
   switch(@Req() req: AuthedRequest, @Body() dto: SwitchTenantDto) {

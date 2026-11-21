@@ -8,7 +8,8 @@ import { TenantContext } from '../tenant/tenant.context'
 /** 配额配置键（与 sys_config 平台行、SystemConfigService.DEFAULTS 保持一致） */
 export const QUOTA_KEYS = {
   maxUsers: 'tenant.quota.maxUsers',
-  maxStorageMb: 'tenant.quota.maxStorageMb'
+  maxStorageMb: 'tenant.quota.maxStorageMb',
+  apiCalls: 'tenant.quota.apiCalls'
 } as const
 
 /**
@@ -70,5 +71,24 @@ export class QuotaService {
     if (used + extraBytes > limitBytes) {
       throw new BadRequestException(`租户存储空间不足：当前 ${(used / 1024 / 1024).toFixed(2)} MB，上限 ${limitMb} MB`)
     }
+  }
+
+  /** 租户月度 API 调用量上限（0 = 不限制）；QuotaGuard 每请求调用，走 sys_config 租户覆盖行 */
+  apiCallsLimit(tenantId: number): Promise<number> {
+    return this.limitFor(tenantId, QUOTA_KEYS.apiCalls)
+  }
+
+  /**
+   * 租户当月已落库的 API 调用量（sys_tenant_usage，metering 攒批有 ≤30s 延迟）。
+   * 不在这里主动 flush：QuotaGuard 每请求都走这条路径，flush 的批量 upsert 开销
+   * 会把计量延迟问题转嫁成请求延迟；拦截精度由守卫侧的增量计数器补齐。
+   */
+  async apiCallsUsed(tenantId: number, period: string): Promise<number> {
+    if (!(tenantId > 0)) return 0
+    const rows = await this.dataSource.query<Array<{ c: number | string }>>(
+      'SELECT COALESCE(value, 0) AS c FROM sys_tenant_usage WHERE tenant_id = ? AND metric = ? AND period = ? LIMIT 1',
+      [tenantId, 'api.calls', period]
+    )
+    return Number(rows[0]?.c ?? 0)
   }
 }
