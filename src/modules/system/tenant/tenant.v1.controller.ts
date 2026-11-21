@@ -15,6 +15,7 @@ import { QueryTenantDto } from './dto/query-tenant.dto'
 import { SetTenantPackageDto } from './dto/set-tenant-package.dto'
 import { UpdateTenantDto } from './dto/update-tenant.dto'
 import { TenantEntity } from './entities/tenant.entity'
+import { TenantExportService } from './tenant-export.service'
 import { TenantPackageService } from './tenant-package.service'
 import { TenantProvisionService } from './tenant-provision.service'
 import { TenantService } from './tenant.service'
@@ -36,7 +37,8 @@ export class TenantV1Controller {
   constructor(
     private readonly tenantService: TenantService,
     private readonly provisionService: TenantProvisionService,
-    private readonly packageService: TenantPackageService
+    private readonly packageService: TenantPackageService,
+    private readonly exportService: TenantExportService
   ) {}
 
   @ApiOperation({ summary: '租户列表（分页）', description: 'keyword 模糊匹配名称/编码/联系人；需 system:tenant:list' })
@@ -75,6 +77,17 @@ export class TenantV1Controller {
   @Perms('system:tenant:list')
   dashboard() {
     return this.tenantService.dashboard()
+  }
+
+  @ApiOperation({
+    summary: '导出租户数据（JSON）',
+    description:
+      '平台运营：聚合导出租户档案/角色/成员(含角色绑定，不含凭证列)/功能套餐/配置覆盖行/月度用量/文件元数据（不含内容，上限 5000 行）；用于退租交接与审计归档；需 system:tenant:list'
+  })
+  @Get(':id/export')
+  @Perms('system:tenant:list')
+  async export(@Param('id', ParseIntPipe) id: number) {
+    return this.exportService.export(id)
   }
 
   @ApiOperation({ summary: '切换当前租户', description: '校验归属后记住选择；后续请求用 X-Tenant-Id 请求头生效' })

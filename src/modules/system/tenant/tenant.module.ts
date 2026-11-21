@@ -9,6 +9,7 @@ import { UserModule } from '../../user/user.module'
 import { SystemConfigModule } from '../config/config.module'
 import { LogModule } from '../log/log.module'
 import { TenantService } from './tenant.service'
+import { TenantExportService } from './tenant-export.service'
 import { TenantProvisionService } from './tenant-provision.service'
 import { TenantPackageService } from './tenant-package.service'
 import { TenantV1Controller } from './tenant.v1.controller'
@@ -34,7 +35,7 @@ import { TenantV1Controller } from './tenant.v1.controller'
     LogModule
   ],
   controllers: [TenantV1Controller],
-  providers: [TenantService, TenantProvisionService, TenantPackageService],
-  exports: [TenantService, TenantProvisionService, TenantPackageService]
+  providers: [TenantService, TenantExportService, TenantProvisionService, TenantPackageService],
+  exports: [TenantService, TenantExportService, TenantProvisionService, TenantPackageService]
 })
 export class TenantModule {}
