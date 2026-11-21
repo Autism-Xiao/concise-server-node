@@ -12,6 +12,7 @@ import { UserSettingModule } from '../system/user-setting/user-setting.module'
 import { SystemConfigModule } from '../system/config/config.module'
 import { OpenApiModule } from '../openapi/open.module'
 import { UserEntity } from './entities/user.entity'
+import { SuperviseDeptEntity } from './entities/supervise-dept.entity'
 import { UserV1Controller } from './user.v1.controller'
 import { UserService } from './user.service'
 
@@ -21,7 +22,7 @@ import { UserService } from './user.service'
   // OnlineModule 提供 kickUser（冻结/重置密码联动踢下线）；
   // UserSettingModule 提供 ensure()：建号时同步落一行界面设置（本身不反向依赖 UserModule，无循环）
   imports: [
-    TypeOrmModule.forFeature([UserEntity, DeptEntity, PostEntity, LevelEntity, UserWatermarkEntity, WatermarkSettingEntity]),
+    TypeOrmModule.forFeature([UserEntity, DeptEntity, SuperviseDeptEntity, PostEntity, LevelEntity, UserWatermarkEntity, WatermarkSettingEntity]),
     RoleModule,
     OnlineModule,
     UserSettingModule,

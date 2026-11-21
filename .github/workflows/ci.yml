@@ -225,6 +225,13 @@ jobs:
           SMOKE_DB_PASSWORD: ${{ env.DB_PASSWORD }}
         run: node scripts/smoke-p1.mjs
 
+      # ReBAC 轻量版：data_scope 部门档 + sys_user_supervise_dept 的可见范围。
+      # 脚本自建自清临时租户/部门/账号/客户，验证 own ∪ 监管部门、子孙展开、仅本人不放大。
+      - name: 冒烟 · 用户管辖部门 ReBAC
+        env:
+          SMOKE_BASE: http://127.0.0.1:${{ env.PORT }}/api
+        run: node scripts/smoke-supervise-dept.mjs
+
       - name: 失败时输出服务端日志
         if: failure()
         run: tail -200 server.log || true

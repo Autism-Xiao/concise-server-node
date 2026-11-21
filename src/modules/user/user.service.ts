@@ -29,6 +29,7 @@ import { WatermarkSettingEntity } from '../system/watermark/entities/watermark-s
 import { FALLBACK_WATERMARK_SETTING, resolveWatermarkState } from '../system/watermark/watermark.util'
 import { UserSettingService } from '../system/user-setting/user-setting.service'
 import { UserEntity } from './entities/user.entity'
+import { SuperviseDeptEntity } from './entities/supervise-dept.entity'
 import { RoleEntity } from '../role/entities/role.entity'
 import type { QueryUserDto } from './dto/query-user.dto'
 import type { UpdateMyProfileDto } from './dto/update-my-profile.dto'
@@ -213,6 +214,8 @@ export class UserService extends BaseService<UserEntity> {
     private readonly roleRepository: Repository<RoleEntity>,
     @InjectRepository(DeptEntity)
     private readonly deptRepository: Repository<DeptEntity>,
+    @InjectRepository(SuperviseDeptEntity)
+    private readonly superviseRepository: Repository<SuperviseDeptEntity>,
     @InjectRepository(UserWatermarkEntity)
     private readonly userWatermarkRepository: Repository<UserWatermarkEntity>,
     @InjectRepository(WatermarkSettingEntity)
@@ -498,6 +501,103 @@ export class UserService extends BaseService<UserEntity> {
       orgCode: ordered[0]?.orgCode ?? null,
       updateTime: new Date()
     })
+  }
+
+  /**
+   * 配置用户管辖部门（ReBAC 轻量版，全量覆盖）
+   *
+   * 存的是**已展开的有效部门**：入参部门 + 其所有子孙部门。查询期直接用 IN，
+   * 不做递归 SQL、也不依赖 req.user 带部门树，避免热路径开销。
+   * 部门树调整后需重新配置一次（同级其它账号不受影响）。
+   *
+   * 语义边界：
+   * - 只影响 data_scope=部门档(2/3) 的业务数据可见范围；仅本人(4) 仍只看自己；
+   * - 与「所属部门」（sys_user_depart）是两套关系，互不改写；
+   * - 租户级资产：不能授权本租户用户监管别的租户的部门（平台共享部门 tenant_id=0 允许）。
+   */
+  async assignSuperviseDepts(id: string, deptIds: string[], manager?: EntityManager): Promise<void> {
+    const em = manager ?? this.repository.manager
+    await this.findOne(id)
+    const clean = [...new Set(deptIds.filter(Boolean))]
+    const depts = clean.length ? await this.deptRepository.find({ where: { id: In(clean), delFlag: '0' } }) : []
+    if (depts.length !== clean.length) {
+      const found = new Set(depts.map(dept => dept.id))
+      throw new BizException(BizErrorCode.BUSINESS_ERROR, `部门不存在或已删除：${clean.filter(depId => !found.has(depId)).join(',')}`)
+    }
+
+    const currentTenant = TenantContext.filterTenantId()
+    if (currentTenant !== null) {
+      const illegal = depts.filter(dept => {
+        const owner = Number(dept.tenantId ?? 0)
+        return owner !== 0 && owner !== currentTenant
+      })
+      if (illegal.length) {
+        throw new BizException(
+          BizErrorCode.BUSINESS_ERROR,
+          `部门「${illegal.map(dept => dept.departName).join('、')}」不属于当前租户，不能授权监管`,
+          HttpStatus.BAD_REQUEST
+        )
+      }
+    }
+
+    // 展开子孙：部门表量级小，一次带租户拉全量后内存 BFS（与 applyDataScope 的部门档同口径）
+    const allQb = this.deptRepository.createQueryBuilder('d').where('d.del_flag = :delFlag', { delFlag: '0' }).select(['d.id', 'd.parentId'])
+    applyTenantScope(allQb, 'd')
+    const all = await allQb.getMany()
+    const childrenOf = new Map<string, string[]>()
+    for (const dept of all) {
+      const parent = dept.parentId ?? ''
+      if (!parent) continue
+      const list = childrenOf.get(parent) ?? []
+      list.push(dept.id)
+      childrenOf.set(parent, list)
+    }
+    const effective = new Set(clean)
+    const walk = (deptId: string) => {
+      for (const child of childrenOf.get(deptId) ?? []) {
+        if (!effective.has(child)) {
+          effective.add(child)
+          walk(child)
+        }
+      }
+    }
+    for (const rootId of clean) walk(rootId)
+
+    const tenantId = currentTenant === null ? 0 : Number(currentTenant)
+    const writeScope = tenantWriteSql(tenantId, 'tenant_id')
+    const existing = await em.query<Array<{ dept_id: string }>>(`SELECT dept_id FROM sys_user_supervise_dept WHERE user_id = ? ${writeScope.clause}`, [
+      id,
+      ...writeScope.params
+    ])
+    const existingIds = new Set(existing.map(row => row.dept_id))
+    const toRemove = [...existingIds].filter(deptId => !effective.has(deptId))
+    const toAdd = [...effective].filter(deptId => !existingIds.has(deptId))
+    if (toRemove.length) {
+      const placeholders = toRemove.map(() => '?').join(',')
+      await em.query(`DELETE FROM sys_user_supervise_dept WHERE user_id = ? ${writeScope.clause} AND dept_id IN (${placeholders})`, [
+        id,
+        ...writeScope.params,
+        ...toRemove
+      ])
+    }
+    for (const deptId of toAdd) {
+      await em.query('INSERT IGNORE INTO sys_user_supervise_dept (id, user_id, dept_id, tenant_id) VALUES (?, ?, ?, ?)', [randomId32(), id, deptId, tenantId])
+    }
+    if (toAdd.length || toRemove.length) {
+      this.authUserCache.invalidate(id)
+    }
+  }
+
+  /** 读取用户当前租户下被授权监管的部门 id（findOneWithRoles 挂载用） */
+  private async loadSuperviseDeptIds(userId: string): Promise<string[]> {
+    const currentTenant = TenantContext.filterTenantId()
+    const scope = currentTenant === null ? null : Number(currentTenant)
+    const qb = this.superviseRepository.createQueryBuilder('s').select('s.deptId', 'deptId').where('s.userId = :userId', { userId })
+    if (scope !== null) {
+      qb.andWhere('(s.tenantId = 0 OR s.tenantId = :tenantId)', { tenantId: scope })
+    }
+    const rows = await qb.getRawMany<{ deptId: string }>()
+    return rows.map(row => row.deptId).filter(Boolean)
   }
 
   /** 绑定岗位；岗位不存在时整体拒绝 */
@@ -899,11 +999,14 @@ export class UserService extends BaseService<UserEntity> {
     return qb.getMany()
   }
 
-  /** 按 id 查找并带出角色（过滤已软删） */
+  /** 按 id 查找并带出角色（过滤已软删）；同时挂载「管辖部门」集合供业务数据级权限使用 */
   async findOneWithRoles(id: string): Promise<UserEntity | null> {
     const user = await this.repository.findOne({ where: { id, delFlag: 0 }, relations: { roles: true, depts: true, posts: true } })
     if (user) {
       this.applyDepts(user)
+      // 热路径多一次轻量索引查询（仅 id 列 + 30s 用户缓存摊薄）。
+      // 不挂到 UserEntity 列上：它是权限上下文，不是用户资料，避免随用户接口外泄。
+      ;(user as UserEntity & { superviseDeptIds?: string[] }).superviseDeptIds = await this.loadSuperviseDeptIds(id)
     }
     return user
   }

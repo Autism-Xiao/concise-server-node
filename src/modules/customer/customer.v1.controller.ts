@@ -9,7 +9,7 @@ import { CustomerService } from './customer.service'
 
 /** owner 级数据范围所需的最小 actor 结构（JwtStrategy 注入的 req.user 满足它） */
 interface OwnerRequest {
-  user?: { id: string; isPlatformAdmin?: number; roles?: Array<{ dataScope?: number | null }> | null }
+  user?: { id: string; isPlatformAdmin?: number; roles?: Array<{ dataScope?: number | null }> | null; superviseDeptIds?: string[] | null }
 }
 
 /** 客户 v1 接口：统一挂 /api/v1，按钮权限 customer:* */

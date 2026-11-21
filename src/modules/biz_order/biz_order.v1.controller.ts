@@ -9,7 +9,7 @@ import { BizOrderService } from './biz_order.service'
 
 /** owner 级数据范围所需的最小 actor 结构 */
 interface OwnerRequest {
-  user?: { id: string; isPlatformAdmin?: number; roles?: Array<{ dataScope?: number | null }> | null }
+  user?: { id: string; isPlatformAdmin?: number; roles?: Array<{ dataScope?: number | null }> | null; superviseDeptIds?: string[] | null }
 }
 
 /** 订单 v1 接口：统一挂 /api/v1，按钮权限 biz_order:* */

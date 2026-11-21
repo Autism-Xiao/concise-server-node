@@ -287,6 +287,18 @@ export class UserV1Controller {
   }
 
   @ApiOperation({
+    summary: '配置用户管辖部门（v1，全量覆盖）',
+    description: '写入 sys_user_supervise_dept（自动展开子孙部门）；仅对 data_scope=本部门/本部门及以下 的业务数据可见范围生效；需 system:user:update'
+  })
+  @OperLog('用户管理')
+  @Perms('system:user:update')
+  @Put(':id/supervise-depts')
+  async assignSuperviseDepts(@Param('id') id: string, @Body() dto: { deptIds: string[] }) {
+    await this.userService.assignSuperviseDepts(id, dto.deptIds ?? [])
+    return this.userService.findOneWithRoles(id)
+  }
+
+  @ApiOperation({
     summary: '重置密码（v1）',
     description:
       'password 留空则服务端生成 12 位易读随机口令；明文仅在本次响应返回一次，不落库不进日志；重置后该用户全部在线会话立即失效；需 system:user:reset-password'
