@@ -37,6 +37,9 @@ const DEFAULTS: Record<string, string> = {
   // 邮件通道：SMTP 连接信息走环境变量（MAIL_SMTP_*），这里只有开关与展示项
   'mail.enabled': 'false',
   'mail.from': '',
+  // 短信通道：凭证走环境变量（SMS_*），这里只有开关与通道选择
+  'sms.enabled': 'false',
+  'sms.provider': 'aliyun',
   'mail.resetCode.ttlMinutes': '5',
   // 租户级参数（allow_tenant=1，租户覆盖为空串等同跟随平台）
   'tenant.ui.themeColor': '',
@@ -240,11 +243,11 @@ export class SystemConfigService {
     const oldValue = target.tenantRow?.configValue ?? target.platformRow.configValue
     let recordId: string
     if (target.tenantId <= 0) {
-      recordId = target.platformRow.id
-      await manager.update(SysConfigEntity, recordId, { configValue: value })
+      recordId = String(target.platformRow.id)
+      await manager.update(SysConfigEntity, target.platformRow.id, { configValue: value })
     } else if (target.tenantRow) {
-      recordId = target.tenantRow.id
-      await manager.update(SysConfigEntity, recordId, { configValue: value })
+      recordId = String(target.tenantRow.id)
+      await manager.update(SysConfigEntity, target.tenantRow.id, { configValue: value })
     } else {
       const src = target.platformRow
       try {

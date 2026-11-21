@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swa
 
 import { Public } from '../../../common/decorators/public.decorator'
 import { RateLimit } from '../../../common/decorators/rate-limit.decorator'
+import { requestEncryptPublicKey } from '../../../common/middleware/request-decrypt.middleware'
 import { captchaConfig, type CaptchaConfig } from '../../../config/captcha.config'
 import { ChangePasswordDto } from '../dto/change-password.dto'
 import { LoginDto, LoginResultDto, RefreshTokenDto, VerifyCaptchaDto } from '../dto/login.dto'
@@ -51,6 +52,16 @@ export class AuthV1Controller {
     if (!this.captcha.enabled) return { enabled: false }
     const data = await this.captchaService.create()
     return { enabled: true, ...data }
+  }
+
+  @ApiOperation({
+    summary: '请求加密公钥（可选加固）',
+    description: 'ENCRYPT_ENABLED=true 时返回 RSA-OAEP 公钥 PEM；前端用它做信封加密（AES 加密 body + RSA 加密 AES 密钥），登录等敏感请求带 X-Encrypted 头'
+  })
+  @Public()
+  @Get('encrypt-key')
+  encryptKey() {
+    return { enabled: Boolean(requestEncryptPublicKey()), publicKey: requestEncryptPublicKey() }
   }
 
   @ApiOperation({

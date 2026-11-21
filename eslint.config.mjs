@@ -28,10 +28,10 @@ export default tseslint.config(
     },
   },
   {
-    // 运维/冒烟脚本跑在 Node 里，没有 TS 的全局声明，
+    // 运维/冒烟脚本与单测跑在 Node 里，没有 TS 的全局声明，
     // no-undef 会对 console/process/Buffer 一律误报；.cjs 脚本也只能用 require。
     // 这两条属于环境性误报，关掉后其余规则（未使用变量、无意义赋值等）照常生效。
-    files: ["scripts/**/*.{js,cjs,mjs}"],
+    files: ["scripts/**/*.{js,cjs,mjs}", "tests/**/*.cjs"],
     languageOptions: { ecmaVersion: 2022 },
     rules: { "no-undef": "off", "@typescript-eslint/no-require-imports": "off" },
   },

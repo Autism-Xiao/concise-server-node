@@ -53,6 +53,7 @@ import { TenantModule } from './modules/system/tenant/tenant.module'
 import { CustomerModule } from './modules/customer/customer.module'
 import { BizOrderModule } from './modules/biz_order/biz_order.module'
 import { TenantContextModule } from './shared/tenant/tenant-context.module'
+import { RequestDecryptMiddleware } from './common/middleware/request-decrypt.middleware'
 import { TenantMiddleware } from './shared/tenant/tenant.middleware'
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 import { ApiScopeGuard } from './common/guards/api-scope.guard'
@@ -176,5 +177,7 @@ export class AppModule implements NestModule {
    */
   configure(consumer: MiddlewareConsumer): void {
     consumer.apply(TenantMiddleware).forRoutes('*')
+    // 请求体解密（可选加固，ENCRYPT_ENABLED=true 才生效；见 middleware 头注释的协议说明）
+    consumer.apply(RequestDecryptMiddleware).forRoutes('*')
   }
 }

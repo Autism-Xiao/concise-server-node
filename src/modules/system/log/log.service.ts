@@ -134,7 +134,7 @@ export class LogService {
           status: entity.status,
           params: entity.params ?? null,
           errorMsg: entity.errorMsg ?? null,
-          createTimeMs: new Date(seqRow.create_time as Date | string).getTime()
+          createTimeMs: new Date(seqRow?.create_time as Date | string).getTime()
         }
         const entryHash = computeEntryHash(prevHash, row)
         await this.logRepository.query('UPDATE sys_log SET prev_hash = ?, entry_hash = ? WHERE id = ?', [prevHash, entryHash, entity.id])
