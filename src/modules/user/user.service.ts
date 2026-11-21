@@ -11,7 +11,7 @@ import { PermissionCacheService } from '../../shared/permission-cache/permission
 import { AuthUserCacheService } from '../../shared/auth-cache/auth-user-cache.service'
 import { RateLimitService } from '../../shared/rate-limit/rate-limit.service'
 import { loginFailKeyOf } from '../../shared/rate-limit/login-fail.util'
-import { applyTenantScope } from '../../shared/tenant/tenant-scope.util'
+import { applyTenantScope, tenantWriteSql } from '../../shared/tenant/tenant-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { TenantAccessService } from '../../shared/tenant/tenant-access.service'
 import { OnlineService } from '../ops/online/online.service'
@@ -375,8 +375,17 @@ export class UserService extends BaseService<UserEntity> {
     }
 
     // 用显式 SQL 而不是 relation API：关联表要写 tenant_id（记的是角色归属租户），
-    // relation API 只能写两列，让它留默认值 0 的话这张表就永远查不出真实归属
-    const currentRows = await em.query<Array<{ role_id: string }>>('SELECT role_id FROM sys_user_role WHERE user_id = ?', [id])
+    // relation API 只能写两列，让它留默认值 0 的话这张表就永远查不出真实归属。
+    //
+    // 「全量覆盖」只能覆盖**当前租户视角内**的绑定：currentRows 若取该用户在所有租户的
+    // 角色，A 租户管理员把自己的角色列表提交上来，就会把此人在 B 租户的角色一并删掉
+    // （B 租户的管理员/编辑器权限凭空消失）。平台视角（null）才保留全租户语义，用于运维。
+    const roleScope = TenantContext.filterTenantId()
+    const scopeSql = tenantWriteSql(roleScope)
+    const currentRows = await em.query<Array<{ role_id: string }>>(`SELECT role_id FROM sys_user_role WHERE user_id = ?${scopeSql.clause}`, [
+      id,
+      ...scopeSql.params
+    ])
     const currentIds = new Set(currentRows.map(row => row.role_id))
     const toRemove = [...currentIds].filter(roleId => !ids.includes(roleId))
     const toAdd = roles.filter(role => !currentIds.has(role.id))
@@ -399,7 +408,9 @@ export class UserService extends BaseService<UserEntity> {
         }
       }
       const placeholders = toRemove.map(() => '?').join(',')
-      await em.query(`DELETE FROM sys_user_role WHERE user_id = ? AND role_id IN (${placeholders})`, [id, ...toRemove])
+      // 删除条件与上面的读取范围一致：租户视角只解绑本租户的角色行，
+      // 共享角色（tenant_id=0）和其它租户的绑定都不动。
+      await em.query(`DELETE FROM sys_user_role WHERE user_id = ?${scopeSql.clause} AND role_id IN (${placeholders})`, [id, ...scopeSql.params, ...toRemove])
     }
     for (const role of toAdd) {
       await em.query('INSERT IGNORE INTO sys_user_role (id, user_id, role_id, tenant_id) VALUES (?, ?, ?, ?)', [

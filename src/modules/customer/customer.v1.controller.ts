@@ -25,11 +25,11 @@ export class CustomerV1Controller {
     return this.customerService.listByQuery(query, req.user)
   }
 
-  @ApiOperation({ summary: '客户详情', description: '需 customer:list' })
+  @ApiOperation({ summary: '客户详情', description: '需 customer:list；角色 data_scope=仅本人时只能看自己创建的客户' })
   @Perms('customer:list')
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.customerService.findOne(id)
+  findOne(@Param('id', ParseIntPipe) id: number, @Request() req: OwnerRequest) {
+    return this.customerService.findOneScoped(id, req.user)
   }
 
   @ApiOperation({ summary: '新增客户', description: '需 customer:add' })
@@ -44,15 +44,15 @@ export class CustomerV1Controller {
   @Perms('customer:update')
   @OperLog('客户')
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCustomerDto) {
-    return this.customerService.update(id, dto)
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCustomerDto, @Request() req: OwnerRequest) {
+    return this.customerService.update(id, dto, req.user)
   }
 
   @ApiOperation({ summary: '删除客户', description: '需 customer:delete' })
   @Perms('customer:delete')
   @OperLog('客户')
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.customerService.delete(id)
+  remove(@Param('id', ParseIntPipe) id: number, @Request() req: OwnerRequest) {
+    return this.customerService.delete(id, req.user)
   }
 }

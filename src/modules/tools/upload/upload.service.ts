@@ -6,6 +6,7 @@ import { StorageEntity } from '../storage/storage.entity'
 import { StorageService } from '../storage/storage.service'
 import { fileRename, getCurrentDate, getFilePath, getFileType, getSize, saveLocalFile } from '../../../utils/file.util'
 import { detectImageSignature } from '../../../utils/image-signature.util'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 
 /**
  * 上传服务：文件重命名落盘 public/upload/{日期}/{类型}/，并写入 tool_storage 记录
@@ -51,6 +52,9 @@ export class UploadService {
     record.type = type
     record.size = size
     record.userId = userId
+    // 归属留痕：静态直出本身无鉴权，但记录必须能回答「这是哪个租户上传的」，
+    // 后续要做鉴权下载/按租户清理时不用再猜。平台视角落 0（共享）。
+    record.tenantId = TenantContext.filterTenantId() ?? 0
     await this.storageService.save(record)
 
     return { path }

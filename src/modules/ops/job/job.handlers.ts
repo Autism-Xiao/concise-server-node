@@ -4,6 +4,8 @@ import { DataSource } from 'typeorm'
 
 import type { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
 import { DbBackupService } from '../../../shared/backup/db-backup.service'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
+import { tenantWriteSql } from '../../../shared/tenant/tenant-scope.util'
 
 /** 触发来源：cron 定时触发 / manual 页面「执行一次」 */
 export type JobTrigger = 'cron' | 'manual'
@@ -86,7 +88,14 @@ export class JobHandlerRegistry {
         if (!Number.isFinite(days) || days <= 0) {
           throw new Error(`参数「${parameter}」不是合法天数`)
         }
-        const result: unknown = await this.dataSource.query('DELETE FROM sys_log WHERE create_time < DATE_SUB(NOW(), INTERVAL ? DAY)', [Math.floor(days)])
+        // 外层 JobScheduler 已按 job.tenant_id 注入 TenantContext，但 ALS 管不到原生 SQL：
+        // 这里必须自己把租户条件拼进去，否则「租户级日志清理任务」会把别的租户日志一起删光。
+        // 平台级任务（tenant_id=0 → 上下文 null）保持全库清理的原有语义。
+        const scope = tenantWriteSql(TenantContext.filterTenantId())
+        const result: unknown = await this.dataSource.query(`DELETE FROM sys_log WHERE create_time < DATE_SUB(NOW(), INTERVAL ? DAY)${scope.clause}`, [
+          Math.floor(days),
+          ...scope.params
+        ])
         const affected = (result as { affectedRows?: number })?.affectedRows ?? 0
         this.logger.log(`[cleanLogJob] 已清理 ${days} 天前日志 ${affected} 条`)
         return `已清理 ${days} 天前日志 ${affected} 条`

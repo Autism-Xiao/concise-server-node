@@ -169,8 +169,14 @@ async function bootstrap() {
   // 响应压缩：JSON 列表/树/导出场景体积砍 60~80%，带宽换 CPU（阈值 1KB，小响应不压）
   app.use(compression({ threshold: 1024 }))
 
-  // 静态资源目录：public/upload 下的上传文件可直接以 {host}/upload/... 访问
-  app.useStaticAssets(path.join(process.cwd(), 'public'), {
+  // 静态资源只暴露 public/upload 子目录：以前把整个 public/ 挂出来，
+  // 任何误放进 public 的备份/配置/HTML 都会被未经鉴权地直接读到。
+  // prefix 保持 '/upload/' 不变，前端与既有图片 URL 零改动。
+  // 注意：这里仍是无鉴权的公开读（头像/富文本插图必须能被 <img> 直接加载），
+  // 归属校验的防线是「文件名不可枚举 + 只放位图 + CSP/attachment 不执行」，
+  // 敏感文件必须走 /api/v1/files/:id/download 的鉴权下载，不能存进 upload 目录。
+  app.useStaticAssets(path.join(process.cwd(), 'public/upload'), {
+    prefix: '/upload/',
     setHeaders: (res, filePath) => {
       for (const [name, value] of Object.entries(STATIC_SAFE_HEADERS)) {
         res.setHeader(name, value)

@@ -3,6 +3,7 @@ import type { DeepPartial, FindOptionsWhere, ObjectLiteral, Repository, SelectQu
 
 import { randomId32 } from '../../utils/password.util'
 import { emitChanges, shouldSkipField, toComparable, type ChangeItem } from '../../shared/audit/change-recorder'
+import { applyOwnerScope, type OwnerScopeActor } from '../../shared/permission/owner-scope.util'
 import { TenantContext } from '../../shared/tenant/tenant.context'
 import { SHARED_TENANT_ID, tenantRawCondition, tenantWriteCondition } from '../../shared/tenant/tenant-scope.util'
 import { paginate, type PaginateOptions, type Pagination } from '../paginate'
@@ -36,6 +37,26 @@ export class BaseService<T extends ObjectLiteral & { id: number | string }> {
     const entity = await this.repository.findOne({
       where: this.withTenantWhere({ id } as FindOptionsWhere<T>)
     })
+    if (!entity) {
+      throw new NotFoundException(`${this.entityName}不存在`)
+    }
+    return entity
+  }
+
+  /**
+   * 带 owner 级行权限的单查（详情 / 编辑 / 删除入口用）
+   *
+   * 为什么不直接给 findOne 加 owner 收窄：findOne 被本基类的 update/softDelete/
+   * 各类后台与跨模块调用复用（如定时任务、租户开通）。读接口要收窄，写路径的
+   * 内部回读不能跟着收窄，否则平台代维会被自己的数据范围挡住。
+   * 这里与 listByQuery 共用同一个 applyOwnerScope，保证「列表看不见 = 详情也进不去」。
+   */
+  async findOneScoped(id: number | string, actor?: OwnerScopeActor | null, ownerColumn = 'createBy'): Promise<T> {
+    const qb = this.repository.createQueryBuilder('entity')
+    this.applyTenantToQuery(qb, 'entity')
+    applyOwnerScope(qb, 'entity', actor, ownerColumn)
+    qb.andWhere('entity.id = :id', { id })
+    const entity = await qb.getOne()
     if (!entity) {
       throw new NotFoundException(`${this.entityName}不存在`)
     }

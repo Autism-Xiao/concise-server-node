@@ -69,6 +69,11 @@ export class BizOrderService extends BaseService<BizOrderEntity> {
     return paginate(qb, { page: query.page, pageSize: query.pageSize })
   }
 
+  /** 详情：与列表同一套 owner 收窄，列表看不见的订单按 id 也读不到 */
+  async findOneScoped(id: number, actor?: OwnerScopeActor | null): Promise<BizOrderEntity> {
+    return super.findOneScoped(id, actor)
+  }
+
   /** 新增：唯一键查重 + 落 createBy；并发写兜底捕获 ER_DUP_ENTRY 转 400 */
   async create(dto: CreateBizOrderDto): Promise<BizOrderEntity> {
     await this.assertAllUnique(dto)
@@ -83,8 +88,8 @@ export class BizOrderService extends BaseService<BizOrderEntity> {
   }
 
   /** 修改：唯一键查重（排除自身）+ 落 updateBy */
-  async update(id: number, dto: UpdateBizOrderDto): Promise<BizOrderEntity> {
-    await this.findOne(id)
+  async update(id: number, dto: UpdateBizOrderDto, actor?: OwnerScopeActor | null): Promise<BizOrderEntity> {
+    await this.findOneScoped(id, actor)
     await this.assertAllUnique(dto, id)
     try {
       return await super.update(id, { ...dto, updateBy: TenantContext.userId() })
@@ -97,8 +102,9 @@ export class BizOrderService extends BaseService<BizOrderEntity> {
   }
 
   /** 软删除：del_flag 置 1；软删行仍占用唯一键，与查重「含软删占用」配套 */
-  async delete(id: number): Promise<void> {
-    // 必须走基类的严格写条件：findOne 能读到 tenant_id=0 的共享订单，按 id 直写会删掉平台数据
+  async delete(id: number, actor?: OwnerScopeActor | null): Promise<void> {
+    // 先做 owner 校验，再走基类的严格写条件：共享行 / 他人创建的订单都不可删
+    await this.findOneScoped(id, actor)
     await this.softDelete(id, { delFlag: 1 })
   }
 }

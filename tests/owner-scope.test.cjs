@@ -9,6 +9,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { needsOwnerScope, applyOwnerScope } = require('../dist/shared/permission/owner-scope.util.js')
+const { BaseService } = require('../dist/helper/crud/base.service.js')
 
 function fakeQb() {
   const calls = []
@@ -17,6 +18,9 @@ function fakeQb() {
     andWhere(clause, params) {
       calls.push({ clause, params })
       return this
+    },
+    async getOne() {
+      return { id: 1 }
     }
   }
 }
@@ -67,4 +71,26 @@ test('applyOwnerScope：收窄时加 createBy = 当前用户，不收窄时不�
   const qb3 = fakeQb()
   applyOwnerScope(qb3, 'order', { id: 'u2', roles: [{ dataScope: 4 }] }, 'ownerId')
   assert.equal(qb3.calls[0].clause, 'order.ownerId = :__ownerScopeId')
+})
+
+test('findOneScoped：详情/编辑入口复用 owner 收窄，且不影响基类 findOne', async () => {
+  const qb = fakeQb()
+  const repo = {
+    metadata: { findColumnWithPropertyName: () => undefined },
+    createQueryBuilder: () => qb
+  }
+  const service = new BaseService(repo, '测试')
+
+  await service.findOneScoped(7, { id: 'u1', roles: [{ dataScope: 4 }] })
+  const ownerCalls = qb.calls.filter(call => String(call.clause).includes('createBy'))
+  assert.equal(ownerCalls.length, 1, '受限角色必须在按 id 单查上加 owner 条件')
+  assert.equal(ownerCalls[0].params.__ownerScopeId, 'u1')
+  assert.ok(
+    qb.calls.some(call => call.clause === 'entity.id = :id'),
+    '必须按 id 收窄'
+  )
+
+  qb.calls.length = 0
+  await service.findOneScoped(7, { id: 'u1', roles: [{ dataScope: 1 }] })
+  assert.equal(qb.calls.filter(call => String(call.clause).includes('createBy')).length, 0, 'ALL 角色不收窄')
 })

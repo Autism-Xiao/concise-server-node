@@ -123,7 +123,12 @@ export class ReminderScheduler implements OnModuleInit, OnModuleDestroy {
       .orIgnore()
       .execute()
 
-    // 抛事件给业务侧（WebSocket 实时推送等）；当前底座自身消息已落库，无监听者也不影响
+    // 抛事件给业务侧（WebSocket 实时推送等）；当前底座自身消息已落库，无监听者也不影响。
+    //
+    // 上下文边界说明（不是遗漏）：base_schedule_event 刻意不带 tenant_id（日程跟随人，
+    // 见实体注释），本调度器是全局维护任务，不需要 TenantContext.run；事件载荷不携带
+    // tenantId 是因为订阅方 realtime.service 按 userId 房间推送，与租户无关。
+    // 若将来日程改为按租户分区，必须同时改实体、调度器和这里的事件载荷。
     this.emitter.emit(REMIND_EVENT_NAME, {
       eventId,
       userId: event.userId,

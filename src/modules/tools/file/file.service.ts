@@ -623,13 +623,18 @@ export class FileService {
     }
   }
 
-  /** 最近修改的文件（左栏「最近文件」） */
+  /** 最近修改的文件（左栏「最近文件」）；同一账号在别的租户下的文件不能混进来 */
   async recent(ownerId: string, limit = 6): Promise<FileEntity[]> {
-    return this.fileRepository.find({
-      where: { ownerId, isDeleted: 0, isFolder: 0 },
-      order: { updateTime: 'DESC', id: 'DESC' },
-      take: Math.min(Math.max(limit, 1), 50)
-    })
+    const qb = this.fileRepository
+      .createQueryBuilder('f')
+      .where('f.owner_id = :ownerId', { ownerId })
+      .andWhere('f.is_deleted = 0')
+      .andWhere('f.is_folder = 0')
+      .orderBy('f.update_time', 'DESC')
+      .addOrderBy('f.id', 'DESC')
+      .take(Math.min(Math.max(limit, 1), 50))
+    applyTenantScope(qb, 'f')
+    return qb.getMany()
   }
 
   // ---------------------------------------------------------------------------

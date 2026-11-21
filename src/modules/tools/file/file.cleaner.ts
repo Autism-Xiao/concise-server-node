@@ -2,6 +2,7 @@ import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@ne
 import { CronJob } from 'cron'
 
 import { FileService, recycleRetentionDays, tempRetentionHours } from './file.service'
+import { TenantContext } from '../../../shared/tenant/tenant.context'
 
 /** 每天 03:30 扫一次（避开整点，减少和其它定时任务撞在同一分钟） */
 const SWEEP_CRON = '30 3 * * *'
@@ -35,6 +36,14 @@ export class FileCleaner implements OnModuleInit, OnModuleDestroy {
 
   /** 扫一轮；两段互相独立，任何一段失败都不影响另一段，也不向外抛 */
   async sweep(): Promise<void> {
+    // 显式声明平台视角：cron 线程 ALS 为空时 filterTenantId() 恰好返回 null（全租户），
+    // 但这是「没上下文」而不是「平台上下文」。如果将来有人从请求链里直接调用 sweep，
+    // 上层的租户上下文会泄漏进来，回收站就只扫一个租户（不越权但会漏清理）。
+    // 固定成 null 让这个维护任务的行为与调用方无关。
+    return TenantContext.withTenant(null, () => this.sweepInternal())
+  }
+
+  private async sweepInternal(): Promise<void> {
     try {
       const recycled = await this.fileService.sweepRecycled()
       if (recycled.purged > 0) {

@@ -25,11 +25,11 @@ export class BizOrderV1Controller {
     return this.bizOrderService.listByQuery(query, req.user)
   }
 
-  @ApiOperation({ summary: '订单详情', description: '需 biz_order:list' })
+  @ApiOperation({ summary: '订单详情', description: '需 biz_order:list；角色 data_scope=仅本人时只能看自己创建的订单' })
   @Perms('biz_order:list')
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.bizOrderService.findOne(id)
+  findOne(@Param('id', ParseIntPipe) id: number, @Request() req: OwnerRequest) {
+    return this.bizOrderService.findOneScoped(id, req.user)
   }
 
   @ApiOperation({ summary: '新增订单', description: '需 biz_order:add' })
@@ -44,15 +44,15 @@ export class BizOrderV1Controller {
   @Perms('biz_order:update')
   @OperLog('订单')
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateBizOrderDto) {
-    return this.bizOrderService.update(id, dto)
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateBizOrderDto, @Request() req: OwnerRequest) {
+    return this.bizOrderService.update(id, dto, req.user)
   }
 
   @ApiOperation({ summary: '删除订单', description: '需 biz_order:delete' })
   @Perms('biz_order:delete')
   @OperLog('订单')
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.bizOrderService.delete(id)
+  remove(@Param('id', ParseIntPipe) id: number, @Request() req: OwnerRequest) {
+    return this.bizOrderService.delete(id, req.user)
   }
 }

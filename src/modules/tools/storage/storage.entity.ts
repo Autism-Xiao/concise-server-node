@@ -36,6 +36,10 @@ export class StorageEntity {
   @Column({ name: 'user_id', type: 'varchar', length: 32, nullable: true, comment: '上传用户ID' })
   userId?: string
 
+  @ApiPropertyOptional({ description: '租户 ID（0=平台共享）', example: 1 })
+  @Column({ name: 'tenant_id', type: 'int', default: 0, comment: '租户ID(0=平台共享)' })
+  tenantId?: number
+
   @ApiProperty({ description: '创建时间' })
   @CreateDateColumn({ name: 'created_at', comment: '创建时间' })
   createdAt: Date

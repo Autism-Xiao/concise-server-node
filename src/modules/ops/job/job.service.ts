@@ -7,6 +7,7 @@ import { BizException } from '../../../common/exceptions/biz.exception'
 import { applySort, paginate, Pagination } from '../../../helper/paginate'
 import { randomId32 } from '../../../utils/password.util'
 import { applyTenantScope } from '../../../shared/tenant/tenant-scope.util'
+import { createTenantQb } from '../../../shared/tenant/tenant-qb.factory'
 import { TenantContext } from '../../../shared/tenant/tenant.context'
 import { SysQuartzJobEntity } from './entities/sys-quartz-job.entity'
 import { JobHandlerRegistry } from './job.handlers'
@@ -196,9 +197,11 @@ export class JobService {
     }
   }
 
-  /** 类名唯一（未删除范围内） */
+  /** 类名唯一（未删除范围内，按租户隔离） */
   private async assertClassNameAvailable(className: string, excludeId?: string): Promise<void> {
-    const qb = this.jobRepository.createQueryBuilder('job').where('job.del_flag = 0').andWhere('job.job_class_name = :className', { className })
+    // 每个租户都可以有自己的 cleanLogJob / backupDbJob；全局唯一会让第二个租户
+    // 永远建不了同名任务。走安全工厂，租户视角自动收窄（含共享行 tenant_id=0）。
+    const qb = createTenantQb(this.jobRepository, 'job').where('job.del_flag = 0').andWhere('job.job_class_name = :className', { className })
     if (excludeId) {
       qb.andWhere('job.id <> :excludeId', { excludeId })
     }

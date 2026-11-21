@@ -210,6 +210,13 @@ jobs:
           BASE_URL: http://127.0.0.1:${{ env.PORT }}
         run: node scripts/smoke-tenant-isolation.mjs
 
+      # 守 file.recent 的跨租户漏网：同一 owner 在 A/B 两租户的最近文件不能互见。
+      # 脚本自建自清两个临时租户 + 两条 sys_file 元数据行。
+      - name: 冒烟 · 最近文件租户隔离
+        env:
+          SMOKE_BASE: http://127.0.0.1:${{ env.PORT }}/api
+        run: node scripts/smoke-file-recent.mjs
+
       - name: 失败时输出服务端日志
         if: failure()
         run: tail -200 server.log || true

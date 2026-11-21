@@ -68,6 +68,11 @@ export class CustomerService extends BaseService<CustomerEntity> {
     return paginate(qb, { page: query.page, pageSize: query.pageSize })
   }
 
+  /** 详情：与列表同一套 owner 收窄，列表看不见的客户按 id 也读不到 */
+  async findOneScoped(id: number, actor?: OwnerScopeActor | null): Promise<CustomerEntity> {
+    return super.findOneScoped(id, actor)
+  }
+
   /** 新增：唯一键查重 + 落 createBy；并发写兜底捕获 ER_DUP_ENTRY 转 400 */
   async create(dto: CreateCustomerDto): Promise<CustomerEntity> {
     await this.assertAllUnique(dto)
@@ -82,8 +87,8 @@ export class CustomerService extends BaseService<CustomerEntity> {
   }
 
   /** 修改：唯一键查重（排除自身）+ 落 updateBy */
-  async update(id: number, dto: UpdateCustomerDto): Promise<CustomerEntity> {
-    await this.findOne(id)
+  async update(id: number, dto: UpdateCustomerDto, actor?: OwnerScopeActor | null): Promise<CustomerEntity> {
+    await this.findOneScoped(id, actor)
     await this.assertAllUnique(dto, id)
     try {
       return await super.update(id, { ...dto, updateBy: TenantContext.userId() })
@@ -96,8 +101,9 @@ export class CustomerService extends BaseService<CustomerEntity> {
   }
 
   /** 软删除：del_flag 置 1；软删行仍占用唯一键，与查重「含软删占用」配套 */
-  async delete(id: number): Promise<void> {
-    // 必须走基类的严格写条件：findOne 能读到 tenant_id=0 的共享客户，按 id 直写会删掉平台数据
+  async delete(id: number, actor?: OwnerScopeActor | null): Promise<void> {
+    // 先做 owner 校验，再走基类的严格写条件：共享行 / 他人创建的客户都不可删
+    await this.findOneScoped(id, actor)
     await this.softDelete(id, { delFlag: 1 })
   }
 }

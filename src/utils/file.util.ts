@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -59,7 +60,10 @@ export function fileRename(fileName: string, extOverride?: string): string {
   const ext = (extOverride ?? originalExt.replace('.', '')).toLowerCase()
   const base = path.posix.basename(safeName, originalExt).slice(0, 80) || 'file'
   const time = new Date().toISOString().replace(/\D/g, '').slice(0, 17)
-  return `${base}-${time}${ext ? `.${ext}` : ''}`
+  // 随机后缀：旧版只有「原文件名 + 毫秒时间戳」，知道文件名就能暴力枚举出别人的图片。
+  // upload 目录是公开静态直出（<img> 场景），不可枚举是这里唯一可行的防线。
+  const salt = randomBytes(4).toString('hex')
+  return `${base}-${time}-${salt}${ext ? `.${ext}` : ''}`
 }
 
 /** 数据库中存的相对访问路径 */

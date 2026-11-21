@@ -14,7 +14,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { TenantContext } = require('../dist/shared/tenant/tenant.context.js')
-const { tenantCondition, tenantWriteCondition } = require('../dist/shared/tenant/tenant-scope.util.js')
+const { tenantCondition, tenantWriteCondition, tenantWriteSql } = require('../dist/shared/tenant/tenant-scope.util.js')
 const { createTenantQb } = require('../dist/shared/tenant/tenant-qb.factory.js')
 
 test('平台视角（null）：读写都不加条件', () => {
@@ -69,8 +69,16 @@ function fakeQb() {
 
 /** 假 repository：createQueryBuilder 返回假 QB */
 function fakeRepo(qb) {
-  return { createQueryBuilder: (_alias) => qb }
+  return { createQueryBuilder: _alias => qb }
 }
+
+test('tenantWriteSql：原生 SQL 的跨租户全量覆盖必须带租户条件', () => {
+  // assignRoles 这类「读取当前绑定 → 删掉不在入参里的」写路径，漏掉这个条件
+  // 会让 A 租户的一次改角色把同一账号在 B 租户的角色绑定一并清除。
+  assert.deepEqual(tenantWriteSql(null), { clause: '', params: [] })
+  assert.deepEqual(tenantWriteSql(0), { clause: ' AND tenant_id = ?', params: [0] })
+  assert.deepEqual(tenantWriteSql(42, 'ur.tenant_id'), { clause: ' AND ur.tenant_id = ?', params: [42] })
+})
 
 test('createTenantQb：租户视角自动注入租户条件', () => {
   TenantContext.withTenant(7, () => {

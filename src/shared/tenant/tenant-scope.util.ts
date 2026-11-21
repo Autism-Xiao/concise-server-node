@@ -57,6 +57,19 @@ export function tenantRawCondition(column = 'tenant_id'): TenantCondition | null
 }
 
 /**
+ * 原生 SQL 的租户写条件（位置参数版），供 `EntityManager.query()` 这类不走
+ * QueryBuilder、无法用命名参数的地方使用。与 tenantWriteCondition 同语义：
+ * null 不过滤；0/正整数都严格按该 tenant_id 收窄（不含共享行）。
+ *
+ * 典型坑：跨租户「全量覆盖」类写操作如果忘了这个条件，A 租户的一次普通更新
+ * 会把同一账号在 B 租户的关联行一起删掉（user.service.assignRoles 曾如此）。
+ */
+export function tenantWriteSql(tenantId: number | null, column = 'tenant_id'): { clause: string; params: number[] } {
+  if (tenantId === null) return { clause: '', params: [] }
+  return { clause: ` AND ${column} = ?`, params: [tenantId] }
+}
+
+/**
  * 写路径（UPDATE / DELETE）专用租户条件：**严格只命中本租户的行**。
  *
  * 与 tenantRawCondition 的区别：后者给读路径用，租户视角含 tenant_id = 0 的共享行
