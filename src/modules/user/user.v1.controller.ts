@@ -5,6 +5,7 @@ import type { Response } from 'express'
 
 import { BatchDeleteDto } from '../../common/dto/batch-delete.dto'
 import { Perms } from '../../common/decorators/perms.decorator'
+import { FeatureFlag } from '../../common/decorators/feature-flag.decorator'
 import { OperLog } from '../../common/decorators/oper-log.decorator'
 import { sendXlsx } from '../../helper/export/excel-export'
 import { readImportFile } from '../../helper/import/import-file'
@@ -288,14 +289,27 @@ export class UserV1Controller {
 
   @ApiOperation({
     summary: '配置用户管辖部门（v1，全量覆盖）',
-    description: '写入 sys_user_supervise_dept（自动展开子孙部门）；仅对 data_scope=本部门/本部门及以下 的业务数据可见范围生效；需 system:user:update'
+    description:
+      '写入 sys_user_supervise_dept（自动展开子孙部门）；仅对 data_scope=本部门/本部门及以下 的业务数据可见范围生效；需 system:user:update；受特性开关 feature.rbac.superviseDept 控制'
   })
+  @FeatureFlag('rbac.superviseDept', '该租户未开通监管部门数据权限')
   @OperLog('用户管理')
   @Perms('system:user:update')
   @Put(':id/supervise-depts')
   async assignSuperviseDepts(@Param('id') id: string, @Body() dto: { deptIds: string[] }) {
     await this.userService.assignSuperviseDepts(id, dto.deptIds ?? [])
     return this.userService.findOneWithRoles(id)
+  }
+
+  @ApiOperation({
+    summary: '读取用户管辖部门（v1）',
+    description: '返回当前租户视角下该用户被授权监管的部门 id 集合；需 system:user:update；受 feature.rbac.superviseDept 控制'
+  })
+  @FeatureFlag('rbac.superviseDept', '该租户未开通监管部门数据权限')
+  @Perms('system:user:update')
+  @Get(':id/supervise-depts')
+  async listSuperviseDepts(@Param('id') id: string) {
+    return { deptIds: await this.userService.listSuperviseDeptIds(id) }
   }
 
   @ApiOperation({

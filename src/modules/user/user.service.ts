@@ -589,6 +589,15 @@ export class UserService extends BaseService<UserEntity> {
   }
 
   /** 读取用户当前租户下被授权监管的部门 id（findOneWithRoles 挂载用） */
+  /**
+   * 读取用户当前租户下被授权监管的部门 id（管理端「管辖部门」配置回显用）。
+   * 与 findOneWithRoles 的挂载逻辑同一实现，但独立暴露：详情接口不挂这个字段，
+   * 避免所有详情响应都多一次查询。
+   */
+  async listSuperviseDeptIds(userId: string): Promise<string[]> {
+    return this.loadSuperviseDeptIds(userId)
+  }
+
   private async loadSuperviseDeptIds(userId: string): Promise<string[]> {
     const currentTenant = TenantContext.filterTenantId()
     const scope = currentTenant === null ? null : Number(currentTenant)

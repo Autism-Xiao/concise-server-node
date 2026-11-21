@@ -44,7 +44,10 @@ const DEFAULTS: Record<string, string> = {
   'tenant.vip.maxTenants': '1',
   // 租户资源配额（allow_tenant=1；0 = 不限制，升级后存量租户行为不变）
   'tenant.quota.maxUsers': '0',
-  'tenant.quota.maxStorageMb': '0'
+  'tenant.quota.maxStorageMb': '0',
+  // 特性开关（feature.*，allow_tenant=1）：日志脱敏默认关（存量行为不变）；监管权限默认开（kill switch）
+  'feature.log.maskSensitive': '0',
+  'feature.rbac.superviseDept': '1'
 }
 
 /** 进程内缓存有效期（毫秒）：多实例部署时，别处改的值最多这么久后本实例生效 */

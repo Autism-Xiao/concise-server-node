@@ -10,6 +10,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { OperLogInterceptor } from './common/interceptors/oper-log.interceptor'
 import { RolesGuard } from './common/guards/roles.guard'
 import { PermsGuard } from './common/guards/perms.guard'
+import { FeatureGuard } from './common/guards/feature.guard'
 import { RateLimitGuard } from './common/guards/rate-limit.guard'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
@@ -53,6 +54,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard'
 import { ApiScopeGuard } from './common/guards/api-scope.guard'
 import { OpenApiModule } from './modules/openapi/open.module'
 import { QuotaModule } from './shared/quota/quota.module'
+import { FeatureModule } from './shared/feature/feature.module'
 import { MeteringModule } from './modules/metering/metering.module'
 import { MeteringInterceptor } from './modules/metering/metering.interceptor'
 import { SensitiveInterceptor } from './common/interceptors/sensitive.interceptor'
@@ -80,6 +82,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     AuthCacheModule,
     // 租户资源配额（sys_config 驱动的 Seats / Storage 上限），全局模块
     QuotaModule,
+    // 租户级特性开关（sys_config feature.* 键，@FeatureFlag + FeatureGuard），全局模块
+    FeatureModule,
     // 租户用量计量（sys_tenant_usage：API 调用 / 上传字节），全局模块
     MeteringModule,
     // 多租户上下文（AsyncLocalStorage + 归属解析），全局模块
@@ -149,6 +153,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: PermsGuard },
+    // 特性开关：@FeatureFlag 标注的端点在开关关闭的租户视角整体 403（无标注端点直通）
+    { provide: APP_GUARD, useClass: FeatureGuard },
     { provide: APP_GUARD, useClass: ApiScopeGuard }
   ]
 })
